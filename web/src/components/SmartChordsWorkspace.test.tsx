@@ -1791,4 +1791,70 @@ describe('SmartChordsWorkspace', () => {
     await act(async () => { await Promise.resolve(); });
     expect(screen.getByRole('textbox', { name: 'Buscar cifra' })).toBeInTheDocument();
   });
+
+  it('FASE 2: displays pending classification alert on multi-version ambiguous link and saves explicit versionId', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    getSongs.mockResolvedValue({
+      songs: [
+        {
+          id: 'song-multi',
+          title: 'Multi Versões',
+          artist: 'Ministerio',
+          versions: [
+            { id: 'ver-1', name: 'Original', key: 'G', classificationIds: [], links: [] },
+            { id: 'ver-2', name: 'Acústico', key: 'E', classificationIds: [], links: [] },
+          ],
+        },
+      ],
+      totalCount: 1,
+    });
+    getSmartChords.mockResolvedValue([
+      { id: 'c-pending', title: 'Cifra Legada Ambígua', originalKey: 'E', content: '[E]Louvor', songId: 'song-multi' },
+    ]);
+    getSmartChordRepertoireLink.mockResolvedValue({
+      link: {
+        id: 'u1_c-pending_min-1',
+        userId: 'u1',
+        smartChordId: 'c-pending',
+        ministryId: 'min-1',
+        songId: 'song-multi',
+        versionId: null,
+        linkStatus: 'pending_classification',
+        pendingReason: 'multi_version_ambiguous',
+      },
+      song: {
+        id: 'song-multi',
+        title: 'Multi Versões',
+        versions: [
+          { id: 'ver-1', name: 'Original', key: 'G' },
+          { id: 'ver-2', name: 'Acústico', key: 'E' },
+        ],
+      },
+      pendingLink: true,
+      requiresVersionSelection: true,
+    });
+    updateSmartChord.mockResolvedValue({
+      id: 'c-pending',
+      title: 'Cifra Legada Ambígua',
+      originalKey: 'E',
+      content: '[E]Louvor',
+      songId: 'song-multi',
+      versionId: 'ver-2',
+    });
+
+    render(<SmartChordsWorkspace ministryId="min-1" currentUserId="u1" />);
+    fireEvent.click(await screen.findByText('Cifra Legada Ambígua'));
+
+    expect(await screen.findByTestId('smart-chord-version-classification-alert')).toBeInTheDocument();
+    const versionSelect = screen.getByTestId('smart-chord-version-select') as HTMLSelectElement;
+    expect(versionSelect.value).toBe('');
+
+    fireEvent.change(versionSelect, { target: { value: 'ver-2' } });
+    fireEvent.click(screen.getByRole('button', { name: /Salvar Cifra/i }));
+
+    await waitFor(() => {
+      expect(setSmartChordRepertoireLink).toHaveBeenCalledWith('min-1', 'c-pending', 'song-multi', 'ver-2');
+    });
+    alertSpy.mockRestore();
+  });
 });

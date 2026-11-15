@@ -65,11 +65,42 @@ function resolveEffectiveLineSpacing(): number {
   }
 }
 
+function buildEffectiveSongVersions(song: Song): SongVersion[] {
+  if (song.versions && song.versions.length > 0) {
+    return song.versions;
+  }
+  return [
+    {
+      id: song.id ? `${song.id}_v1` : 'v1',
+      name: 'Original',
+      classificationIds: song.classificationId ? [song.classificationId] : [],
+      key: song.originalKey || 'C',
+      bpm: song.bpm,
+      duration: song.duration,
+      notes: song.notes,
+      links: [
+        { label: 'Letra', url: song.externalLinks?.letras || '' },
+        { label: 'Cifra', url: song.chordSheetUrl || '' },
+        { label: 'Áudio', url: song.audioUrl || '' },
+        { label: 'Vídeo', url: song.youtubeUrl || '' },
+      ],
+    },
+  ];
+}
+
+function resolveVersionIndexById(versions: SongVersion[], targetVersionId?: string): number {
+  if (!targetVersionId) return 0;
+  const idx = versions.findIndex((v) => v.id === targetVersionId);
+  return idx >= 0 ? idx : 0;
+}
+
 interface SongDetailProps {
   song: Song;
   ministryId?: string;
   chordFontFamily?: string;
   classifications?: Classification[];
+  initialVersionId?: string;
+  backLabel?: string;
   onBack: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
@@ -81,6 +112,8 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   ministryId,
   chordFontFamily,
   classifications = [],
+  initialVersionId,
+  backLabel = 'Repertório',
   onBack,
   onEdit,
   onDelete,
@@ -147,11 +180,27 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   const activeFontFamilyCss = getFontFamilyCss(effectiveFontFamily);
 
   const [linkedChords, setLinkedChords] = useState<SmartChord[]>([]);
+  const [pendingChords, setPendingChords] = useState<SmartChord[]>([]);
+  const [classifyingChordId, setClassifyingChordId] = useState<string | null>(null);
   const [loadingChords, setLoadingChords] = useState(false);
   const [chordsError, setChordsError] = useState<string | null>(null);
   const [chordsRetryNonce, setChordsRetryNonce] = useState(0);
   const [selectedChordIndex, setSelectedChordIndex] = useState(0);
-  const [selectedVersionIndex, setSelectedVersionIndex] = useState(0);
+  const versions: SongVersion[] = buildEffectiveSongVersions(song);
+  const [selectedVersionIndex, setSelectedVersionIndex] = useState(() =>
+    resolveVersionIndexById(versions, initialVersionId)
+  );
+  useEffect(() => {
+    setSelectedVersionIndex(resolveVersionIndexById(versions, initialVersionId));
+  }, [song.id, initialVersionId]);
+
+  const trimmedInitialVersionId = initialVersionId?.trim() || '';
+  const isMissingRequestedVersion =
+    Boolean(trimmedInitialVersionId) &&
+    versions.length > 0 &&
+    !versions.some((v) => v.id === trimmedInitialVersionId);
+  const safeVersionIndex = selectedVersionIndex < versions.length ? selectedVersionIndex : 0;
+  const activeVersion = versions[safeVersionIndex] || versions[0];
 
   // Link Modal State
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
@@ -239,17 +288,20 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     ministryId: effectiveMinistryId,
     songId: song.id,
     session: sessionToken,
+    initialVersionId,
   });
 
   // Context ref for asynchronous stale response and mutation fencing (F02, F03, R2-01, R2-02, R3)
   const requestContextRef = useRef<{
     ministryId: string;
     songId: string;
+    versionId: string;
     session: string;
     generation: number;
   }>({
     ministryId: effectiveMinistryId || '',
     songId: song.id,
+    versionId: activeVersion.id,
     session: sessionToken,
     generation: 0,
   });
@@ -259,17 +311,22 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   const contextChanged =
     prevContext.ministryId !== effectiveMinistryId ||
     prevContext.songId !== song.id ||
-    prevContext.session !== sessionToken;
+    prevContext.session !== sessionToken ||
+    prevContext.initialVersionId !== initialVersionId;
 
   if (contextChanged) {
+    const nextVersionIndex = resolveVersionIndexById(versions, initialVersionId);
+    const nextActiveVersion = versions[nextVersionIndex] || versions[0];
     setPrevContext({
       ministryId: effectiveMinistryId,
       songId: song.id,
       session: sessionToken,
+      initialVersionId,
     });
     requestContextRef.current = {
       ministryId: effectiveMinistryId || '',
       songId: song.id,
+      versionId: nextActiveVersion.id,
       session: sessionToken,
       generation: requestContextRef.current.generation + 1,
     };
@@ -277,8 +334,10 @@ export const SongDetail: React.FC<SongDetailProps> = ({
 
     // Immediately clear loaded chords, active selection and errors upon context switch
     setLinkedChords([]);
+    setPendingChords([]);
+    setClassifyingChordId(null);
     setSelectedChordIndex(0);
-    setSelectedVersionIndex(0);
+    setSelectedVersionIndex(nextVersionIndex);
     setChordsError(null);
     setSemitones(0);
 
@@ -295,9 +354,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     setUnlinkError(null);
   }
 
-  // Load user's linked personal chords for this song with immediate invalidation and cancellation fencing (F02, R3)
+  // Load user's linked personal chords for the active song version with immediate invalidation and cancellation fencing
   useEffect(() => {
     let active = true;
+    const currentVersionId = activeVersion.id;
+    requestContextRef.current.versionId = currentVersionId;
     const currentGen = requestContextRef.current.generation;
     const currentMinistryId = effectiveMinistryId;
     const currentSongId = song.id;
@@ -311,19 +372,29 @@ export const SongDetail: React.FC<SongDetailProps> = ({
 
     setLoadingChords(true);
 
-    api.getMySmartChordsForSong(currentMinistryId, currentSongId)
-      .then((chords) => {
+    const fetchPending =
+      typeof api.getMyPendingSmartChordsForSong === 'function'
+        ? api.getMyPendingSmartChordsForSong(currentMinistryId, currentSongId).catch(() => [] as SmartChord[])
+        : Promise.resolve([] as SmartChord[]);
+
+    Promise.all([
+      api.getMySmartChordsForSong(currentMinistryId, currentSongId, { versionId: currentVersionId }),
+      fetchPending,
+    ])
+      .then(([chords, pending]) => {
         if (!active) return;
         const ctx = requestContextRef.current;
         if (
           ctx.ministryId !== currentMinistryId ||
           ctx.songId !== currentSongId ||
+          ctx.versionId !== currentVersionId ||
           ctx.generation !== currentGen ||
           ctx.session !== sessionSnapshot
         ) {
           return;
         }
         setLinkedChords(chords || []);
+        setPendingChords(pending || []);
         setSelectedChordIndex(0);
         setLoadingChords(false);
       })
@@ -333,6 +404,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
         if (
           ctx.ministryId !== currentMinistryId ||
           ctx.songId !== currentSongId ||
+          ctx.versionId !== currentVersionId ||
           ctx.generation !== currentGen ||
           ctx.session !== sessionSnapshot
         ) {
@@ -345,7 +417,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     return () => {
       active = false;
     };
-  }, [effectiveMinistryId, song.id, sessionToken, chordsRetryNonce]);
+  }, [effectiveMinistryId, song.id, activeVersion.id, sessionToken, chordsRetryNonce]);
 
   const handleCloseLinkModal = () => {
     if (isLinking) return;
@@ -402,6 +474,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     if (!effectiveMinistryId || !song.id || !selectedChordToLink || isLinking) return;
     const targetMinistryId = effectiveMinistryId;
     const targetSongId = song.id;
+    const targetVersionId = activeVersion.id;
     const targetChordId = selectedChordToLink.id;
     const currentContextGen = requestContextRef.current.generation;
     const sessionSnapshot = sessionToken;
@@ -414,13 +487,14 @@ export const SongDetail: React.FC<SongDetailProps> = ({
       return (
         ctx.ministryId === targetMinistryId &&
         ctx.songId === targetSongId &&
+        ctx.versionId === targetVersionId &&
         ctx.generation === currentContextGen &&
         ctx.session === sessionSnapshot
       );
     };
 
     try {
-      await api.setSmartChordRepertoireLink(targetMinistryId, targetChordId, targetSongId);
+      await api.setSmartChordRepertoireLink(targetMinistryId, targetChordId, targetSongId, targetVersionId);
       if (!isCurrentContext()) {
         return;
       }
@@ -434,6 +508,37 @@ export const SongDetail: React.FC<SongDetailProps> = ({
       }
       setIsLinking(false);
       setLinkingError(err?.message || 'Falha ao vincular cifra.');
+    }
+  };
+
+  const handleClassifyPendingChord = async (chordId: string) => {
+    if (!effectiveMinistryId || !song.id || classifyingChordId) return;
+    const targetMinistryId = effectiveMinistryId;
+    const targetSongId = song.id;
+    const targetVersionId = activeVersion.id;
+    const currentContextGen = requestContextRef.current.generation;
+    const sessionSnapshot = sessionToken;
+
+    setClassifyingChordId(chordId);
+    setChordsError(null);
+
+    try {
+      await api.setSmartChordRepertoireLink(targetMinistryId, chordId, targetSongId, targetVersionId);
+      const ctx = requestContextRef.current;
+      if (
+        ctx.ministryId !== targetMinistryId ||
+        ctx.songId !== targetSongId ||
+        ctx.versionId !== targetVersionId ||
+        ctx.generation !== currentContextGen ||
+        ctx.session !== sessionSnapshot
+      ) {
+        return;
+      }
+      setChordsRetryNonce((n) => n + 1);
+    } catch (err: any) {
+      setChordsError(err?.message || 'Falha ao classificar cifra para esta versão.');
+    } finally {
+      setClassifyingChordId(null);
     }
   };
 
@@ -475,29 +580,6 @@ export const SongDetail: React.FC<SongDetailProps> = ({
       setUnlinkError(err?.message || 'Falha ao desvincular cifra.');
     }
   };
-
-  const versions: SongVersion[] = song.versions && song.versions.length > 0
-    ? song.versions
-    : [
-        {
-          id: 'v1',
-          name: 'Original',
-          classificationIds: song.classificationId ? [song.classificationId] : [],
-          key: song.originalKey || 'C',
-          bpm: song.bpm,
-          duration: song.duration,
-          notes: song.notes,
-          links: [
-            { label: 'Letra', url: song.externalLinks?.letras || '' },
-            { label: 'Cifra', url: song.chordSheetUrl || '' },
-            { label: 'Áudio', url: song.audioUrl || '' },
-            { label: 'Vídeo', url: song.youtubeUrl || '' },
-          ],
-        },
-      ];
-
-  const safeVersionIndex = selectedVersionIndex < versions.length ? selectedVersionIndex : 0;
-  const activeVersion = versions[safeVersionIndex] || versions[0];
 
   const displayKey = activeVersion.key || (safeVersionIndex === 0 ? song.originalKey : '') || '';
   const displayBpm = activeVersion.bpm ?? (safeVersionIndex === 0 ? song.bpm : undefined);
@@ -667,11 +749,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({
             type="button"
             className="btn btn-secondary song-detail-back-btn"
             onClick={onBack}
-            title="Voltar para músicas"
-            aria-label="Voltar para músicas"
+            title={backLabel === 'Repertório' ? 'Voltar para músicas' : backLabel}
+            aria-label={backLabel === 'Repertório' ? 'Voltar para músicas' : backLabel}
           >
             <ArrowLeft size={18} aria-hidden="true" />
-            <span className="song-detail-back-label">Repertório</span>
+            <span className="song-detail-back-label">{backLabel}</span>
           </button>
           <div className="song-detail-stage-header__titles">
             <h1 className="song-detail-stage-title" title={song.title}>
@@ -742,6 +824,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                     aria-selected={isSelected}
                     className={`version-pill ${isSelected ? 'active' : ''}`}
                     onClick={() => {
+                      if (idx !== safeVersionIndex) {
+                        setLinkedChords([]);
+                        setSelectedChordIndex(0);
+                        setChordsError(null);
+                      }
                       setSelectedVersionIndex(idx);
                       setSemitones(0);
                     }}
@@ -970,6 +1057,27 @@ export const SongDetail: React.FC<SongDetailProps> = ({
         </div>
 
         {/* Alertas de erro na Music Stand Bar */}
+        {isMissingRequestedVersion && (
+          <div
+            className="music-stand-bar__alert"
+            role="status"
+            data-testid="song-detail-version-fallback-banner"
+            style={{
+              backgroundColor: 'var(--status-warning-bg, rgba(245, 158, 11, 0.12))',
+              borderColor: 'var(--status-warning-border, rgba(245, 158, 11, 0.35))',
+              color: 'var(--text-primary)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertCircle size={16} aria-hidden="true" style={{ color: 'var(--status-warning-text, #d97706)', flexShrink: 0 }} />
+              <span>
+                A versão vinculada anteriormente não foi encontrada neste repertório; exibindo{' '}
+                <strong>{activeVersion?.name || 'Original'}</strong>.
+              </span>
+            </div>
+          </div>
+        )}
+
         {chordsError && (
           <div className="music-stand-bar__alert" role="alert">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1002,6 +1110,99 @@ export const SongDetail: React.FC<SongDetailProps> = ({
             >
               <X size={16} />
             </button>
+          </div>
+        )}
+
+        {pendingChords.length > 0 && (
+          <div
+            className="music-stand-bar__alert"
+            role="status"
+            data-testid="pending-chords-classification-banner"
+            style={{
+              flexDirection: 'column',
+              alignItems: 'stretch',
+              gap: '8px',
+              minWidth: 0,
+              maxWidth: '100%',
+              boxSizing: 'border-box',
+              backgroundColor: 'var(--status-warning-bg, rgba(245, 158, 11, 0.12))',
+              borderColor: 'var(--status-warning-border, rgba(245, 158, 11, 0.35))',
+              color: 'var(--text-primary)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontWeight: 600, fontSize: '0.85rem', minWidth: 0, maxWidth: '100%' }}>
+              <AlertCircle size={16} aria-hidden="true" style={{ color: 'var(--status-warning-text, #d97706)', flexShrink: 0, marginTop: '2px' }} />
+              <span style={{ minWidth: 0, overflowWrap: 'anywhere', whiteSpace: 'normal' }}>
+                Cifra(s) aguardando classificação de versão para esta música:
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0, maxWidth: '100%' }}>
+              {pendingChords.map((pendingChord) => (
+                <div
+                  key={pendingChord.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '8px',
+                    minWidth: 0,
+                    maxWidth: '100%',
+                    boxSizing: 'border-box',
+                    padding: '6px 10px',
+                    borderRadius: '8px',
+                    backgroundColor: 'var(--bg-surface)',
+                    border: '1px solid var(--border-subtle)',
+                  }}
+                >
+                  <span style={{ fontSize: '0.84rem', minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', whiteSpace: 'normal' }}>
+                    <strong>{pendingChord.title}</strong> ({pendingChord.originalKey})
+                    {pendingChord.repertoireLink?.pendingReason === 'version_removed'
+                      ? ' — versão anterior removida'
+                      : ' — escolha a versão correta'}
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={classifyingChordId === pendingChord.id}
+                      onClick={() => handleClassifyPendingChord(pendingChord.id)}
+                      style={{
+                        minHeight: '36px',
+                        padding: '6px 12px',
+                        fontSize: '0.78rem',
+                        maxWidth: '100%',
+                        whiteSpace: 'normal',
+                        textAlign: 'left',
+                        overflowWrap: 'anywhere',
+                        height: 'auto',
+                      }}
+                    >
+                      {classifyingChordId === pendingChord.id
+                        ? 'Associando...'
+                        : `Vincular à versão ${activeVersion.name}`}
+                    </button>
+                    {onOpenSmartChord && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => onOpenSmartChord(pendingChord.id)}
+                        style={{
+                          minHeight: '36px',
+                          padding: '6px 12px',
+                          fontSize: '0.78rem',
+                          maxWidth: '100%',
+                          whiteSpace: 'normal',
+                          height: 'auto',
+                        }}
+                      >
+                        Abrir no Cifrador
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </section>
@@ -1440,13 +1641,18 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 borderBottom: '1px solid var(--border-subtle)',
               }}
             >
-              <h2
-                id="link-chord-modal-title"
-                style={{ fontSize: '1.125rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}
-              >
-                <Link size={18} style={{ color: 'var(--action-primary-bg)' }} />
-                Vincular Cifra Inteligente
-              </h2>
+              <div>
+                <h2
+                  id="link-chord-modal-title"
+                  style={{ fontSize: '1.125rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}
+                >
+                  <Link size={18} style={{ color: 'var(--action-primary-bg)' }} />
+                  <span>Vincular Cifra Inteligente</span>
+                </h2>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  Versão selecionada: <strong>{activeVersion.name}</strong>
+                </div>
+              </div>
               <button
                 type="button"
                 className="action-icon-btn"

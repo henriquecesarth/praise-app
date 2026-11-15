@@ -3,6 +3,7 @@ import { RepertoireRepository, encodeSongCursor, decodeSongCursor } from './Repe
 import { createSongSchema, updateSongSchema } from '../features/repertoire/repertoire.types';
 import { AppError } from '../middleware/error-handler';
 import { SubscriptionRepository } from './SubscriptionRepository';
+import { SmartChordLinkRepository } from './SmartChordLinkRepository';
 
 describe('RepertoireRepository Hardened Cursor Pagination & Performance', () => {
   let repo: RepertoireRepository;
@@ -436,6 +437,10 @@ describe('RepertoireRepository Hardened Cursor Pagination & Performance', () => 
           return { song: created, usage: { currentSongs: 1 } as any };
         });
 
+      const markPendingSpy = vi
+        .spyOn(SmartChordLinkRepository.prototype, 'markRemovedVersionLinksPending')
+        .mockResolvedValue(1);
+
       try {
         // 1. Validar schema de criação com múltiplas versões, notas e links customizados
         const createPayload = createSongSchema.parse({
@@ -534,6 +539,7 @@ describe('RepertoireRepository Hardened Cursor Pagination & Performance', () => 
           versions: [fetched2.versions[0], fetched2.versions[2]],
         });
         await repo.updateSong('song-multi-1', 'min-alpha', updatePayload2);
+        expect(markPendingSpy).toHaveBeenCalledWith('min-alpha', 'song-multi-1', ['ver-acust-2']);
 
         // 5. Reabrir a música e confirmar estado persistido
         const reopened = await repo.getSongById('song-multi-1', 'min-alpha');
@@ -543,8 +549,26 @@ describe('RepertoireRepository Hardened Cursor Pagination & Performance', () => 
         expect(reopened.versions.map((v: any) => v.id)).toEqual(['ver-orig-1', 'ver-clone-3']);
         expect(reopened.versions[0].links).toHaveLength(5);
       } finally {
+        markPendingSpy.mockRestore();
         createTransactionalSpy.mockRestore();
       }
+    });
+
+    it('rejeita atualização quando existem version IDs duplicados na mesma música', async () => {
+      vi.spyOn(repo, 'getSongById').mockResolvedValue({
+        id: 'song-dup',
+        ministry_id: 'min-alpha',
+        versions: [{ id: 'ver-1', name: 'Original' }],
+      } as any);
+
+      await expect(
+        repo.updateSong('song-dup', 'min-alpha', {
+          versions: [
+            { id: 'ver-1', name: 'A' },
+            { id: 'ver-1', name: 'B' },
+          ],
+        })
+      ).rejects.toMatchObject({ statusCode: 400 });
     });
   });
 });

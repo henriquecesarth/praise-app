@@ -592,4 +592,51 @@ describe('SmartChordImportModal Component', () => {
       expect(screen.queryByText(']')).toBeNull();
     });
   });
+
+  it('requires explicit version selection when linking imported chord to a multi-version song', async () => {
+    const repertoireSongs = [
+      {
+        id: 'song-multi',
+        title: 'Extracted Song',
+        artist: 'Artista Oficial',
+        versions: [
+          { id: 'ver-1', name: 'Original', key: 'G', classificationIds: [], links: [] },
+          { id: 'ver-2', name: 'Acústica', key: 'E', classificationIds: [], links: [] },
+        ],
+      },
+    ];
+
+    render(
+      <SmartChordImportModal
+        isOpen={true}
+        ministryId="min-1"
+        repertoireSongs={repertoireSongs}
+        onClose={mockOnClose}
+        onSuccess={mockOnSuccess}
+      />
+    );
+
+    const validFile = new File(['%PDF-1.4 test'], 'multi.pdf', { type: 'application/pdf' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [validFile] } });
+    fireEvent.click(screen.getByText('Analisar e Pré-visualizar PDF'));
+
+    await screen.findByDisplayValue('Extracted Song');
+    fireEvent.click(screen.getByText('Salvar Cifra Pessoal'));
+
+    const versionSelect = await screen.findByTestId('smart-chord-import-version-select') as HTMLSelectElement;
+    expect(versionSelect.value).toBe('');
+
+    const linkBtn = screen.getByRole('button', { name: /Vincular ao Repertório/i });
+    expect(linkBtn).toBeDisabled();
+
+    fireEvent.change(versionSelect, { target: { value: 'ver-2' } });
+    expect(linkBtn).not.toBeDisabled();
+    fireEvent.click(linkBtn);
+
+    await waitFor(() => {
+      expect(setSmartChordRepertoireLink).toHaveBeenCalledWith('min-1', 'sc-imported-1', 'song-multi', 'ver-2');
+      expect(mockOnSuccess).toHaveBeenCalled();
+    });
+  });
 });

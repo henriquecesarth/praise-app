@@ -24,6 +24,7 @@ class _FakeLinkRepository implements SmartChordRepertoireLinkRepository {
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) async => throw UnimplementedError();
 
   @override
@@ -36,6 +37,8 @@ class _FakeLinkRepository implements SmartChordRepertoireLinkRepository {
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) async => [];
 }
 

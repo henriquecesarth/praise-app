@@ -51,7 +51,6 @@ vi.mock('../api', () => ({
     getMyGroups: vi.fn(),
     getMyMinistries: vi.fn(),
     getMinistrySubscription: vi.fn(),
-    getLiturgies: vi.fn(),
     getSongs: vi.fn(),
     getSongById: vi.fn(),
     getFolders: vi.fn(),
@@ -81,7 +80,6 @@ describe('Targeted Chord Font Synchronization Regressions (WEB-01 & WEB-02)', ()
     vi.mocked(api.getSchedules).mockResolvedValue([]);
     vi.mocked(api.getMinistryMembers).mockResolvedValue([]);
     vi.mocked(api.getAnnouncements).mockResolvedValue([]);
-    vi.mocked(api.getLiturgies).mockResolvedValue([]);
     vi.mocked(api.getSongs).mockResolvedValue({ songs: [], totalCount: 0 } as any);
     vi.mocked(api.getSmartChords).mockResolvedValue([]);
     vi.mocked(api.getMySmartChordsForSong).mockResolvedValue([mockChord as any]);

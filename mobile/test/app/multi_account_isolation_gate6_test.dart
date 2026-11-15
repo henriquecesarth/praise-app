@@ -379,6 +379,8 @@ class _UserScopedLinkRepository implements SmartChordRepertoireLinkRepository {
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) async {
     final uid = activeUserId();
     if (uid == null) return const [];
@@ -392,6 +394,7 @@ class _UserScopedLinkRepository implements SmartChordRepertoireLinkRepository {
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) =>
       throw UnimplementedError();
 

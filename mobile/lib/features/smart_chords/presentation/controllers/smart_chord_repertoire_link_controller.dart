@@ -25,6 +25,8 @@ class SmartChordRepertoireLinkState {
   });
 
   bool get isLinked => link?.isLinked ?? false;
+  bool get isPendingClassification => link?.isPendingClassification ?? false;
+  bool get hasAnySongAssociation => link?.hasAnySongAssociation ?? false;
   bool get hasError => errorMessage != null;
 
   SmartChordRepertoireLinkState copyWith({
@@ -119,6 +121,7 @@ class SmartChordRepertoireLinkNotifier
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) async {
     if (state.isSaving) return false;
     final generation = ++_currentGeneration;
@@ -137,6 +140,7 @@ class SmartChordRepertoireLinkNotifier
         ministryId: ministryId,
         chordId: chordId,
         songId: songId,
+        versionId: versionId,
       );
       if (generation != _currentGeneration ||
           state.ministryId != ministryId ||

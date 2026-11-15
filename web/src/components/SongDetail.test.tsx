@@ -11,6 +11,7 @@ vi.mock('../api', () => ({
     getSmartChords: vi.fn(),
     setSmartChordRepertoireLink: vi.fn(),
     removeSmartChordRepertoireLink: vi.fn(),
+    getMyPendingSmartChordsForSong: vi.fn(),
   },
 }));
 
@@ -91,6 +92,7 @@ describe('SongDetail (D2-B Delivery 2)', () => {
     vi.clearAllMocks();
     vi.mocked(api.getMe).mockResolvedValue({ id: 'user-1', preferences: {} } as any);
     vi.mocked(api.getMySmartChordsForSong).mockResolvedValue([]);
+    vi.mocked(api.getMyPendingSmartChordsForSong).mockResolvedValue([]);
     vi.mocked(api.getSmartChords).mockResolvedValue([]);
   });
 
@@ -365,7 +367,7 @@ describe('SongDetail (D2-B Delivery 2)', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /Confirmar Vínculo/i }));
 
     await waitFor(() => {
-      expect(api.setSmartChordRepertoireLink).toHaveBeenCalledWith('min-1', 'chord-1', 'song-multi');
+      expect(api.setSmartChordRepertoireLink).toHaveBeenCalledWith('min-1', 'chord-1', 'song-multi', 'ver-1');
     });
 
     const chordSheet = await screen.findByTestId('song-detail-chord-sheet');
@@ -394,5 +396,79 @@ describe('SongDetail (D2-B Delivery 2)', () => {
       name: /Gravação Original/i,
     });
     expect(v1Tab).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('FASE 2: isolates personal smart chords per version tab and classifies pending links into the active version', async () => {
+    vi.mocked(api.getMySmartChordsForSong).mockImplementation(async (_mId, _sId, options) => {
+      if (options?.versionId === 'ver-1') return [mockNotationChord];
+      if (options?.versionId === 'ver-2') return [mockSecondChord];
+      return [];
+    });
+    vi.mocked(api.getMyPendingSmartChordsForSong).mockResolvedValue([
+      {
+        id: 'chord-pending',
+        userId: 'user-1',
+        artistId: 'artist-1',
+        songId: 'song-multi',
+        title: 'Cifra Legada Pendente',
+        originalKey: 'E',
+        content: '[E]Pendente',
+        createdAt: '2026-11-09',
+        updatedAt: '2026-11-09',
+      },
+    ]);
+    vi.mocked(api.setSmartChordRepertoireLink).mockResolvedValue({ link: null, song: null });
+
+    render(
+      <SongDetail
+        song={multiVersionSong}
+        ministryId="min-1"
+        classifications={[]}
+        initialVersionId="ver-2"
+        onBack={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByText(/Sublime Graça \(Teclado\)/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Sublime Graça \(Violão\)/i)).toBeNull();
+    expect(api.getMySmartChordsForSong).toHaveBeenCalledWith('min-1', 'song-multi', { versionId: 'ver-2' });
+
+    const banner = await screen.findByTestId('pending-chords-classification-banner');
+    expect(within(banner).getByText('Cifra Legada Pendente')).toBeInTheDocument();
+
+    fireEvent.click(within(banner).getByRole('button', { name: /Vincular à versão Arranjo Acústico/i }));
+    await waitFor(() => {
+      expect(api.setSmartChordRepertoireLink).toHaveBeenCalledWith('min-1', 'chord-pending', 'song-multi', 'ver-2');
+    });
+
+    const v1Tab = within(screen.getByRole('tablist', { name: 'Versões da música' })).getByRole('tab', {
+      name: /Gravação Original/i,
+    });
+    fireEvent.click(v1Tab);
+    expect(await screen.findByText(/Sublime Graça \(Violão\)/i)).toBeInTheDocument();
+    expect(api.getMySmartChordsForSong).toHaveBeenCalledWith('min-1', 'song-multi', { versionId: 'ver-1' });
+  });
+
+  it('FASE 3: exibe fallback explícito quando initialVersionId não existe e preserva backLabel de escala', async () => {
+    vi.mocked(api.getMySmartChordsForSong).mockResolvedValue([]);
+    vi.mocked(api.getMyPendingSmartChordsForSong).mockResolvedValue([]);
+
+    render(
+      <SongDetail
+        song={multiVersionSong}
+        ministryId="min-1"
+        classifications={[]}
+        initialVersionId="ver-removida"
+        backLabel="Voltar para Escala"
+        onBack={vi.fn()}
+      />
+    );
+
+    const banner = await screen.findByTestId('song-detail-version-fallback-banner');
+    expect(banner).toHaveTextContent(/não foi encontrada/i);
+    expect(banner).toHaveTextContent(/Gravação Original/i);
+    expect(screen.getByRole('button', { name: 'Voltar para Escala' })).toBeInTheDocument();
   });
 });

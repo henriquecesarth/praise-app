@@ -318,6 +318,7 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
   Future<bool> linkToRepertoire({
     required String ministryId,
     required String songId,
+    String? versionId,
   }) async {
     final chord = state.savedChord;
     if (chord == null) return false;
@@ -330,12 +331,21 @@ class SmartChordImportNotifier extends StateNotifier<SmartChordImportState> {
     );
 
     try {
-      await _linkRepository.setRepertoireLink(
+      final result = await _linkRepository.setRepertoireLink(
         ministryId: ministryId,
         chordId: chord.id,
         songId: songId,
+        versionId: versionId,
       );
       if (!_isCurrent(currentGen)) return false;
+
+      if (result.isPendingClassification) {
+        state = state.copyWith(
+          status: ImportStatus.saved,
+          linkError: 'Selecione a versão da música antes de concluir o vínculo.',
+        );
+        return false;
+      }
 
       state = state.copyWith(
         status: ImportStatus.success,

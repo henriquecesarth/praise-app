@@ -27,6 +27,7 @@ describe('Smart Chords Feature Test Suite', () => {
     smartChordLinkRepo = new SmartChordLinkRepository();
     ministryRepo = new MinistryRepository();
     repertoireRepo = new RepertoireRepository();
+    vi.spyOn(smartChordLinkRepo, 'getLink').mockResolvedValue(null);
     vi.spyOn(smartChordLinkRepo, 'setLink').mockResolvedValue({} as any);
     vi.spyOn(smartChordLinkRepo, 'deleteLink').mockResolvedValue(true);
     service = new SmartChordService(smartChordRepo, ministryRepo, repertoireRepo, smartChordLinkRepo);

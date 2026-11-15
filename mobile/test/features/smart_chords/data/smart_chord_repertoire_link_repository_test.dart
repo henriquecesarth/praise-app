@@ -206,5 +206,106 @@ void main() {
         throwsA(isA<AppFailure>()),
       );
     });
+
+    test('setRepertoireLink sends version_id and parses pending_link classification', () async {
+      apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
+        expect(opts.method, equals('PUT'));
+        expect(opts.data, equals({'song_id': 'song-99', 'version_id': 'v-live'}));
+        return jsonOk('''{
+          "link": {
+            "id": "u-1_sc-1_min-1",
+            "smart_chord_id": "sc-1",
+            "ministry_id": "min-1",
+            "song_id": "song-99",
+            "version_id": "v-live",
+            "link_status": "active",
+            "user_id": "u-1"
+          },
+          "song": {
+            "id": "song-99",
+            "title": "Oceanos",
+            "versions": [
+              {"id": "v-orig", "name": "Original", "key": "D"},
+              {"id": "v-live", "name": "Ao Vivo", "key": "E"}
+            ]
+          }
+        }''');
+      });
+
+      final result = await repository.setRepertoireLink(
+        ministryId: 'min-1',
+        chordId: 'sc-1',
+        songId: 'song-99',
+        versionId: 'v-live',
+      );
+
+      expect(result.isLinked, isTrue);
+      expect(result.versionId, equals('v-live'));
+      expect(result.linkedVersion?.name, equals('Ao Vivo'));
+    });
+
+    test('getRepertoireLink parses pending_classification state safely', () async {
+      apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
+        return jsonOk('''{
+          "link": null,
+          "pending_link": {
+            "id": "u-1_sc-1_min-1",
+            "smart_chord_id": "sc-1",
+            "ministry_id": "min-1",
+            "song_id": "song-99",
+            "version_id": null,
+            "link_status": "pending_classification",
+            "pending_reason": "legacy_ambiguous",
+            "user_id": "u-1"
+          },
+          "requires_version_selection": true,
+          "song": {
+            "id": "song-99",
+            "title": "Oceanos",
+            "versions": [
+              {"id": "v-orig", "name": "Original"},
+              {"id": "v-live", "name": "Ao Vivo"}
+            ]
+          }
+        }''');
+      });
+
+      final result = await repository.getRepertoireLink(
+        ministryId: 'min-1',
+        chordId: 'sc-1',
+      );
+
+      expect(result.isLinked, isFalse);
+      expect(result.isPendingClassification, isTrue);
+      expect(result.songId, equals('song-99'));
+      expect(result.song?.versions.length, equals(2));
+    });
+
+    test('getMySmartChordsForSong forwards version_id or link_status query parameter', () async {
+      apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
+        expect(opts.queryParameters, equals({'version_id': 'v-live'}));
+        return jsonOk('''{"data": []}''');
+      });
+
+      await repository.getMySmartChordsForSong(
+        ministryId: 'min-1',
+        songId: 'song-42',
+        versionId: 'v-live',
+      );
+
+      apiClient.dio.httpClientAdapter = MockAdapter((opts) async {
+        expect(
+          opts.queryParameters,
+          equals({'link_status': 'pending_classification'}),
+        );
+        return jsonOk('''{"data": []}''');
+      });
+
+      await repository.getMySmartChordsForSong(
+        ministryId: 'min-1',
+        songId: 'song-42',
+        linkStatus: 'pending_classification',
+      );
+    });
   });
 }

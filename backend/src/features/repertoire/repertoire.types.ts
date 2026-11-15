@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SAFE_VERSION_ID_REGEX } from '../smart_chords/smart_chord_version';
 
 // ============================================================
 // Validation Schemas
@@ -14,7 +15,7 @@ export const songLinkSchema = z
 
 export const songVersionSchema = z
   .object({
-    id: z.string().min(1),
+    id: z.string().trim().regex(SAFE_VERSION_ID_REGEX, 'ID da versão inválido.'),
     name: z.string().min(1).max(255),
     key: z.string().max(10).nullable().optional(),
     bpm: z.union([z.number().positive().max(999), z.string()]).nullable().optional(),

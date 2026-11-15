@@ -1,4 +1,4 @@
-﻿import 'package:dio/dio.dart';
+import 'package:dio/dio.dart';
 import '../../../../core/errors/app_failure.dart';
 import '../../../../core/http/api_client.dart';
 import '../domain/smart_chord.dart';
@@ -14,6 +14,7 @@ abstract class SmartChordRepertoireLinkRepository {
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   });
 
   Future<void> removeRepertoireLink({
@@ -24,6 +25,8 @@ abstract class SmartChordRepertoireLinkRepository {
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   });
 }
 
@@ -58,11 +61,18 @@ class HttpSmartChordRepertoireLinkRepository implements SmartChordRepertoireLink
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) async {
     try {
+      final normalizedVersionId = versionId?.trim();
+      final payload = <String, dynamic>{
+        'song_id': songId,
+        if (normalizedVersionId != null && normalizedVersionId.isNotEmpty)
+          'version_id': normalizedVersionId,
+      };
       final response = await _apiClient.dio.put<Map<String, dynamic>>(
         '/ministries/$ministryId/smart-chords/$chordId/repertoire-link',
-        data: {'song_id': songId},
+        data: payload,
       );
       final data = response.data;
       if (data != null) {
@@ -96,10 +106,22 @@ class HttpSmartChordRepertoireLinkRepository implements SmartChordRepertoireLink
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) async {
     try {
+      final queryParameters = <String, dynamic>{};
+      final normalizedVersionId = versionId?.trim();
+      final normalizedStatus = linkStatus?.trim();
+      if (normalizedVersionId != null && normalizedVersionId.isNotEmpty) {
+        queryParameters['version_id'] = normalizedVersionId;
+      } else if (normalizedStatus != null && normalizedStatus.isNotEmpty) {
+        queryParameters['link_status'] = normalizedStatus;
+      }
+
       final response = await _apiClient.dio.get<dynamic>(
         '/ministries/$ministryId/songs/$songId/my-smart-chords',
+        queryParameters: queryParameters.isEmpty ? null : queryParameters,
       );
       final rawData = response.data;
       final List<dynamic> list;

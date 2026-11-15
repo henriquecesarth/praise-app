@@ -478,6 +478,7 @@ class PreviewSmartChordLinkRepository implements SmartChordRepertoireLinkReposit
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) async {
     _link = mockRepertoireLink;
     return _link;
@@ -495,6 +496,8 @@ class PreviewSmartChordLinkRepository implements SmartChordRepertoireLinkReposit
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) async {
     return [_chord];
   }

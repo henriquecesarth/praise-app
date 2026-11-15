@@ -43,6 +43,7 @@ class _FakeSmartChordLinkRepo implements SmartChordRepertoireLinkRepository {
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) async {
     return linkToReturn;
   }
@@ -60,6 +61,8 @@ class _FakeSmartChordLinkRepo implements SmartChordRepertoireLinkRepository {
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) async {
     return [];
   }
@@ -1258,6 +1261,87 @@ void main() {
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'SmartChordReaderScreen displays pending version classification banner and active linked version name',
+    (tester) async {
+      repo.chord = sampleChord;
+      linkRepo.linkToReturn = const SmartChordRepertoireLink(
+        link: null,
+        pendingLink: SmartChordSongLink(
+          id: 'u_sc_min',
+          userId: 'user-1',
+          smartChordId: 'sc-1',
+          ministryId: 'min-alpha',
+          songId: 'song-1',
+          versionId: null,
+          linkStatus: 'pending_classification',
+          pendingReason: 'legacy_ambiguous',
+        ),
+        song: SmartChordSongSummary(
+          id: 'song-1',
+          ministryId: 'min-alpha',
+          title: 'Oceanos',
+          versions: [
+            SmartChordSongVersionSummary(id: 'v1', name: 'Original'),
+            SmartChordSongVersionSummary(id: 'v2', name: 'Ao Vivo'),
+          ],
+        ),
+        requiresVersionSelection: true,
+      );
+
+      await tester.pumpWidget(
+        buildApp(chordId: sampleChord.id, initialChord: sampleChord),
+      );
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('smart_chord_pending_classification_banner')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('smart_chord_classify_version_button')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'SmartChordReaderScreen displays linked version name when version link is active',
+    (tester) async {
+      repo.chord = sampleChord;
+      linkRepo.linkToReturn = const SmartChordRepertoireLink(
+        link: SmartChordSongLink(
+          id: 'u_sc_min',
+          userId: 'user-1',
+          smartChordId: 'sc-1',
+          ministryId: 'min-alpha',
+          songId: 'song-1',
+          versionId: 'v2',
+          linkStatus: 'active',
+        ),
+        song: SmartChordSongSummary(
+          id: 'song-1',
+          ministryId: 'min-alpha',
+          title: 'Oceanos',
+          versions: [
+            SmartChordSongVersionSummary(id: 'v1', name: 'Original'),
+            SmartChordSongVersionSummary(id: 'v2', name: 'Ao Vivo'),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(
+        buildApp(chordId: sampleChord.id, initialChord: sampleChord),
+      );
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Vinculada: Oceanos'), findsOneWidget);
+      expect(find.text('Versão: Ao Vivo'), findsOneWidget);
     },
   );
 }

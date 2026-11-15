@@ -9,29 +9,37 @@ import '../../domain/smart_chord.dart';
 class SongSmartChordsState {
   final String? songId;
   final String? ministryId;
+  final String? versionId;
   final bool isLoading;
   final List<SmartChord> items;
+  final List<SmartChord> pendingItems;
   final String? errorMessage;
   final int generation;
 
   const SongSmartChordsState({
     this.songId,
     this.ministryId,
+    this.versionId,
     this.isLoading = false,
     this.items = const [],
+    this.pendingItems = const [],
     this.errorMessage,
     this.generation = 0,
   });
 
   bool get isEmpty => !isLoading && errorMessage == null && items.isEmpty;
+  bool get hasPendingClassification => pendingItems.isNotEmpty;
   bool get hasError => errorMessage != null;
 
   SongSmartChordsState copyWith({
     String? songId,
     String? ministryId,
     bool clearMinistryId = false,
+    String? versionId,
+    bool clearVersionId = false,
     bool? isLoading,
     List<SmartChord>? items,
+    List<SmartChord>? pendingItems,
     String? errorMessage,
     bool clearError = false,
     int? generation,
@@ -39,8 +47,10 @@ class SongSmartChordsState {
     return SongSmartChordsState(
       songId: songId ?? this.songId,
       ministryId: clearMinistryId ? null : (ministryId ?? this.ministryId),
+      versionId: clearVersionId ? null : (versionId ?? this.versionId),
       isLoading: isLoading ?? this.isLoading,
       items: items ?? this.items,
+      pendingItems: pendingItems ?? this.pendingItems,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       generation: generation ?? this.generation,
     );
@@ -59,23 +69,37 @@ class SongSmartChordsNotifier extends StateNotifier<SongSmartChordsState> {
         _linkRepository = linkRepository,
         super(const SongSmartChordsState());
 
-  Future<void> load(String songId, {String? ministryId, bool force = false}) async {
+  Future<void> load(
+    String songId, {
+    String? ministryId,
+    String? versionId,
+    bool force = false,
+  }) async {
+    final normalizedVersionId =
+        (versionId != null && versionId.trim().isNotEmpty)
+            ? versionId.trim()
+            : null;
     if (!force &&
         state.songId == songId &&
         state.ministryId == ministryId &&
+        state.versionId == normalizedVersionId &&
         state.items.isNotEmpty &&
         !state.isLoading) {
       return;
     }
 
     final generation = ++_currentGeneration;
-    final contextChanged =
-        state.songId != songId || state.ministryId != ministryId;
+    final contextChanged = state.songId != songId ||
+        state.ministryId != ministryId ||
+        state.versionId != normalizedVersionId;
     state = state.copyWith(
       songId: songId,
       ministryId: ministryId,
       clearMinistryId: ministryId == null,
+      versionId: normalizedVersionId,
+      clearVersionId: normalizedVersionId == null,
       items: contextChanged ? const [] : state.items,
+      pendingItems: contextChanged ? const [] : state.pendingItems,
       isLoading: true,
       clearError: true,
       generation: generation,
@@ -83,11 +107,41 @@ class SongSmartChordsNotifier extends StateNotifier<SongSmartChordsState> {
 
     try {
       final List<SmartChord> list;
+      List<SmartChord> pendingList = const [];
       if (ministryId != null && _linkRepository != null) {
-        list = await _linkRepository.getMySmartChordsForSong(
+        final rawList = await _linkRepository.getMySmartChordsForSong(
           ministryId: ministryId,
           songId: songId,
+          versionId: normalizedVersionId,
         );
+        list = rawList.where((c) {
+          final link = c.repertoireLink;
+          if (link != null && link.isPendingClassification) {
+            return false;
+          }
+          if (normalizedVersionId != null) {
+            final resolvedVersion = link?.versionId ?? c.versionId;
+            if (resolvedVersion != null && resolvedVersion != normalizedVersionId) {
+              return false;
+            }
+          }
+          return true;
+        }).toList();
+
+        if (normalizedVersionId != null) {
+          try {
+            final rawPending = await _linkRepository.getMySmartChordsForSong(
+              ministryId: ministryId,
+              songId: songId,
+              linkStatus: 'pending_classification',
+            );
+            pendingList = rawPending
+                .where((c) => c.repertoireLink?.isPendingClassification == true)
+                .toList();
+          } catch (_) {
+            pendingList = const [];
+          }
+        }
       } else {
         list = await _repository.getSmartChordsBySong(songId);
       }
@@ -96,6 +150,7 @@ class SongSmartChordsNotifier extends StateNotifier<SongSmartChordsState> {
       state = state.copyWith(
         isLoading: false,
         items: list,
+        pendingItems: pendingList,
         clearError: true,
       );
     } catch (e) {
@@ -109,18 +164,31 @@ class SongSmartChordsNotifier extends StateNotifier<SongSmartChordsState> {
 
   void removeChord(String chordId) {
     final updated = state.items.where((c) => c.id != chordId).toList();
-    state = state.copyWith(items: updated);
+    final updatedPending =
+        state.pendingItems.where((c) => c.id != chordId).toList();
+    state = state.copyWith(items: updated, pendingItems: updatedPending);
   }
 
   void upsertChord(SmartChord chord) {
     if (chord.songId != state.songId) return;
+    final updatedPending =
+        state.pendingItems.where((c) => c.id != chord.id).toList();
+    if (state.versionId != null &&
+        chord.versionId != null &&
+        chord.versionId != state.versionId) {
+      state = state.copyWith(pendingItems: updatedPending);
+      return;
+    }
     final index = state.items.indexWhere((c) => c.id == chord.id);
     if (index >= 0) {
       final updated = List<SmartChord>.from(state.items);
       updated[index] = chord;
-      state = state.copyWith(items: updated);
+      state = state.copyWith(items: updated, pendingItems: updatedPending);
     } else {
-      state = state.copyWith(items: [chord, ...state.items]);
+      state = state.copyWith(
+        items: [chord, ...state.items],
+        pendingItems: updatedPending,
+      );
     }
   }
 

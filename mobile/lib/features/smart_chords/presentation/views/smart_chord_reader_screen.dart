@@ -988,10 +988,131 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
       );
     }
 
+    if (linkState.isPendingClassification && linkState.link?.song != null) {
+      final songTitle = linkState.link?.songTitle ?? 'Música vinculada';
+      final songId = linkState.link?.songId;
+      final pendingReason = linkState.link?.pendingLink?.pendingReason;
+      final reasonText = pendingReason == 'version_removed'
+          ? 'A versão vinculada foi removida. Selecione qual versão usar em "$songTitle".'
+          : 'Selecione qual versão de "$songTitle" esta cifra acompanha.';
+
+      return Container(
+        key: const ValueKey('smart_chord_pending_classification_banner'),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.tertiaryContainer.withValues(alpha: 0.45),
+          border: Border(
+            bottom: BorderSide(
+              color: theme.colorScheme.tertiary.withValues(alpha: 0.35),
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.warning_amber_rounded,
+              size: 20,
+              color: theme.colorScheme.onTertiaryContainer,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Classificação de versão pendente: $songTitle',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.onTertiaryContainer,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    reasonText,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onTertiaryContainer,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              key: const ValueKey('smart_chord_classify_version_button'),
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+              icon: const Icon(Icons.layers_outlined, size: 16),
+              label: const Text('Classificar versão'),
+              onPressed: () {
+                SongLinkPickerModal.show(
+                  context,
+                  ministryId: ministryId,
+                  chordId: chord.id,
+                  chordTitle: chord.title,
+                  currentLinkedSongId: songId,
+                  currentLinkedVersionId: null,
+                );
+              },
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'Opções de vínculo',
+              icon: const Icon(Icons.more_vert, size: 20),
+              onSelected: (val) async {
+                if (val == 'change') {
+                  await SongLinkPickerModal.show(
+                    context,
+                    ministryId: ministryId,
+                    chordId: chord.id,
+                    chordTitle: chord.title,
+                    currentLinkedSongId: songId,
+                    currentLinkedVersionId: null,
+                  );
+                } else if (val == 'unlink') {
+                  _confirmUnlink(ministryId, chord);
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'change',
+                  child: Row(
+                    children: [
+                      Icon(Icons.swap_horiz, size: 18),
+                      SizedBox(width: 8),
+                      Text('Alterar música/versão'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'unlink',
+                  child: Row(
+                    children: [
+                      Icon(Icons.link_off, size: 18),
+                      SizedBox(width: 8),
+                      Text('Desvincular'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
     if (linkState.isLinked) {
       final songTitle = linkState.link?.songTitle ?? 'Música vinculada';
       final artistName = linkState.link?.artistName;
       final songId = linkState.link?.songId;
+      final versionId = linkState.link?.versionId;
+      final versionName = linkState.link?.linkedVersion?.name;
+      final subtitleParts = <String>[
+        if (versionName != null && versionName.isNotEmpty)
+          'Versão: $versionName',
+        if (artistName != null && artistName.isNotEmpty) artistName,
+      ];
 
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1016,6 +1137,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                             builder: (_) => SongDetailView(
                               ministryId: ministryId,
                               songId: songId,
+                              initialTitle: songTitle,
+                              initialVersionId: versionId,
                             ),
                           ),
                         );
@@ -1034,9 +1157,9 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    if (artistName != null && artistName.isNotEmpty)
+                    if (subtitleParts.isNotEmpty)
                       Text(
-                        artistName,
+                        subtitleParts.join(' • '),
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -1058,6 +1181,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                     chordId: chord.id,
                     chordTitle: chord.title,
                     currentLinkedSongId: songId,
+                    currentLinkedVersionId: versionId,
                   );
                 } else if (val == 'unlink') {
                   _confirmUnlink(ministryId, chord);

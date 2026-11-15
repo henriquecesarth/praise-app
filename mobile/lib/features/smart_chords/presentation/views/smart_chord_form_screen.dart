@@ -14,6 +14,8 @@ class SmartChordFormScreen extends ConsumerStatefulWidget {
   final SmartChord? initialChord;
   final String? prefillSongId;
   final String? prefillSongTitle;
+  final String? prefillVersionId;
+  final String? prefillVersionName;
   final String? prefillArtistId;
   final String? prefillArtistName;
   final String? prefillKey;
@@ -23,6 +25,8 @@ class SmartChordFormScreen extends ConsumerStatefulWidget {
     this.initialChord,
     this.prefillSongId,
     this.prefillSongTitle,
+    this.prefillVersionId,
+    this.prefillVersionName,
     this.prefillArtistId,
     this.prefillArtistName,
     this.prefillKey,
@@ -40,6 +44,7 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
   late String _selectedKey;
   String? _songId;
   String? _songTitle;
+  String? _versionId;
   String? _artistId;
   bool _showPreview = false;
   String? _boundUserId;
@@ -86,6 +91,7 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
 
     _songId = chord?.songId ?? widget.prefillSongId;
     _songTitle = chord?.songTitle ?? widget.prefillSongTitle;
+    _versionId = chord?.versionId ?? widget.prefillVersionId;
     _artistId = chord?.artistId ?? widget.prefillArtistId;
   }
 
@@ -193,6 +199,7 @@ class _SmartChordFormScreenState extends ConsumerState<SmartChordFormScreen> {
       content: _contentController.text,
       songId: _songId,
       songTitle: _songTitle,
+      versionId: _versionId,
       artistId: _artistId,
       artistName: _artistController.text.trim().isNotEmpty
           ? _artistController.text.trim()

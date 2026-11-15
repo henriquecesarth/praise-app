@@ -37,29 +37,6 @@ export interface MinistryInvite {
 
 export type GroupInvite = MinistryInvite;
 
-export interface LiturgyItem {
-  id: string;
-  liturgyId: string;
-  songId?: string;
-  song?: Song;
-  type: 'song' | 'reading' | 'prayer' | 'custom';
-  title: string;
-  notes?: string;
-  position: number;
-}
-
-export interface Liturgy {
-  id: string;
-  ministryId: string;
-  title: string;
-  date: string;
-  description?: string;
-  createdBy: string;
-  items?: LiturgyItem[];
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface Announcement {
   id: string;
   ministryId: string;
@@ -212,6 +189,8 @@ export interface Song {
   youtubeUrl?: string;
   audioUrl?: string;
   externalLinks?: Record<string, string>;
+  versionId?: string;
+  versionName?: string;
   smartChord?: {
     id: string;
     originalKey: string;
@@ -241,7 +220,12 @@ export interface SmartChord {
     id: string;
     title: string;
   } | null;
+  repertoireLink?: SmartChordSongLink;
+  versionId?: string | null;
 }
+
+export type SmartChordSongLinkStatus = 'active' | 'pending_classification';
+export type SmartChordSongLinkPendingReason = 'legacy_ambiguous' | 'version_removed';
 
 export interface SmartChordSongLink {
   id: string;
@@ -249,8 +233,17 @@ export interface SmartChordSongLink {
   smartChordId: string;
   ministryId: string;
   songId: string;
+  versionId: string | null;
+  linkStatus: SmartChordSongLinkStatus;
+  pendingReason: SmartChordSongLinkPendingReason | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SmartChordSongVersionSummary {
+  id: string;
+  name: string;
+  key?: string | null;
 }
 
 export interface SmartChordSongSummary {
@@ -260,11 +253,14 @@ export interface SmartChordSongSummary {
   artistId?: string | null;
   artistName?: string | null;
   originalKey?: string | null;
+  versions?: SmartChordSongVersionSummary[];
 }
 
 export interface SmartChordRepertoireLink {
   link: SmartChordSongLink | null;
   song: SmartChordSongSummary | null;
+  pendingLink?: SmartChordSongLink | null;
+  requiresVersionSelection?: boolean;
 }
 
 export interface ImportWarning {

@@ -2,6 +2,7 @@ import { FieldPath } from 'firebase-admin/firestore';
 import { db } from '../lib/firebase';
 import { AppError } from '../middleware/error-handler';
 import { SongSummary } from '../features/repertoire/repertoire.types';
+import { assertUniqueSongVersionIds, computeRemovedVersionIds } from '../features/smart_chords/smart_chord_version';
 
 export interface SongCursorData {
   id: string;
@@ -396,6 +397,9 @@ export class RepertoireRepository {
     }
 
     await this.validateVersionClassifications(ministryId, data.versions, data.classification_id);
+    if (Array.isArray(data.versions)) {
+      assertUniqueSongVersionIds(data.versions);
+    }
 
     const { SubscriptionRepository } = await import('./SubscriptionRepository');
     const subRepo = new SubscriptionRepository();
@@ -433,7 +437,11 @@ export class RepertoireRepository {
   }
 
   async updateSong(songId: string, ministryId: string, data: any) {
-    await this.getSongById(songId, ministryId); // Garante existência e pertencimento ao tenant
+    const existingSong = await this.getSongById(songId, ministryId); // Garante existência e pertencimento ao tenant
+
+    if (data.versions !== undefined) {
+      assertUniqueSongVersionIds(data.versions);
+    }
 
     const docRef = this.songsCol.doc(songId);
     const now = new Date().toISOString();
@@ -488,6 +496,16 @@ export class RepertoireRepository {
     await this.validateVersionClassifications(ministryId, data.versions, data.classification_id);
 
     await docRef.update(updateData);
+
+    if (data.versions !== undefined) {
+      const removedVersionIds = computeRemovedVersionIds(existingSong as any, data.versions);
+      if (removedVersionIds.length > 0) {
+        const { SmartChordLinkRepository } = await import('./SmartChordLinkRepository');
+        const linkRepo = new SmartChordLinkRepository();
+        await linkRepo.markRemovedVersionLinksPending(ministryId, songId, removedVersionIds);
+      }
+    }
+
     const updatedDoc = await docRef.get();
     return { id: updatedDoc.id, ...updatedDoc.data() };
   }

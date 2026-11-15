@@ -1,9 +1,13 @@
+import 'smart_chord_repertoire_link.dart';
+
 class SmartChord {
   final String id;
   final String userId;
   final String title;
   final String? artistId;
   final String? songId;
+  final String? versionId;
+  final SmartChordSongLink? repertoireLink;
   final String originalKey;
   final String content;
   final String createdAt;
@@ -20,6 +24,8 @@ class SmartChord {
     required this.title,
     this.artistId,
     this.songId,
+    this.versionId,
+    this.repertoireLink,
     required this.originalKey,
     required this.content,
     required this.createdAt,
@@ -51,12 +57,27 @@ class SmartChord {
       resolvedSongTitle = json['song_title'] as String;
     }
 
+    SmartChordSongLink? parsedRepertoireLink;
+    final rawRepertoireLink = json['repertoire_link'] ?? json['repertoireLink'];
+    if (rawRepertoireLink is Map<String, dynamic>) {
+      parsedRepertoireLink = SmartChordSongLink.fromJson(rawRepertoireLink);
+    }
+
+    final rawVersionId = (json['version_id'] as String?) ??
+        (json['versionId'] as String?) ??
+        parsedRepertoireLink?.versionId;
+    final resolvedVersionId = (rawVersionId != null && rawVersionId.trim().isNotEmpty)
+        ? rawVersionId.trim()
+        : null;
+
     return SmartChord(
       id: (json['id'] as String?) ?? '',
       userId: (json['user_id'] as String?) ?? '',
       title: (json['title'] as String?) ?? '',
       artistId: json['artist_id'] as String?,
       songId: json['song_id'] as String?,
+      versionId: resolvedVersionId,
+      repertoireLink: parsedRepertoireLink,
       originalKey: (json['original_key'] as String?) ?? 'C',
       content: (json['content'] as String?) ?? '',
       createdAt: (json['created_at'] as String?) ?? '',
@@ -76,6 +97,8 @@ class SmartChord {
       'title': title,
       if (artistId != null) 'artist_id': artistId,
       if (songId != null) 'song_id': songId,
+      if (versionId != null) 'version_id': versionId,
+      if (repertoireLink != null) 'repertoire_link': repertoireLink!.toJson(),
       'original_key': originalKey,
       'content': content,
       'created_at': createdAt,
@@ -105,6 +128,8 @@ class SmartChord {
       'song_id': (songId != null && songId!.trim().isNotEmpty)
           ? songId!.trim()
           : null,
+      if (versionId != null && versionId!.trim().isNotEmpty)
+        'version_id': versionId!.trim(),
     };
   }
 
@@ -116,6 +141,10 @@ class SmartChord {
     bool clearArtistId = false,
     String? songId,
     bool clearSongId = false,
+    String? versionId,
+    bool clearVersionId = false,
+    SmartChordSongLink? repertoireLink,
+    bool clearRepertoireLink = false,
     String? originalKey,
     String? content,
     String? createdAt,
@@ -134,6 +163,10 @@ class SmartChord {
       title: title ?? this.title,
       artistId: clearArtistId ? null : (artistId ?? this.artistId),
       songId: clearSongId ? null : (songId ?? this.songId),
+      versionId: clearVersionId ? null : (versionId ?? this.versionId),
+      repertoireLink: clearRepertoireLink
+          ? null
+          : (repertoireLink ?? this.repertoireLink),
       originalKey: originalKey ?? this.originalKey,
       content: content ?? this.content,
       createdAt: createdAt ?? this.createdAt,
@@ -155,6 +188,8 @@ class SmartChord {
         other.title == title &&
         other.artistId == artistId &&
         other.songId == songId &&
+        other.versionId == versionId &&
+        other.repertoireLink == repertoireLink &&
         other.originalKey == originalKey &&
         other.content == content &&
         other.sourceUrl == sourceUrl &&
@@ -172,6 +207,8 @@ class SmartChord {
       title,
       artistId,
       songId,
+      versionId,
+      repertoireLink,
       originalKey,
       content,
       sourceUrl,

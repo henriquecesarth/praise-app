@@ -8,7 +8,6 @@ import {
   RepertoireCounts,
   Ministry,
   MinistryInvite,
-  Liturgy,
   PlansResponse,
   MinistrySubscriptionSummary,
   BillingInterval,
@@ -181,6 +180,29 @@ export function mapAnnouncementFromApi(item: any): Announcement {
   };
 }
 
+export function mapSmartChordSongLinkFromApi(raw: any): SmartChordSongLink {
+  const rawStatus = raw?.link_status ?? raw?.linkStatus;
+  const linkStatus = rawStatus === 'pending_classification' ? 'pending_classification' : 'active';
+  const rawReason = raw?.pending_reason ?? raw?.pendingReason;
+  const pendingReason =
+    linkStatus === 'pending_classification'
+      ? (rawReason === 'version_removed' ? 'version_removed' : 'legacy_ambiguous')
+      : null;
+
+  return {
+    id: raw?.id ?? '',
+    userId: raw?.user_id ?? raw?.userId ?? '',
+    smartChordId: raw?.smart_chord_id ?? raw?.smartChordId ?? '',
+    ministryId: raw?.ministry_id ?? raw?.ministryId ?? '',
+    songId: raw?.song_id ?? raw?.songId ?? '',
+    versionId: raw?.version_id ?? raw?.versionId ?? null,
+    linkStatus,
+    pendingReason,
+    createdAt: raw?.created_at ?? raw?.createdAt ?? '',
+    updatedAt: raw?.updated_at ?? raw?.updatedAt ?? '',
+  };
+}
+
 export function mapSmartChordFromApi(item: any): SmartChord {
   return {
     id: item?.id ?? '',
@@ -198,6 +220,7 @@ export function mapSmartChordFromApi(item: any): SmartChord {
     updatedAt: item?.updated_at ?? item?.updatedAt ?? '',
     artist: item?.artist ? { id: item.artist.id, name: item.artist.name } : null,
     song: item?.song ? { id: item.song.id, title: item.song.title } : null,
+    ...(item?.repertoire_link ? { repertoireLink: mapSmartChordSongLinkFromApi(item.repertoire_link) } : {}),
   };
 }
 
@@ -587,6 +610,37 @@ const mapFolderFromApi = (apiFolder: any): Folder => ({
   updatedAt: apiFolder.updated_at,
 });
 
+const mapScheduleSongFromApi = (rawSong: any) => {
+  if (!rawSong || typeof rawSong !== 'object') return rawSong;
+  const resolvedId = rawSong.id || rawSong.songId || rawSong.song_id || '';
+  const resolvedVersionId =
+    (typeof rawSong.versionId === 'string' ? rawSong.versionId.trim() : '') ||
+    (typeof rawSong.version_id === 'string' ? rawSong.version_id.trim() : '') ||
+    undefined;
+  const resolvedVersionName =
+    (typeof rawSong.versionName === 'string' ? rawSong.versionName.trim() : '') ||
+    (typeof rawSong.version_name === 'string' ? rawSong.version_name.trim() : '') ||
+    undefined;
+  return {
+    ...rawSong,
+    id: resolvedId,
+    artistName: rawSong.artistName || rawSong.artist || undefined,
+    originalKey: rawSong.originalKey || rawSong.key || undefined,
+    versionId: resolvedVersionId,
+    versionName: resolvedVersionName,
+  };
+};
+
+const mapScheduleFromApi = (rawSchedule: any) => {
+  if (!rawSchedule || typeof rawSchedule !== 'object') return rawSchedule;
+  return {
+    ...rawSchedule,
+    songs: Array.isArray(rawSchedule.songs)
+      ? rawSchedule.songs.map(mapScheduleSongFromApi)
+      : [],
+  };
+};
+
 const mapMinistryFromApi = (apiMinistry: any): Ministry => ({
   id: apiMinistry.id,
   name: apiMinistry.name,
@@ -596,27 +650,6 @@ const mapMinistryFromApi = (apiMinistry: any): Ministry => ({
   role: apiMinistry.role || 'member',
   createdAt: apiMinistry.created_at,
   updatedAt: apiMinistry.updated_at,
-});
-
-const mapLiturgyFromApi = (apiLiturgy: any): Liturgy => ({
-  id: apiLiturgy.id,
-  ministryId: apiLiturgy.ministry_id || apiLiturgy.group_id,
-  title: apiLiturgy.title,
-  date: apiLiturgy.date,
-  description: apiLiturgy.description,
-  createdBy: apiLiturgy.created_by,
-  items: (apiLiturgy.liturgy_items || []).map((item: any) => ({
-    id: item.id,
-    liturgyId: item.liturgy_id,
-    songId: item.song_id,
-    song: item.song ? mapSongFromApi(item.song) : undefined,
-    type: item.type,
-    title: item.title,
-    notes: item.notes,
-    position: item.position,
-  })),
-  createdAt: apiLiturgy.created_at,
-  updatedAt: apiLiturgy.updated_at,
 });
 
 export const api = {
@@ -1029,7 +1062,7 @@ export const api = {
       headers: getHeaders(),
     });
     const result = await handleResponse<any[]>(response);
-    return result || [];
+    return (result || []).map(mapScheduleFromApi);
   },
 
   createSchedule: async (ministryId: string, scheduleData: any): Promise<any> => {
@@ -1038,7 +1071,8 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(scheduleData),
     });
-    return handleResponse<any>(response);
+    const created = await handleResponse<any>(response);
+    return mapScheduleFromApi(created);
   },
 
   updateSchedule: async (ministryId: string, scheduleId: string, scheduleData: any): Promise<any> => {
@@ -1047,7 +1081,8 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify(scheduleData),
     });
-    return handleResponse<any>(response);
+    const updated = await handleResponse<any>(response);
+    return mapScheduleFromApi(updated);
   },
 
   deleteSchedule: async (scheduleId: string, ministryId: string): Promise<void> => {
@@ -1065,86 +1100,6 @@ export const api = {
       body: JSON.stringify({ confirmed }),
     });
     return handleResponse<any>(response);
-  },
-
-  // Liturgias
-  getLiturgies: async (ministryId = DEFAULT_MINISTRY_ID): Promise<Liturgy[]> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/liturgies`, {
-      headers: getHeaders(),
-    });
-    const result = await handleResponse<any[]>(response);
-    return (result || []).map(mapLiturgyFromApi);
-  },
-
-  getLiturgyById: async (liturgyId: string, ministryId = DEFAULT_MINISTRY_ID): Promise<Liturgy> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/liturgies/${liturgyId}`, {
-      headers: getHeaders(),
-    });
-    const result = await handleResponse<any>(response);
-    return mapLiturgyFromApi(result);
-  },
-
-  createLiturgy: async (param1: any, param2?: any): Promise<Liturgy> => {
-    let ministryId = DEFAULT_MINISTRY_ID;
-    let liturgyData: Partial<Liturgy> = {};
-    if (typeof param1 === 'string') {
-      ministryId = param1;
-      liturgyData = param2 || {};
-    } else {
-      liturgyData = param1 || {};
-      ministryId = param2 || DEFAULT_MINISTRY_ID;
-    }
-    const payload = {
-      title: liturgyData.title,
-      date: liturgyData.date,
-      description: liturgyData.description,
-      items: (liturgyData.items || []).map((item) => ({
-        song_id: item.songId || null,
-        type: item.type,
-        title: item.title,
-        notes: item.notes || null,
-        position: item.position,
-      })),
-    };
-
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/liturgies`, {
-      method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify(payload),
-    });
-    const result = await handleResponse<any>(response);
-    return mapLiturgyFromApi(result);
-  },
-
-  updateLiturgy: async (liturgyId: string, liturgyData: Partial<Liturgy>, ministryId = DEFAULT_MINISTRY_ID): Promise<Liturgy> => {
-    const payload = {
-      title: liturgyData.title,
-      date: liturgyData.date,
-      description: liturgyData.description,
-      items: (liturgyData.items || []).map((item) => ({
-        song_id: item.songId || null,
-        type: item.type,
-        title: item.title,
-        notes: item.notes || null,
-        position: item.position,
-      })),
-    };
-
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/liturgies/${liturgyId}`, {
-      method: 'PUT',
-      headers: getHeaders(),
-      body: JSON.stringify(payload),
-    });
-    const result = await handleResponse<any>(response);
-    return mapLiturgyFromApi(result);
-  },
-
-  deleteLiturgy: async (liturgyId: string, ministryId = DEFAULT_MINISTRY_ID): Promise<void> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/liturgies/${liturgyId}`, {
-      method: 'DELETE',
-      headers: getHeaders(),
-    });
-    return handleResponse<void>(response);
   },
 
   // Contadores do Repertório
@@ -1386,6 +1341,9 @@ export const api = {
     if (payload.songId !== undefined) {
       body.song_id = payload.songId || null;
     }
+    if (payload.versionId !== undefined) {
+      body.version_id = payload.versionId || null;
+    }
 
     const response = await fetch(`${API_URL}/smart-chords`, {
       method: 'POST',
@@ -1407,6 +1365,7 @@ export const api = {
     if (payload.content !== undefined) body.content = payload.content;
     if (payload.artistId !== undefined) body.artist_id = payload.artistId || null;
     if (payload.songId !== undefined) body.song_id = payload.songId || null;
+    if (payload.versionId !== undefined) body.version_id = payload.versionId || null;
 
     const response = await fetch(`${API_URL}/smart-chords/${id}`, {
       method: 'PUT',
@@ -1431,15 +1390,7 @@ export const api = {
     });
     const result = await handleResponse<any>(response);
     return {
-      link: result?.link ? {
-        id: result.link.id,
-        userId: result.link.user_id,
-        smartChordId: result.link.smart_chord_id,
-        ministryId: result.link.ministry_id,
-        songId: result.link.song_id,
-        createdAt: result.link.created_at,
-        updatedAt: result.link.updated_at,
-      } : null,
+      link: result?.link ? mapSmartChordSongLinkFromApi(result.link) : null,
       song: result?.song ? {
         id: result.song.id,
         ministryId: result.song.ministry_id,
@@ -1447,27 +1398,41 @@ export const api = {
         artistId: result.song.artist_id,
         artistName: result.song.artist_name,
         originalKey: result.song.original_key,
+        ...(Array.isArray(result.song.versions)
+          ? {
+              versions: result.song.versions.map((v: any) => ({
+                id: v.id,
+                name: v.name,
+                key: v.key ?? null,
+              })),
+            }
+          : {}),
       } : null,
+      ...(result?.pending_link ? { pendingLink: mapSmartChordSongLinkFromApi(result.pending_link) } : {}),
+      ...(result?.requires_version_selection !== undefined
+        ? { requiresVersionSelection: Boolean(result.requires_version_selection) }
+        : {}),
     };
   },
 
-  setSmartChordRepertoireLink: async (ministryId: string, chordId: string, songId: string): Promise<SmartChordRepertoireLink> => {
+  setSmartChordRepertoireLink: async (
+    ministryId: string,
+    chordId: string,
+    songId: string,
+    versionId?: string
+  ): Promise<SmartChordRepertoireLink> => {
+    const payload: Record<string, any> = { song_id: songId };
+    if (versionId !== undefined && versionId.trim() !== '') {
+      payload.version_id = versionId.trim();
+    }
     const response = await fetch(`${API_URL}/ministries/${ministryId}/smart-chords/${chordId}/repertoire-link`, {
       method: 'PUT',
       headers: getHeaders(),
-      body: JSON.stringify({ song_id: songId }),
+      body: JSON.stringify(payload),
     });
     const result = await handleResponse<any>(response);
     return {
-      link: result?.link ? {
-        id: result.link.id,
-        userId: result.link.user_id,
-        smartChordId: result.link.smart_chord_id,
-        ministryId: result.link.ministry_id,
-        songId: result.link.song_id,
-        createdAt: result.link.created_at,
-        updatedAt: result.link.updated_at,
-      } : null,
+      link: result?.link ? mapSmartChordSongLinkFromApi(result.link) : null,
       song: result?.song ? {
         id: result.song.id,
         ministryId: result.song.ministry_id,
@@ -1475,6 +1440,15 @@ export const api = {
         artistId: result.song.artist_id,
         artistName: result.song.artist_name,
         originalKey: result.song.original_key,
+        ...(Array.isArray(result.song.versions)
+          ? {
+              versions: result.song.versions.map((v: any) => ({
+                id: v.id,
+                name: v.name,
+                key: v.key ?? null,
+              })),
+            }
+          : {}),
       } : null,
     };
   },
@@ -1487,13 +1461,27 @@ export const api = {
     return handleResponse<void>(response);
   },
 
-  getMySmartChordsForSong: async (ministryId: string, songId: string): Promise<SmartChord[]> => {
-    const response = await fetch(`${API_URL}/ministries/${ministryId}/songs/${songId}/my-smart-chords`, {
+  getMySmartChordsForSong: async (
+    ministryId: string,
+    songId: string,
+    options?: { versionId?: string; linkStatus?: 'active' | 'pending_classification' }
+  ): Promise<SmartChord[]> => {
+    const params = new URLSearchParams();
+    if (options?.versionId) params.set('version_id', options.versionId);
+    if (options?.linkStatus) params.set('link_status', options.linkStatus);
+    const qs = params.toString();
+    const url = `${API_URL}/ministries/${ministryId}/songs/${songId}/my-smart-chords${qs ? `?${qs}` : ''}`;
+
+    const response = await fetch(url, {
       headers: getHeaders(),
     });
     const result = await handleResponse<any>(response);
     const list = Array.isArray(result) ? result : (result?.data || []);
     return list.map(mapSmartChordFromApi);
+  },
+
+  getMyPendingSmartChordsForSong: async (ministryId: string, songId: string): Promise<SmartChord[]> => {
+    return api.getMySmartChordsForSong(ministryId, songId, { linkStatus: 'pending_classification' });
   },
 
   upsertSmartChord: async (songId: string, originalKey: string, content: string): Promise<SmartChord> => {

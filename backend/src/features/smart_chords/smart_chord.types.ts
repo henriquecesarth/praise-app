@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SAFE_VERSION_ID_REGEX } from './smart_chord_version';
 
 const smartChordSourceUrlSchema = z.string().url().max(2048).refine((value) => {
   try {
@@ -15,11 +16,19 @@ export const singleDocumentIdSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{1,100}$/, 'ID deve conter apenas caracteres alfanuméricos, hífen ou sublinhado (máx 100 caracteres).');
 
+export const versionIdSchema = z
+  .string()
+  .trim()
+  .regex(SAFE_VERSION_ID_REGEX, 'ID da versão inválido.');
+
+export const smartChordLinkStatusSchema = z.enum(['active', 'pending_classification']);
+
 export const createSmartChordSchema = z.object({
   title: z.string().trim().min(1, 'Título é obrigatório.').max(255),
   artist_name: z.string().trim().max(255).nullable().optional(),
   artist_id: singleDocumentIdSchema.nullable().optional(), // @deprecated: compatibilidade com clientes legados
   song_id: singleDocumentIdSchema.nullable().optional(), // @deprecated: compatibilidade com clientes legados
+  version_id: versionIdSchema.nullable().optional(),
   original_key: z.string().trim().min(1, 'Tom original é obrigatório.').max(10),
   content: z.string().min(1, 'O conteúdo da cifra é obrigatório.'),
   source_url: smartChordSourceUrlSchema.nullable().optional(),
@@ -32,6 +41,7 @@ export const updateSmartChordSchema = z.object({
   artist_name: z.string().trim().max(255).nullable().optional(),
   artist_id: singleDocumentIdSchema.nullable().optional(), // @deprecated: compatibilidade com clientes legados
   song_id: singleDocumentIdSchema.nullable().optional(), // @deprecated: compatibilidade com clientes legados
+  version_id: versionIdSchema.nullable().optional(),
   original_key: z.string().trim().min(1, 'Tom original não pode ser vazio.').max(10).optional(),
   content: z.string().min(1, 'Conteúdo não pode ser vazio.').optional(),
   source_url: smartChordSourceUrlSchema.nullable().optional(),
@@ -41,7 +51,23 @@ export const updateSmartChordSchema = z.object({
 
 export const setSmartChordRepertoireLinkSchema = z.object({
   song_id: singleDocumentIdSchema,
+  version_id: versionIdSchema.nullable().optional(),
 });
+
+export const mySmartChordsForSongQuerySchema = z
+  .object({
+    version_id: versionIdSchema.optional(),
+    link_status: smartChordLinkStatusSchema.optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.version_id && value.link_status === 'pending_classification') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['link_status'],
+        message: 'Não é permitido combinar version_id com link_status=pending_classification.',
+      });
+    }
+  });
 
 export const smartChordsQuerySchema = z.object({
   search: z.string().max(100).optional(),
@@ -71,7 +97,11 @@ export interface SmartChord {
     id: string;
     title: string;
   } | null;
+  repertoire_link?: SmartChordSongLink;
 }
+
+export type SmartChordSongLinkStatus = 'active' | 'pending_classification';
+export type SmartChordSongLinkPendingReason = 'legacy_ambiguous' | 'version_removed';
 
 export interface SmartChordSongLink {
   id: string; // sha256(JSON.stringify([user_id, smart_chord_id, ministry_id]))
@@ -79,8 +109,17 @@ export interface SmartChordSongLink {
   smart_chord_id: string;
   ministry_id: string;
   song_id: string;
+  version_id: string | null;
+  link_status: SmartChordSongLinkStatus;
+  pending_reason: SmartChordSongLinkPendingReason | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface SmartChordSongVersionSummary {
+  id: string;
+  name: string;
+  key?: string | null;
 }
 
 export interface SmartChordSongSummary {
@@ -90,11 +129,14 @@ export interface SmartChordSongSummary {
   artist_id?: string | null;
   artist_name?: string | null;
   original_key?: string | null;
+  versions?: SmartChordSongVersionSummary[];
 }
 
 export interface SmartChordRepertoireLinkResponse {
   link: SmartChordSongLink | null;
   song: SmartChordSongSummary | null;
+  pending_link?: SmartChordSongLink | null;
+  requires_version_selection?: boolean;
 }
 
 export interface ISegment {

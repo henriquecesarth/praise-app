@@ -430,6 +430,33 @@ describe('API Client & Structured Error Handling', () => {
       expect(JSON.parse(options.body)).toEqual({ song_id: 'sng-target' });
     });
 
+    it('setSmartChordRepertoireLink envia version_id quando informado', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          link: {
+            id: 'usr-1_sc-1_min-1',
+            user_id: 'usr-1',
+            smart_chord_id: 'sc-1',
+            ministry_id: 'min-1',
+            song_id: 'sng-target',
+            version_id: 'ver-2',
+            link_status: 'active',
+          },
+          song: { id: 'sng-target', title: 'Música Multi', versions: [] },
+        })),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const result = await api.setSmartChordRepertoireLink('min-1', 'sc-1', 'sng-target', 'ver-2');
+
+      const [, options] = fetchSpy.mock.calls[0];
+      expect(JSON.parse(options.body)).toEqual({ song_id: 'sng-target', version_id: 'ver-2' });
+      expect(result.link?.versionId).toBe('ver-2');
+      expect(result.link?.linkStatus).toBe('active');
+    });
+
     it('removeSmartChordRepertoireLink envia DELETE', async () => {
       const fetchSpy = vi.fn().mockResolvedValue({
         ok: true,
@@ -459,6 +486,25 @@ describe('API Client & Structured Error Handling', () => {
       expect(url).toMatch(/\/ministries\/min-1\/songs\/sng-1\/my-smart-chords$/);
       expect(result).toHaveLength(1);
       expect(result[0].title).toBe('Minha Cifra');
+    });
+
+    it('getMySmartChordsForSong envia query version_id e getMyPendingSmartChordsForSong envia link_status=pending_classification', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          data: [{ id: 'sc-v2', title: 'Versão Acústica', repertoire_link: { version_id: 'ver-2', link_status: 'linked' } }],
+        })),
+      } as any);
+      global.fetch = fetchSpy;
+
+      const byVersion = await api.getMySmartChordsForSong('min-1', 'sng-1', { versionId: 'ver-2' });
+      expect(fetchSpy.mock.calls[0][0]).toMatch(/\/ministries\/min-1\/songs\/sng-1\/my-smart-chords\?version_id=ver-2$/);
+      expect(byVersion[0].repertoireLink?.versionId).toBe('ver-2');
+
+      const pending = await api.getMyPendingSmartChordsForSong('min-1', 'sng-1');
+      expect(fetchSpy.mock.calls[1][0]).toMatch(/\/ministries\/min-1\/songs\/sng-1\/my-smart-chords\?link_status=pending_classification$/);
+      expect(pending).toHaveLength(1);
     });
 
     describe('SmartChord Import Hub API Client', () => {

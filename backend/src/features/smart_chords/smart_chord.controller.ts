@@ -10,6 +10,7 @@ import {
   smartChordsQuerySchema,
   singleDocumentIdSchema,
   setSmartChordRepertoireLinkSchema,
+  mySmartChordsForSongQuerySchema,
 } from './smart_chord.types';
 import { importTextPayloadSchema, importUrlPayloadSchema } from './smart_chord_import.types';
 import { normalizeChordText } from './smart_chord_normalizer';
@@ -145,7 +146,9 @@ export class SmartChordController extends BaseController {
       const chordId = singleDocumentIdSchema.parse(req.params.chordId);
       const body = setSmartChordRepertoireLinkSchema.parse(req.body);
 
-      const result = await this.service.setRepertoireLink(userId, chordId, ministryId, body.song_id);
+      const result = body.version_id !== undefined
+        ? await this.service.setRepertoireLink(userId, chordId, ministryId, body.song_id, body.version_id)
+        : await this.service.setRepertoireLink(userId, chordId, ministryId, body.song_id);
       this.handleSuccess(res, result);
     } catch (error) {
       this.handleError(error, res, next);
@@ -170,8 +173,15 @@ export class SmartChordController extends BaseController {
       const userId = getUserId(req);
       const ministryId = (req.params.ministryId || req.params.groupId) as string;
       const songId = singleDocumentIdSchema.parse(req.params.songId);
+      const query = mySmartChordsForSongQuerySchema.parse(req.query || {});
+      const hasOptions = query.version_id !== undefined || query.link_status !== undefined;
 
-      const result = await this.service.getMySmartChordsForSong(userId, ministryId, songId);
+      const result = hasOptions
+        ? await this.service.getMySmartChordsForSong(userId, ministryId, songId, {
+            versionId: query.version_id,
+            linkStatus: query.link_status,
+          })
+        : await this.service.getMySmartChordsForSong(userId, ministryId, songId);
       this.handleSuccess(res, { data: result });
     } catch (error) {
       this.handleError(error, res, next);

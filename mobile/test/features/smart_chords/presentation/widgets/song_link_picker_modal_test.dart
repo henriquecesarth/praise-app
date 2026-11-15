@@ -76,6 +76,7 @@ class _FakeRepertoireRepo implements RepertoireRepository {
 class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
   String? lastLinkedSongId;
   String? lastLinkedChordId;
+  String? lastLinkedVersionId;
 
   @override
   Future<SmartChordRepertoireLink> getRepertoireLink({
@@ -88,15 +89,18 @@ class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) async {
     lastLinkedChordId = chordId;
     lastLinkedSongId = songId;
+    lastLinkedVersionId = versionId;
     return SmartChordRepertoireLink(
       link: SmartChordSongLink(
         id: "u_${chordId}_$ministryId",
         smartChordId: chordId,
         ministryId: ministryId,
         songId: songId,
+        versionId: versionId ?? '${songId}_v1',
         userId: "u",
       ),
       song: SmartChordSongSummary(id: songId, title: "Linked Song"),
@@ -113,6 +117,8 @@ class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) async => [];
 }
 
@@ -225,5 +231,43 @@ void main() {
 
     expect(fakeLinkRepo.lastLinkedChordId, equals('sc-grandes'));
     expect(fakeLinkRepo.lastLinkedSongId, equals('s-55'));
+  });
+
+  testWidgets('multi-version song prompts explicit version selection and sends chosen versionId', (tester) async {
+    fakeRepo.songs = const [
+      SongSummary(
+        id: 's-multi',
+        ministryId: 'min-1',
+        title: 'Lugar Secreto',
+        artistName: 'Gabriela Rocha',
+        originalKey: 'C',
+        versions: [
+          SongVersion(id: 'v-orig', name: 'Original', key: 'C'),
+          SongVersion(id: 'v-live', name: 'Acústica', key: 'D'),
+        ],
+      ),
+    ];
+
+    await tester.pumpWidget(buildSubject(chordTitle: 'Lugar Secreto'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Abrir Picker'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 versões'), findsOneWidget);
+    await tester.tap(find.text('Lugar Secreto'));
+    await tester.pumpAndSettle();
+
+    // Must not link immediately to version[0]; opens explicit version dialog instead
+    expect(fakeLinkRepo.lastLinkedSongId, isNull);
+    expect(find.text('Selecionar Versão'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('song_link_version_option_v-live')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(fakeLinkRepo.lastLinkedSongId, equals('s-multi'));
+    expect(fakeLinkRepo.lastLinkedVersionId, equals('v-live'));
   });
 }

@@ -29,21 +29,27 @@ class FakeSmartChordRepertoireLinkRepository
     return linkToReturn ?? const SmartChordRepertoireLink.unlinked();
   }
 
+  String? lastVersionId;
+
   @override
   Future<SmartChordRepertoireLink> setRepertoireLink({
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) async {
     setLinkCallCount++;
+    lastVersionId = versionId;
     if (setLinkCompleter != null) await setLinkCompleter!.future;
     if (errorToThrow != null) throw errorToThrow!;
+    if (linkToReturn != null) return linkToReturn!;
     return SmartChordRepertoireLink(
       link: SmartChordSongLink(
         id: "u-1_${chordId}_$ministryId",
         smartChordId: chordId,
         ministryId: ministryId,
         songId: songId,
+        versionId: versionId ?? '${songId}_v1',
         userId: "u-1",
       ),
       song: SmartChordSongSummary(
@@ -68,6 +74,8 @@ class FakeSmartChordRepertoireLinkRepository
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) async {
     getBySongCallCount++;
     if (errorToThrow != null) throw errorToThrow!;
@@ -283,6 +291,39 @@ void main() {
       expect(firstCallResult, isTrue);
       expect(notifier.state.isSaving, isFalse);
       expect(repository.removeLinkCallCount, equals(1));
+    });
+
+    test('setLink forwards versionId and exposes pending classification state on load', () async {
+      final ok = await notifier.setLink(
+        ministryId: 'min-1',
+        chordId: 'sc-1',
+        songId: 'song-1',
+        versionId: 'v-acoustic',
+      );
+      expect(ok, isTrue);
+      expect(repository.lastVersionId, equals('v-acoustic'));
+      expect(notifier.state.link?.versionId, equals('v-acoustic'));
+      expect(notifier.state.isPendingClassification, isFalse);
+
+      repository.linkToReturn = const SmartChordRepertoireLink(
+        link: null,
+        pendingLink: SmartChordSongLink(
+          id: 'u-1_sc-1_min-1',
+          userId: 'u-1',
+          smartChordId: 'sc-1',
+          ministryId: 'min-1',
+          songId: 'song-1',
+          versionId: null,
+          linkStatus: 'pending_classification',
+          pendingReason: 'legacy_ambiguous',
+        ),
+        song: SmartChordSongSummary(id: 'song-1', title: 'Oceanos'),
+        requiresVersionSelection: true,
+      );
+
+      await notifier.load(ministryId: 'min-1', chordId: 'sc-1', force: true);
+      expect(notifier.state.isLinked, isFalse);
+      expect(notifier.state.isPendingClassification, isTrue);
     });
   });
 }

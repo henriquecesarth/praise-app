@@ -1,8 +1,21 @@
-﻿import { SmartChordRepository } from '../../repositories/SmartChordRepository';
+import { SmartChordRepository } from '../../repositories/SmartChordRepository';
 import { MinistryRepository } from '../../repositories/MinistryRepository';
 import { RepertoireRepository } from '../../repositories/RepertoireRepository';
 import { SmartChordLinkRepository } from '../../repositories/SmartChordLinkRepository';
-import { SmartChord, SmartChordSongLink, SmartChordRepertoireLinkResponse } from './smart_chord.types';
+import {
+  SmartChord,
+  SmartChordSongLink,
+  SmartChordSongLinkPendingReason,
+  SmartChordSongLinkStatus,
+  SmartChordRepertoireLinkResponse,
+  SmartChordSongSummary,
+} from './smart_chord.types';
+import {
+  extractEffectiveSongVersions,
+  normalizeRequestedVersionId,
+  resolveVersionForLink,
+  toPublicSongVersions,
+} from './smart_chord_version';
 import { AppError } from '../../middleware/error-handler';
 
 export interface PaginatedResponse<T> {
@@ -21,7 +34,30 @@ export class SmartChordService {
     private readonly smartChordLinkRepository: SmartChordLinkRepository = new SmartChordLinkRepository(),
   ) {}
 
-  private async validateSongAndArtistAccess(userId: string, songId?: string | null, artistId?: string | null): Promise<void> {
+  private async resolveArtistName(song: any): Promise<string | null> {
+    if (!song?.artist_id) return null;
+    const artist = await this.repertoireRepository.findArtistById(song.artist_id);
+    return artist?.name || null;
+  }
+
+  private buildSongSummary(song: any, artistName: string | null): SmartChordSongSummary {
+    return {
+      id: song.id,
+      ministry_id: song.ministry_id,
+      title: song.title,
+      artist_id: song.artist_id,
+      artist_name: artistName,
+      original_key: song.original_key,
+      versions: toPublicSongVersions(song),
+    };
+  }
+
+  private async validateSongAndArtistAccess(
+    userId: string,
+    songId?: string | null,
+    artistId?: string | null,
+    versionId?: string | null
+  ): Promise<void> {
     let songMinistryId: string | null = null;
     let songArtistId: string | null = null;
 
@@ -37,6 +73,14 @@ export class SmartChordService {
       if (song.artist_id) {
         songArtistId = song.artist_id;
       }
+      if (versionId !== undefined && versionId !== null && versionId.trim() !== '') {
+        const normalizedVersion = normalizeRequestedVersionId(song, versionId);
+        if (!normalizedVersion) {
+          throw new AppError(404, 'Versão não encontrada nesta música.');
+        }
+      }
+    } else if (versionId !== undefined && versionId !== null && versionId.trim() !== '') {
+      throw new AppError(400, 'version_id exige song_id correspondente.');
     }
 
     if (artistId) {
@@ -90,74 +134,149 @@ export class SmartChordService {
     return this.smartChordRepository.getSmartChordById(id, userId) as unknown as SmartChord;
   }
 
-  async createSmartChord(userId: string, data: Partial<SmartChord>): Promise<SmartChord> {
-    await this.validateSongAndArtistAccess(userId, data.song_id, data.artist_id);
+  private async syncCanonicalBridgeLink(
+    userId: string,
+    smartChordId: string,
+    song: any,
+    explicitVersionId?: string | null
+  ): Promise<void> {
+    if (!song?.ministry_id) return;
+
+    if (explicitVersionId === undefined) {
+      let existingCanonical: SmartChordSongLink | null = null;
+      try {
+        existingCanonical = await this.smartChordLinkRepository.getLink(userId, smartChordId, song.ministry_id);
+      } catch {
+        existingCanonical = null;
+      }
+
+      if (existingCanonical && existingCanonical.song_id === song.id) {
+        if (existingCanonical.link_status === 'pending_classification') {
+          return;
+        }
+        if (
+          existingCanonical.version_id &&
+          extractEffectiveSongVersions(song).some((v) => v.id === existingCanonical!.version_id)
+        ) {
+          return;
+        }
+      }
+    }
+
+    const resolution = resolveVersionForLink(song, explicitVersionId);
+    if (resolution.status === 'resolved') {
+      await this.smartChordLinkRepository.setLink(userId, smartChordId, song.ministry_id, song.id, {
+        versionId: resolution.versionId,
+        linkStatus: 'active',
+        pendingReason: null,
+      });
+    } else if (resolution.status === 'version_required') {
+      await this.smartChordLinkRepository.setLink(userId, smartChordId, song.ministry_id, song.id, {
+        versionId: null,
+        linkStatus: 'pending_classification',
+        pendingReason: 'legacy_ambiguous',
+      });
+    } else {
+      throw new AppError(404, 'Versão não encontrada nesta música.');
+    }
+  }
+
+  async createSmartChord(
+    userId: string,
+    data: Partial<SmartChord> & { version_id?: string | null }
+  ): Promise<SmartChord> {
+    const { version_id: explicitVersionId, ...chordData } = data;
+    await this.validateSongAndArtistAccess(userId, chordData.song_id, chordData.artist_id, explicitVersionId);
 
     // Se artist_id foi fornecido sem artist_name, tentar resolver artist_name automaticamente
-    if (data.artist_id && !data.artist_name) {
+    if (chordData.artist_id && !chordData.artist_name) {
       try {
-        const artist = await this.repertoireRepository.findArtistById(data.artist_id);
+        const artist = await this.repertoireRepository.findArtistById(chordData.artist_id);
         if (artist?.name) {
-          data.artist_name = artist.name;
+          chordData.artist_name = artist.name;
         }
       } catch {
         // Não falha caso não consiga resolver
       }
     }
 
-    const created = await this.smartChordRepository.createSmartChord(userId, data) as unknown as SmartChord;
+    const created = await this.smartChordRepository.createSmartChord(userId, chordData) as unknown as SmartChord;
 
     // Se foi fornecido song_id (ex: via criação a partir de detalhes de música), sincroniza link canônico
-    if (data.song_id) {
+    if (chordData.song_id) {
+      const hasExplicitVersion = explicitVersionId !== undefined && explicitVersionId !== null;
       try {
-        const song = await this.repertoireRepository.findSongById(data.song_id);
+        const song = await this.repertoireRepository.findSongById(chordData.song_id);
         if (song?.ministry_id) {
-          await this.smartChordLinkRepository.setLink(userId, created.id, song.ministry_id, song.id);
+          await this.syncCanonicalBridgeLink(userId, created.id, song, explicitVersionId);
         }
-      } catch {
-        // Ignora erro de sincronização se Firestore mockado sem coleção de links
+      } catch (err) {
+        if (hasExplicitVersion || err instanceof AppError) {
+          if (hasExplicitVersion) {
+            try {
+              await this.smartChordRepository.deleteSmartChord(created.id, userId);
+            } catch {
+              // Melhor esforço para evitar cifra órfã sem a versão solicitada
+            }
+          }
+          throw err;
+        }
+        // Ignora erro de infraestrutura apenas no auto-vínculo legado sem version_id explícito
       }
     }
 
     return created;
   }
 
-  async updateSmartChord(id: string, userId: string, data: Partial<SmartChord>): Promise<SmartChord> {
+  async updateSmartChord(
+    id: string,
+    userId: string,
+    data: Partial<SmartChord> & { version_id?: string | null }
+  ): Promise<SmartChord> {
+    const { version_id: explicitVersionId, ...chordData } = data;
     const existing = await this.smartChordRepository.getSmartChordById(id, userId);
 
-    // Valida song e artist somente se song_id ou artist_id forem explicitamente passados no payload
-    if (data.song_id !== undefined || data.artist_id !== undefined) {
-      const effectiveSongId = data.song_id !== undefined ? data.song_id : existing.song_id;
-      const effectiveArtistId = data.artist_id !== undefined ? data.artist_id : existing.artist_id;
-      await this.validateSongAndArtistAccess(userId, effectiveSongId, effectiveArtistId);
+    // Valida song e artist somente se song_id, artist_id ou version_id forem explicitamente passados no payload
+    if (
+      chordData.song_id !== undefined ||
+      chordData.artist_id !== undefined ||
+      explicitVersionId !== undefined
+    ) {
+      const effectiveSongId = chordData.song_id !== undefined ? chordData.song_id : existing.song_id;
+      const effectiveArtistId = chordData.artist_id !== undefined ? chordData.artist_id : existing.artist_id;
+      await this.validateSongAndArtistAccess(userId, effectiveSongId, effectiveArtistId, explicitVersionId);
     }
 
     // Se artist_id foi fornecido sem artist_name, tentar resolver artist_name automaticamente
-    if (data.artist_id && !data.artist_name && !existing.artist_name) {
+    if (chordData.artist_id && !chordData.artist_name && !existing.artist_name) {
       try {
-        const artist = await this.repertoireRepository.findArtistById(data.artist_id);
+        const artist = await this.repertoireRepository.findArtistById(chordData.artist_id);
         if (artist?.name) {
-          data.artist_name = artist.name;
+          chordData.artist_name = artist.name;
         }
       } catch {
         // Não falha caso não consiga resolver
       }
     }
 
-    // Bridge para clientes Web legados que enviam song_id no update
-    if (data.song_id !== undefined) {
-      if (data.song_id !== null && data.song_id.trim() !== '') {
+    // Bridge para clientes Web legados e clientes com version_id no update
+    if (chordData.song_id !== undefined || (explicitVersionId !== undefined && existing.song_id)) {
+      const targetSongId = chordData.song_id !== undefined ? chordData.song_id : existing.song_id;
+      const hasExplicitVersion = explicitVersionId !== undefined && explicitVersionId !== null;
+      if (targetSongId !== null && typeof targetSongId === 'string' && targetSongId.trim() !== '') {
         try {
-          const song = await this.repertoireRepository.findSongById(data.song_id);
+          const song = await this.repertoireRepository.findSongById(targetSongId);
           if (song?.ministry_id) {
             await this.ministryRepository.getMinistryById(song.ministry_id, userId);
-            // Upsert link canônico para o ministério da música, preservando os demais ministérios
-            await this.smartChordLinkRepository.setLink(userId, id, song.ministry_id, song.id);
+            await this.syncCanonicalBridgeLink(userId, id, song, explicitVersionId);
           }
-        } catch {
-          // Ignora se mock em teste
+        } catch (err) {
+          if (hasExplicitVersion || err instanceof AppError) {
+            throw err;
+          }
+          // Ignora erro de infraestrutura apenas no auto-vínculo legado sem version_id explícito
         }
-      } else if (data.song_id === null && existing.song_id) {
+      } else if (chordData.song_id === null && existing.song_id) {
         // Se song_id foi explicitamente limpo, remove apenas o link do ministério da música anterior
         try {
           const prevSong = await this.repertoireRepository.findSongById(existing.song_id);
@@ -170,7 +289,7 @@ export class SmartChordService {
       }
     }
 
-    return this.smartChordRepository.updateSmartChord(id, userId, data) as unknown as SmartChord;
+    return this.smartChordRepository.updateSmartChord(id, userId, chordData) as unknown as SmartChord;
   }
 
   async deleteSmartChord(id: string, userId: string): Promise<void> {
@@ -178,6 +297,80 @@ export class SmartChordService {
   }
 
   // ─── Canonical Repertoire Link Operations ─────────────────────────
+
+  private evaluateCanonicalLinkForSong(
+    canonical: SmartChordSongLink,
+    song: any
+  ): {
+    effectiveLink: SmartChordSongLink;
+    isPending: boolean;
+  } {
+    const effectiveVersions = extractEffectiveSongVersions(song);
+    const validVersionIds = new Set(effectiveVersions.map((v) => v.id));
+
+    if (canonical.link_status === 'pending_classification') {
+      return {
+        isPending: true,
+        effectiveLink: {
+          ...canonical,
+          version_id: null,
+          link_status: 'pending_classification',
+          pending_reason: canonical.pending_reason === 'version_removed' ? 'version_removed' : 'legacy_ambiguous',
+        },
+      };
+    }
+
+    const storedVersionId =
+      typeof canonical.version_id === 'string' && canonical.version_id.trim() !== ''
+        ? canonical.version_id.trim()
+        : null;
+
+    if (storedVersionId) {
+      if (validVersionIds.has(storedVersionId)) {
+        return {
+          isPending: false,
+          effectiveLink: {
+            ...canonical,
+            version_id: storedVersionId,
+            link_status: 'active',
+            pending_reason: null,
+          },
+        };
+      }
+
+      return {
+        isPending: true,
+        effectiveLink: {
+          ...canonical,
+          version_id: null,
+          link_status: 'pending_classification',
+          pending_reason: 'version_removed',
+        },
+      };
+    }
+
+    if (effectiveVersions.length === 1) {
+      return {
+        isPending: false,
+        effectiveLink: {
+          ...canonical,
+          version_id: effectiveVersions[0].id,
+          link_status: 'active',
+          pending_reason: null,
+        },
+      };
+    }
+
+    return {
+      isPending: true,
+      effectiveLink: {
+        ...canonical,
+        version_id: null,
+        link_status: 'pending_classification',
+        pending_reason: 'legacy_ambiguous',
+      },
+    };
+  }
 
   async getRepertoireLink(userId: string, smartChordId: string, ministryId: string): Promise<SmartChordRepertoireLinkResponse> {
     const chord = await this.smartChordRepository.getSmartChordById(smartChordId, userId);
@@ -188,21 +381,22 @@ export class SmartChordService {
     if (canonical) {
       const song = await this.repertoireRepository.findSongById(canonical.song_id);
       if (song && song.ministry_id === ministryId) {
-        let artistName: string | null = null;
-        if (song.artist_id) {
-          const a = await this.repertoireRepository.findArtistById(song.artist_id);
-          artistName = a?.name || null;
+        const artistName = await this.resolveArtistName(song);
+        const songSummary = this.buildSongSummary(song, artistName);
+        const evaluated = this.evaluateCanonicalLinkForSong(canonical, song);
+
+        if (evaluated.isPending) {
+          return {
+            link: null,
+            song: songSummary,
+            pending_link: evaluated.effectiveLink,
+            requires_version_selection: true,
+          };
         }
+
         return {
-          link: canonical,
-          song: {
-            id: song.id,
-            ministry_id: song.ministry_id,
-            title: song.title,
-            artist_id: song.artist_id,
-            artist_name: artistName,
-            original_key: song.original_key,
-          },
+          link: evaluated.effectiveLink,
+          song: songSummary,
         };
       }
       return { link: null, song: null };
@@ -212,30 +406,34 @@ export class SmartChordService {
     if (chord.song_id) {
       const legacySong = await this.repertoireRepository.findSongById(chord.song_id);
       if (legacySong && legacySong.ministry_id === ministryId) {
-        let artistName: string | null = null;
-        if (legacySong.artist_id) {
-          const a = await this.repertoireRepository.findArtistById(legacySong.artist_id);
-          artistName = a?.name || null;
-        }
-        const virtualLink: SmartChordSongLink = {
+        const artistName = await this.resolveArtistName(legacySong);
+        const songSummary = this.buildSongSummary(legacySong, artistName);
+        const effectiveVersions = extractEffectiveSongVersions(legacySong);
+        const virtualBase: SmartChordSongLink = {
           id: this.smartChordLinkRepository.buildLinkId(userId, smartChordId, ministryId),
           user_id: userId,
           smart_chord_id: smartChordId,
           ministry_id: ministryId,
           song_id: legacySong.id,
+          version_id: effectiveVersions.length === 1 ? effectiveVersions[0].id : null,
+          link_status: effectiveVersions.length === 1 ? 'active' : 'pending_classification',
+          pending_reason: effectiveVersions.length === 1 ? null : 'legacy_ambiguous',
           created_at: chord.created_at,
           updated_at: chord.updated_at,
         };
+
+        if (virtualBase.link_status === 'pending_classification') {
+          return {
+            link: null,
+            song: songSummary,
+            pending_link: virtualBase,
+            requires_version_selection: true,
+          };
+        }
+
         return {
-          link: virtualLink,
-          song: {
-            id: legacySong.id,
-            ministry_id: legacySong.ministry_id,
-            title: legacySong.title,
-            artist_id: legacySong.artist_id,
-            artist_name: artistName,
-            original_key: legacySong.original_key,
-          },
+          link: virtualBase,
+          song: songSummary,
         };
       }
     }
@@ -244,7 +442,13 @@ export class SmartChordService {
     return { link: null, song: null };
   }
 
-  async setRepertoireLink(userId: string, smartChordId: string, ministryId: string, songId: string): Promise<SmartChordRepertoireLinkResponse> {
+  async setRepertoireLink(
+    userId: string,
+    smartChordId: string,
+    ministryId: string,
+    songId: string,
+    versionId?: string | null
+  ): Promise<SmartChordRepertoireLinkResponse> {
     await this.smartChordRepository.getSmartChordById(smartChordId, userId);
     await this.ministryRepository.getMinistryById(ministryId, userId);
 
@@ -253,24 +457,33 @@ export class SmartChordService {
       throw new AppError(404, 'Música não encontrada neste ministério.');
     }
 
-    const link = await this.smartChordLinkRepository.setLink(userId, smartChordId, ministryId, songId);
-
-    let artistName: string | null = null;
-    if (song.artist_id) {
-      const a = await this.repertoireRepository.findArtistById(song.artist_id);
-      artistName = a?.name || null;
+    const resolution = resolveVersionForLink(song, versionId);
+    if (resolution.status === 'version_not_found') {
+      throw new AppError(404, 'Versão não encontrada nesta música.');
     }
+    if (resolution.status === 'version_required') {
+      throw new AppError(
+        409,
+        'Esta música possui múltiplas versões. Selecione uma versão para vincular a cifra.',
+        {
+          code: 'VERSION_SELECTION_REQUIRED',
+          song_id: song.id,
+          versions: toPublicSongVersions(song),
+        }
+      );
+    }
+
+    const link = await this.smartChordLinkRepository.setLink(userId, smartChordId, ministryId, songId, {
+      versionId: resolution.versionId,
+      linkStatus: 'active',
+      pendingReason: null,
+    });
+
+    const artistName = await this.resolveArtistName(song);
 
     return {
       link,
-      song: {
-        id: song.id,
-        ministry_id: song.ministry_id,
-        title: song.title,
-        artist_id: song.artist_id,
-        artist_name: artistName,
-        original_key: song.original_key,
-      },
+      song: this.buildSongSummary(song, artistName),
     };
   }
 
@@ -294,7 +507,12 @@ export class SmartChordService {
     }
   }
 
-  async getMySmartChordsForSong(userId: string, ministryId: string, songId: string): Promise<SmartChord[]> {
+  async getMySmartChordsForSong(
+    userId: string,
+    ministryId: string,
+    songId: string,
+    options?: { versionId?: string; linkStatus?: SmartChordSongLinkStatus }
+  ): Promise<SmartChord[]> {
     await this.ministryRepository.getMinistryById(ministryId, userId);
 
     const song = await this.repertoireRepository.findSongById(songId);
@@ -302,30 +520,95 @@ export class SmartChordService {
       throw new AppError(404, 'Música não encontrada neste ministério.');
     }
 
-    // 1. Busca links canônicos do usuário para esta música
+    if (options?.versionId && options?.linkStatus === 'pending_classification') {
+      throw new AppError(400, 'Não é permitido combinar version_id com link_status=pending_classification.');
+    }
+
+    let filterVersionId: string | null = null;
+    if (options?.versionId) {
+      const normalizedVersion = normalizeRequestedVersionId(song, options.versionId);
+      if (!normalizedVersion) {
+        throw new AppError(404, 'Versão não encontrada nesta música.');
+      }
+      filterVersionId = normalizedVersion;
+    }
+
+    const requestedStatus: SmartChordSongLinkStatus = options?.linkStatus ?? 'active';
+    const effectiveVersions = extractEffectiveSongVersions(song);
+
+    // 1. Busca links canônicos do usuário para esta música (prioridade absoluta)
     const links = await this.smartChordLinkRepository.getLinksBySongId(ministryId, songId, userId);
-    const canonicalChords: SmartChord[] = [];
-    for (const link of links) {
+    const userLinks = links.filter((l) => l.user_id === userId);
+    const canonicalChordIdsForSong = new Set(userLinks.map((l) => l.smart_chord_id));
+
+    const map = new Map<string, SmartChord>();
+    for (const link of userLinks) {
+      const evaluated = this.evaluateCanonicalLinkForSong(link, song);
+      if (evaluated.effectiveLink.link_status !== requestedStatus) {
+        continue;
+      }
+      if (requestedStatus === 'active' && filterVersionId && evaluated.effectiveLink.version_id !== filterVersionId) {
+        continue;
+      }
+
       try {
         const chord = await this.smartChordRepository.getSmartChordById(link.smart_chord_id, userId);
-        if (chord) canonicalChords.push(chord as SmartChord);
+        if (chord) {
+          map.set(chord.id, {
+            ...(chord as SmartChord),
+            repertoire_link: evaluated.effectiveLink,
+          });
+        }
       } catch {
         // Cifra pode ter sido excluída
       }
     }
 
-    // 2. Busca cifras legadas onde song_id == songId
+    // 2. Busca cifras legadas onde song_id == songId (somente se não houver link canônico precedendo)
     const legacyChords = await this.smartChordRepository.getSmartChordsBySongId(songId, userId);
-
-    // 3. União e deduplicação (canônico tem precedência)
-    const map = new Map<string, SmartChord>();
-    for (const c of canonicalChords) {
-      map.set(c.id, c);
-    }
     for (const c of legacyChords as SmartChord[]) {
-      if (!map.has(c.id)) {
-        map.set(c.id, c);
+      if (canonicalChordIdsForSong.has(c.id) || map.has(c.id)) {
+        continue;
       }
+
+      // Precedência canônica: se a cifra já foi movida via vínculo canônico para outra música deste ministério,
+      // não ressuscita o vínculo legado em songId (e não ignora falhas na consulta canônica).
+      const canonicalElsewhere = await this.smartChordLinkRepository.getLink(userId, c.id, ministryId);
+      if (canonicalElsewhere) {
+        continue;
+      }
+
+      const isSingleEffectiveVersion = effectiveVersions.length === 1;
+      const virtualStatus: SmartChordSongLinkStatus = isSingleEffectiveVersion ? 'active' : 'pending_classification';
+      const virtualVersionId: string | null = isSingleEffectiveVersion ? effectiveVersions[0].id : null;
+      const virtualPendingReason: SmartChordSongLinkPendingReason | null = isSingleEffectiveVersion
+        ? null
+        : 'legacy_ambiguous';
+
+      if (virtualStatus !== requestedStatus) {
+        continue;
+      }
+      if (requestedStatus === 'active' && filterVersionId && virtualVersionId !== filterVersionId) {
+        continue;
+      }
+
+      const virtualLink: SmartChordSongLink = {
+        id: this.smartChordLinkRepository.buildLinkId(userId, c.id, ministryId),
+        user_id: userId,
+        smart_chord_id: c.id,
+        ministry_id: ministryId,
+        song_id: songId,
+        version_id: virtualVersionId,
+        link_status: virtualStatus,
+        pending_reason: virtualPendingReason,
+        created_at: c.created_at || '',
+        updated_at: c.updated_at || '',
+      };
+
+      map.set(c.id, {
+        ...c,
+        repertoire_link: virtualLink,
+      });
     }
 
     const result = Array.from(map.values());
@@ -342,6 +625,12 @@ export const createSmartChord = (u: string, d: any) => instance.createSmartChord
 export const updateSmartChord = (id: string, u: string, d: any) => instance.updateSmartChord(id, u, d);
 export const deleteSmartChord = (id: string, u: string) => instance.deleteSmartChord(id, u);
 export const getRepertoireLink = (u: string, c: string, m: string) => instance.getRepertoireLink(u, c, m);
-export const setRepertoireLink = (u: string, c: string, m: string, s: string) => instance.setRepertoireLink(u, c, m, s);
+export const setRepertoireLink = (u: string, c: string, m: string, s: string, v?: string | null) =>
+  instance.setRepertoireLink(u, c, m, s, v);
 export const removeRepertoireLink = (u: string, c: string, m: string) => instance.removeRepertoireLink(u, c, m);
-export const getMySmartChordsForSong = (u: string, m: string, s: string) => instance.getMySmartChordsForSong(u, m, s);
+export const getMySmartChordsForSong = (
+  u: string,
+  m: string,
+  s: string,
+  options?: { versionId?: string; linkStatus?: SmartChordSongLinkStatus }
+) => instance.getMySmartChordsForSong(u, m, s, options);

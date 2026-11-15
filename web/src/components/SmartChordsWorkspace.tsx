@@ -6,7 +6,34 @@ import './smart-chords/workspace.css';
 import { SmartChordToolbar } from './smart-chords/SmartChordToolbar';
 import React, { useState, useEffect, useRef } from 'react';
 import { api, SmartChord } from '../api';
-import { Artist, Song } from '../types';
+import {
+  Artist,
+  Song,
+  SmartChordSongLink,
+  SmartChordSongVersionSummary,
+} from '../types';
+
+const getEffectiveSongVersions = (
+  targetSongId: string,
+  song?: { versions?: Array<{ id?: string; name?: string; key?: string | null }>; originalKey?: string | null } | null
+): SmartChordSongVersionSummary[] => {
+  if (!targetSongId || targetSongId === 'new') return [];
+  const versions = Array.isArray(song?.versions) ? song.versions : [];
+  if (versions.length > 0) {
+    return versions.map((v, idx) => ({
+      id: v.id || (idx === 0 ? `${targetSongId}_v1` : `${targetSongId}_v${idx + 1}`),
+      name: v.name || (idx === 0 ? 'Original' : `Versão ${idx + 1}`),
+      key: v.key || song?.originalKey || '',
+    }));
+  }
+  return [
+    {
+      id: `${targetSongId}_v1`,
+      name: 'Original',
+      key: song?.originalKey || '',
+    },
+  ];
+};
 import {
   transposeChord,
   rawToVisual,
@@ -122,6 +149,9 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   const [artistId, setArtistId] = useState('');
   const [artistName, setArtistName] = useState('');
   const [songId, setSongId] = useState('');
+  const [songVersionId, setSongVersionId] = useState('');
+  const [linkSongVersions, setLinkSongVersions] = useState<SmartChordSongVersionSummary[]>([]);
+  const [pendingLinkInfo, setPendingLinkInfo] = useState<SmartChordSongLink | null>(null);
   const [originalKey, setOriginalKey] = useState('C');
   const [content, setContent] = useState('');
   const [semitones, setSemitones] = useState(0);
@@ -409,7 +439,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [linkLoading, setLinkLoading] = useState(false);
   const [baseline, setBaseline] = useState('');
-  const formSnapshot = () => JSON.stringify([title, artistId, artistName, originalKey, content, songId, newSongTitle, autoCreateSong]);
+  const formSnapshot = () => JSON.stringify([title, artistId, artistName, originalKey, content, songId, newSongTitle, autoCreateSong, songVersionId]);
   const dirty = Boolean(editorOwner.current === ownerKey && selectedChord && baseline && formSnapshot() !== baseline);
   const contextRef = useRef({ ministryId, currentUserId, chordId: selectedChord?.id });
   const saveLock = useRef(false);
@@ -420,9 +450,12 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     if (!value) return;
     try {
       const fields = JSON.parse(value);
-      if (!Array.isArray(fields) || fields.length !== 8) return;
+      if (!Array.isArray(fields) || (fields.length !== 8 && fields.length !== 9)) return;
       setTitle(fields[0]); setArtistId(fields[1]); setArtistName(fields[2]); setOriginalKey(fields[3]);
       setContent(fields[4]); setSongId(fields[5]); setNewSongTitle(fields[6]); setAutoCreateSong(fields[7]);
+      if (fields.length === 9) {
+        setSongVersionId(fields[8] || '');
+      }
     } catch { /* Invalid local recovery data is ignored. */ }
   };
   useEffect(() => {
@@ -430,7 +463,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     const discard = () => { try { sessionStorage.removeItem(draftKey()); } catch { /* Ignore unavailable storage. */ } };
     window.addEventListener('smart-chord-discard', discard);
     return () => window.removeEventListener('smart-chord-discard', discard);
-  }, [dirty, title, artistId, artistName, originalKey, content, songId, newSongTitle, autoCreateSong, ministryId, currentUserId]);
+  }, [dirty, title, artistId, artistName, originalKey, content, songId, newSongTitle, autoCreateSong, songVersionId, ministryId, currentUserId]);
   const confirmLeave = () => {
     if (!dirty) return true;
     if (!window.confirm('Descartar alterações não salvas?')) return false;
@@ -577,7 +610,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     const recoveredDraft = readDraft(chord.id);
     editorGeneration.current += 1;
     setLinkLoading(true);
-    setBaseline(JSON.stringify([chord.title, chord.artistId || '', chord.artistName || chord.artist?.name || '', chord.originalKey, chord.content, chord.songId || '', chord.title, true]));
+    setBaseline(JSON.stringify([chord.title, chord.artistId || '', chord.artistName || chord.artist?.name || '', chord.originalKey, chord.content, chord.songId || '', chord.title, true, chord.versionId || '']));
     setWorkspaceMode('read');
     setEditingCell(null);
     setSelectedChord(chord);
@@ -585,6 +618,16 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     setArtistId(chord.artistId || '');
     setArtistName(chord.artistName || chord.artist?.name || '');
     setSongId(chord.songId || '');
+    setSongVersionId(chord.versionId || '');
+    setLinkSongVersions(
+      chord.songId
+        ? getEffectiveSongVersions(
+            chord.songId,
+            repertoireSongs.find((s) => s.id === chord.songId)
+          )
+        : []
+    );
+    setPendingLinkInfo(null);
     setNewSongTitle(chord.title);
     setAutoCreateSong(true);
     setUserModifiedNewSongTitle(false);
@@ -609,19 +652,72 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
         }
 
         if (linkData.link?.songId) {
-          setSongId(linkData.link.songId);
-          setBaseline(value => { const fields = JSON.parse(value); fields[5] = linkData.link?.songId || ''; return JSON.stringify(fields); });
+          const linkedSongId = linkData.link.songId;
+          const repoSong = repertoireSongs.find((s) => s.id === linkedSongId);
+          const sourceSong =
+            linkData.song?.versions && linkData.song.versions.length > 0
+              ? linkData.song
+              : repoSong || linkData.song;
+          const effectiveVersions = getEffectiveSongVersions(linkedSongId, sourceSong);
+          const isPending =
+            linkData.link.linkStatus === 'pending_classification' ||
+            Boolean(linkData.pendingLink);
+
+          let resolvedVersionId = '';
+          if (!isPending) {
+            if (linkData.link.versionId) {
+              resolvedVersionId = linkData.link.versionId;
+            } else if (effectiveVersions.length === 1) {
+              resolvedVersionId = effectiveVersions[0].id;
+            }
+          }
+
+          setSongId(linkedSongId);
+          setSongVersionId(resolvedVersionId);
+          setLinkSongVersions(effectiveVersions);
+          setPendingLinkInfo(isPending ? linkData.link : null);
+          setBaseline((value) => {
+            const fields = JSON.parse(value);
+            fields[5] = linkedSongId;
+            fields[8] = resolvedVersionId;
+            return JSON.stringify(fields);
+          });
         } else if (chord.songId) {
+          const repoSong = repertoireSongs.find((s) => s.id === chord.songId);
+          const effectiveVersions = getEffectiveSongVersions(chord.songId, repoSong);
+          const resolvedVersionId =
+            chord.versionId || (effectiveVersions.length === 1 ? effectiveVersions[0].id : '');
           setSongId(chord.songId);
-          setBaseline(value => { const fields = JSON.parse(value); fields[5] = chord.songId; return JSON.stringify(fields); });
+          setSongVersionId(resolvedVersionId);
+          setLinkSongVersions(effectiveVersions);
+          setPendingLinkInfo(null);
+          setBaseline((value) => {
+            const fields = JSON.parse(value);
+            fields[5] = chord.songId || '';
+            fields[8] = resolvedVersionId;
+            return JSON.stringify(fields);
+          });
         }
       } catch {
         const ctx = linkRequestContextRef.current;
         if (ctx.ministryId !== ministryId || ctx.chordId !== chord.id || ctx.generation !== currentGen) {
           return;
         }
-        setSongId(chord.songId || '');
-          setBaseline(value => { const fields = JSON.parse(value); fields[5] = chord.songId || ''; return JSON.stringify(fields); });
+        const fallbackSongId = chord.songId || '';
+        const repoSong = fallbackSongId ? repertoireSongs.find((s) => s.id === fallbackSongId) : undefined;
+        const effectiveVersions = fallbackSongId ? getEffectiveSongVersions(fallbackSongId, repoSong) : [];
+        const resolvedVersionId =
+          chord.versionId || (effectiveVersions.length === 1 ? effectiveVersions[0].id : '');
+        setSongId(fallbackSongId);
+        setSongVersionId(resolvedVersionId);
+        setLinkSongVersions(effectiveVersions);
+        setPendingLinkInfo(null);
+        setBaseline((value) => {
+          const fields = JSON.parse(value);
+          fields[5] = fallbackSongId;
+          fields[8] = resolvedVersionId;
+          return JSON.stringify(fields);
+        });
       }
     } else {
       linkRequestContextRef.current = {
@@ -643,7 +739,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     editorOwner.current = ownerKey;
     editorGeneration.current += 1;
     setLinkLoading(false);
-    setBaseline(JSON.stringify(['Nova Cifra', '', '', 'C', '[C]Insira a letra e [G]acordes aqui.', '', 'Nova Cifra', true]));
+    setBaseline(JSON.stringify(['Nova Cifra', '', '', 'C', '[C]Insira a letra e [G]acordes aqui.', '', 'Nova Cifra', true, '']));
     setWorkspaceMode('edit');
     setEditingCell(null);
     linkRequestContextRef.current = {
@@ -667,6 +763,9 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     setArtistId('');
     setArtistName('');
     setSongId('');
+    setSongVersionId('');
+    setLinkSongVersions([]);
+    setPendingLinkInfo(null);
     setNewSongTitle('Nova Cifra');
     setAutoCreateSong(true);
     setUserModifiedNewSongTitle(false);
@@ -710,6 +809,33 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     }
   };
 
+  const resolvedLinkSongVersions = React.useMemo(() => {
+    if (!songId || songId === 'new') return [];
+    const repoSong = repertoireSongs.find((s) => s.id === songId);
+    if (repoSong && Array.isArray(repoSong.versions) && repoSong.versions.length > 0) {
+      return getEffectiveSongVersions(songId, repoSong);
+    }
+    if (linkSongVersions.length > 0) {
+      return linkSongVersions;
+    }
+    return getEffectiveSongVersions(songId, repoSong);
+  }, [songId, repertoireSongs, linkSongVersions]);
+
+  const handleSongIdChange = (nextSongId: string) => {
+    setSongId(nextSongId);
+    if (!nextSongId || nextSongId === 'new') {
+      setSongVersionId('');
+      setLinkSongVersions([]);
+      setPendingLinkInfo(null);
+      return;
+    }
+    const targetSong = repertoireSongs.find((s) => s.id === nextSongId);
+    const versions = getEffectiveSongVersions(nextSongId, targetSong);
+    setLinkSongVersions(versions);
+    setSongVersionId(versions.length === 1 ? versions[0].id : '');
+    setPendingLinkInfo((prev) => (prev && prev.songId === nextSongId ? prev : null));
+  };
+
   const handleSave = async () => {
     if (isLoading || saveLock.current || editorOwner.current !== ownerKey) return;
     const saveContext = contextRef.current;
@@ -734,6 +860,8 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
       const savedSnapshot = formSnapshot();
 
       let finalSongId = songId;
+      let finalVersionId = songVersionId;
+      let resolvedVersions: SmartChordSongVersionSummary[] = [];
 
       // Auto-create song in Repertoire if "new" is selected and checked
       if (songId === 'new' && autoCreateSong) {
@@ -749,6 +877,23 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
         }, ministryId);
         if (!isCurrent()) return;
         finalSongId = createdSong.id;
+        resolvedVersions = getEffectiveSongVersions(finalSongId, createdSong);
+        finalVersionId = resolvedVersions[0]?.id || `${finalSongId}_v1`;
+      } else if (finalSongId && finalSongId !== 'new') {
+        const targetSong = repertoireSongs.find((s) => s.id === finalSongId);
+        resolvedVersions =
+          linkSongVersions.length > 0 && !targetSong?.versions?.length
+            ? linkSongVersions
+            : getEffectiveSongVersions(finalSongId, targetSong);
+        if (!finalVersionId && resolvedVersions.length === 1) {
+          finalVersionId = resolvedVersions[0].id;
+        }
+        if (resolvedVersions.length > 1 && !finalVersionId) {
+          alert('Esta música possui múltiplas versões. Selecione a versão antes de salvar o vínculo.');
+          return;
+        }
+      } else {
+        finalVersionId = '';
       }
 
       const payload: Partial<SmartChord> = {
@@ -756,6 +901,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
         artistName: artistName.trim() || undefined,
         artistId: artistId || undefined,
         songId: finalSongId && finalSongId !== 'new' ? finalSongId : undefined,
+        ...(finalSongId && finalSongId !== 'new' && finalVersionId ? { versionId: finalVersionId } : {}),
         originalKey,
         content,
       };
@@ -774,7 +920,12 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
       // Sincroniza vínculo canônico com o repertório do ministério ativo
       if (ministryId && activeChord.id) {
         if (finalSongId && finalSongId !== 'new') {
-          await api.setSmartChordRepertoireLink(ministryId, activeChord.id, finalSongId);
+          await api.setSmartChordRepertoireLink(
+            ministryId,
+            activeChord.id,
+            finalSongId,
+            finalVersionId || undefined
+          );
         } else if (!finalSongId) {
           try {
             await api.removeSmartChordRepertoireLink(ministryId, activeChord.id);
@@ -786,8 +937,17 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
 
       if (!isCurrent()) return;
       setSelectedChord(activeChord);
+      setPendingLinkInfo(null);
+      if (finalSongId && finalSongId !== 'new') {
+        setSongVersionId(finalVersionId);
+        setLinkSongVersions(resolvedVersions);
+      } else {
+        setSongVersionId('');
+        setLinkSongVersions([]);
+      }
       const savedFields = JSON.parse(savedSnapshot);
       savedFields[5] = finalSongId === 'new' ? songId : finalSongId;
+      savedFields[8] = finalSongId && finalSongId !== 'new' ? finalVersionId : '';
       setBaseline(JSON.stringify(savedFields));
       try { sessionStorage.removeItem(draftKey(saveContext.chordId || 'new')); } catch { /* Ignore unavailable storage. */ }
       onNavigate?.(`/cifras/${encodeURIComponent(activeChord.id)}/editar`, true);
@@ -1248,10 +1408,14 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
             {/* Editor form (left workspace column) */}
             <SmartChordEditor
               title={title} artistName={artistName} originalKey={originalKey} songId={songId}
+              songVersionId={songVersionId}
               newSongTitle={newSongTitle} content={content} autoCreateSong={autoCreateSong}
               repertoireSongs={repertoireSongs} relationsLoading={relationsLoading} linkLoading={linkLoading}
+              pendingLinkInfo={pendingLinkInfo}
+              linkSongVersions={resolvedLinkSongVersions}
               handleTitleChange={handleTitleChange} setArtistName={setArtistName} setOriginalKey={setOriginalKey}
-              setSongId={setSongId} setAutoCreateSong={setAutoCreateSong} setContent={setContent}
+              setSongId={handleSongIdChange} setSongVersionId={setSongVersionId}
+              setAutoCreateSong={setAutoCreateSong} setContent={setContent}
               handleNewSongTitleChange={value => { setNewSongTitle(value); setUserModifiedNewSongTitle(true); }}
             />
 

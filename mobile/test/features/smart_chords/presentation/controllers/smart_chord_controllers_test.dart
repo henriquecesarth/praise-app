@@ -154,11 +154,15 @@ class FakeSmartChordRepertoireLinkRepository implements SmartChordRepertoireLink
     return const SmartChordRepertoireLink.unlinked();
   }
 
+  String? lastVersionId;
+  String? lastLinkStatus;
+
   @override
   Future<SmartChordRepertoireLink> setRepertoireLink({
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) async {
     return const SmartChordRepertoireLink.unlinked();
   }
@@ -175,8 +179,12 @@ class FakeSmartChordRepertoireLinkRepository implements SmartChordRepertoireLink
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) async {
     getMySmartChordsCallCount++;
+    lastVersionId = versionId;
+    lastLinkStatus = linkStatus;
     return chordsToReturn;
   }
 }
@@ -326,6 +334,82 @@ void main() {
       expect(notifier.state.items.first.id, 'sc-linked');
       expect(linkRepo.getMySmartChordsCallCount, 1);
       expect(repository.getBySongCallCount, 0);
+    });
+
+    test('load with versionId scopes items and isolates pending classification chords', () async {
+      final linkRepo = FakeSmartChordRepertoireLinkRepository();
+      linkRepo.chordsToReturn = [
+        const SmartChord(
+          id: 'sc-v1',
+          userId: 'u',
+          songId: 'song-100',
+          versionId: 'v1',
+          title: 'Chord V1',
+          originalKey: 'G',
+          content: '',
+          createdAt: '',
+          updatedAt: '',
+          repertoireLink: SmartChordSongLink(
+            id: 'l1',
+            userId: 'u',
+            smartChordId: 'sc-v1',
+            ministryId: 'min-1',
+            songId: 'song-100',
+            versionId: 'v1',
+            linkStatus: 'active',
+          ),
+        ),
+        const SmartChord(
+          id: 'sc-v2',
+          userId: 'u',
+          songId: 'song-100',
+          versionId: 'v2',
+          title: 'Chord V2',
+          originalKey: 'A',
+          content: '',
+          createdAt: '',
+          updatedAt: '',
+          repertoireLink: SmartChordSongLink(
+            id: 'l2',
+            userId: 'u',
+            smartChordId: 'sc-v2',
+            ministryId: 'min-1',
+            songId: 'song-100',
+            versionId: 'v2',
+            linkStatus: 'active',
+          ),
+        ),
+        const SmartChord(
+          id: 'sc-pending',
+          userId: 'u',
+          songId: 'song-100',
+          title: 'Chord Pending',
+          originalKey: 'C',
+          content: '',
+          createdAt: '',
+          updatedAt: '',
+          repertoireLink: SmartChordSongLink(
+            id: 'l3',
+            userId: 'u',
+            smartChordId: 'sc-pending',
+            ministryId: 'min-1',
+            songId: 'song-100',
+            versionId: null,
+            linkStatus: 'pending_classification',
+            pendingReason: 'legacy_ambiguous',
+          ),
+        ),
+      ];
+
+      final notifier = SongSmartChordsNotifier(
+        repository: repository,
+        linkRepository: linkRepo,
+      );
+      await notifier.load('song-100', ministryId: 'min-1', versionId: 'v1');
+
+      expect(notifier.state.versionId, 'v1');
+      expect(notifier.state.items.map((e) => e.id).toList(), ['sc-v1']);
+      expect(notifier.state.pendingItems.map((e) => e.id).toList(), ['sc-pending']);
     });
 
     test('reset clears state', () {

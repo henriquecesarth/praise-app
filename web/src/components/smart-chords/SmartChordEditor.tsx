@@ -1,16 +1,20 @@
-import type { Song } from '../../types';
+import type { Song, SmartChordSongLink, SmartChordSongVersionSummary } from '../../types';
 
 interface Props {
   title: string;
   artistName: string;
   originalKey: string;
   songId: string;
+  songVersionId: string;
+  pendingLinkInfo?: SmartChordSongLink | null;
+  linkSongVersions?: SmartChordSongVersionSummary[];
   newSongTitle: string;
   content: string;
   handleTitleChange: (value: string) => void;
   setArtistName: (value: string) => void;
   setOriginalKey: (value: string) => void;
   setSongId: (value: string) => void;
+  setSongVersionId: (value: string) => void;
   handleNewSongTitleChange: (value: string) => void;
   setContent: (value: string) => void;
   autoCreateSong: boolean;
@@ -31,6 +35,9 @@ export function SmartChordEditor({
   artistName,
   originalKey,
   songId,
+  songVersionId,
+  pendingLinkInfo,
+  linkSongVersions = [],
   newSongTitle,
   content,
   autoCreateSong,
@@ -41,10 +48,26 @@ export function SmartChordEditor({
   setArtistName,
   setOriginalKey,
   setSongId,
+  setSongVersionId,
   handleNewSongTitleChange,
   setContent,
   setAutoCreateSong,
 }: Props) {
+  const selectedSong = songId && songId !== 'new'
+    ? repertoireSongs.find((song) => song.id === songId)
+    : undefined;
+  const availableVersions: Array<{ id: string; name: string; key?: string | null }> =
+    selectedSong?.versions && selectedSong.versions.length > 0
+      ? selectedSong.versions
+      : linkSongVersions.length > 0
+        ? linkSongVersions
+        : selectedSong?.id
+          ? [{ id: `${selectedSong.id}_v1`, name: 'Original', key: selectedSong.originalKey || null }]
+          : [];
+  const needsExplicitVersion = Boolean(
+    songId && songId !== 'new' && (pendingLinkInfo || availableVersions.length > 1)
+  );
+  const selectedVersionLabel = availableVersions.find((v) => v.id === songVersionId)?.name;
   return (
     <div
       className="glass-panel no-print smart-chords-editor"
@@ -119,7 +142,9 @@ export function SmartChordEditor({
         <summary>
           Vínculo com o repertório
           {songId && songId !== 'new'
-            ? `: ${repertoireSongs.find((song) => song.id === songId)?.title || 'Música vinculada'}`
+            ? `: ${repertoireSongs.find((song) => song.id === songId)?.title || 'Música vinculada'}${
+                selectedVersionLabel ? ` (${selectedVersionLabel})` : pendingLinkInfo ? ' (classificação pendente)' : ''
+              }`
             : ''}
         </summary>
         <div className="form-group" style={{ marginTop: '10px', marginBottom: '4px' }}>
@@ -139,6 +164,51 @@ export function SmartChordEditor({
               <option key={s.id} value={s.id}>{s.title}</option>
             ))}
           </select>
+
+          {needsExplicitVersion && (
+            <div style={{ marginTop: '10px' }}>
+              {(pendingLinkInfo || !songVersionId) && (
+                <div
+                  role="alert"
+                  data-testid="smart-chord-version-classification-alert"
+                  style={{
+                    marginBottom: '8px',
+                    padding: '8px 10px',
+                    borderRadius: '8px',
+                    fontSize: '0.82rem',
+                    border: '1px solid var(--status-warning-border, rgba(245, 158, 11, 0.35))',
+                    backgroundColor: 'var(--status-warning-bg, rgba(245, 158, 11, 0.12))',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  {pendingLinkInfo?.pendingReason === 'version_removed'
+                    ? 'A versão anteriormente vinculada foi removida do repertório. Escolha a versão correta abaixo e salve.'
+                    : pendingLinkInfo
+                      ? 'Esta cifra aguarda classificação manual de versão. Escolha a versão correta abaixo e salve.'
+                      : 'Esta música possui múltiplas versões. Selecione explicitamente a versão para vincular.'}
+                </div>
+              )}
+              <label className="form-label" htmlFor="smart-chord-song-version">
+                Versão da Música *
+              </label>
+              <select
+                id="smart-chord-song-version"
+                data-testid="smart-chord-version-select"
+                className="form-control"
+                style={{ minHeight: '44px', fontSize: '0.95rem' }}
+                value={songVersionId}
+                onChange={(e) => setSongVersionId(e.target.value)}
+                disabled={relationsLoading || linkLoading}
+              >
+                <option value="">Selecione a versão...</option>
+                {availableVersions.map((ver) => (
+                  <option key={ver.id} value={ver.id}>
+                    {ver.name}{ver.key ? ` (${ver.key})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* If "new" option is selected, render input text and checkbox */}
           {songId === 'new' && (

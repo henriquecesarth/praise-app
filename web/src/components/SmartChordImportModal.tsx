@@ -1,6 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api, SmartChord, SmartChordImportDraft, ImportWarning } from '../api';
-import { Song } from '../types';
+import { Song, SmartChordSongVersionSummary } from '../types';
+
+const resolveImportSongVersions = (song?: Song): SmartChordSongVersionSummary[] => {
+  if (!song?.id) return [];
+  const rawVersions = Array.isArray(song.versions) ? song.versions : [];
+  if (rawVersions.length > 0) {
+    return rawVersions.map((v, idx) => ({
+      id: v.id || (idx === 0 ? `${song.id}_v1` : `${song.id}_v${idx + 1}`),
+      name: v.name || (idx === 0 ? 'Original' : `Versão ${idx + 1}`),
+      key: v.key || song.originalKey || '',
+    }));
+  }
+  return [];
+};
 import { hasBarProgression, parseBarProgressionLine, isTablatureLine, renderSmartChordLine } from '../utils/smart_chord';
 import { useRepertoireDialog } from './useRepertoireDialog';
 
@@ -56,8 +69,12 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
   // Link prompt state
   const [savedChord, setSavedChord] = useState<SmartChord | null>(null);
   const [selectedSongId, setSelectedSongId] = useState('');
+  const [selectedVersionId, setSelectedVersionId] = useState('');
   const [isLinking, setIsLinking] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
+
+  const selectedSong = repertoireSongs.find((s) => s.id === selectedSongId);
+  const selectedSongVersions = resolveImportSongVersions(selectedSong);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -119,6 +136,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
       setIsNormalizing(false);
       setSavedChord(null);
       setSelectedSongId('');
+      setSelectedVersionId('');
       setIsLinking(false);
       setLinkError(null);
     }
@@ -371,7 +389,10 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
         setSavedChord(created);
         // Pre-select first song or matching title
         const match = repertoireSongs.find(s => s.title.toLowerCase() === title.trim().toLowerCase());
-        setSelectedSongId(match ? match.id : (repertoireSongs[0]?.id || ''));
+        const initialSong = match || repertoireSongs[0];
+        setSelectedSongId(initialSong?.id || '');
+        const initialVersions = resolveImportSongVersions(initialSong);
+        setSelectedVersionId(initialVersions.length === 1 ? initialVersions[0].id : '');
         setStep('link_prompt');
       } else {
         onSuccess(created);
@@ -394,8 +415,22 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
     setIsLinking(true);
     setLinkError(null);
 
+    if (selectedSongVersions.length > 1 && !selectedVersionId) {
+      setLinkError('Esta música possui múltiplas versões. Selecione a versão exata antes de vincular.');
+      return;
+    }
     try {
-      await api.setSmartChordRepertoireLink(ministryId, savedChord.id, selectedSongId);
+      const versionToSend =
+        selectedSongVersions.length === 1
+          ? selectedSongVersions[0].id
+          : selectedSongVersions.length > 1
+            ? selectedVersionId
+            : undefined;
+      if (versionToSend) {
+        await api.setSmartChordRepertoireLink(ministryId, savedChord.id, selectedSongId, versionToSend);
+      } else {
+        await api.setSmartChordRepertoireLink(ministryId, savedChord.id, selectedSongId);
+      }
       if (!isCurrent(currentGen)) return;
       onSuccess(savedChord);
     } catch (err: any) {
@@ -1033,7 +1068,14 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 <select
                   className="form-control"
                   value={selectedSongId}
-                  onChange={(e) => setSelectedSongId(e.target.value)}
+                  onChange={(e) => {
+                    const nextSongId = e.target.value;
+                    setSelectedSongId(nextSongId);
+                    const nextSong = repertoireSongs.find((s) => s.id === nextSongId);
+                    const nextVersions = resolveImportSongVersions(nextSong);
+                    setSelectedVersionId(nextVersions.length === 1 ? nextVersions[0].id : '');
+                    setLinkError(null);
+                  }}
                   style={{ minHeight: '44px', marginTop: '4px' }}
                 >
                   {repertoireSongs.map((song) => (
@@ -1043,6 +1085,35 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                   ))}
                 </select>
               </div>
+
+              {selectedSongVersions.length > 1 && (
+                <div>
+                  <label
+                    htmlFor="smart-chord-import-version-select"
+                    style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}
+                  >
+                    Versão do Repertório (Obrigatória):
+                  </label>
+                  <select
+                    id="smart-chord-import-version-select"
+                    data-testid="smart-chord-import-version-select"
+                    className="form-control"
+                    value={selectedVersionId}
+                    onChange={(e) => {
+                      setSelectedVersionId(e.target.value);
+                      setLinkError(null);
+                    }}
+                    style={{ minHeight: '44px', marginTop: '4px' }}
+                  >
+                    <option value="">-- Selecione a versão --</option>
+                    {selectedSongVersions.map((ver) => (
+                      <option key={ver.id} value={ver.id}>
+                        {ver.name} {ver.key ? `(Tom ${ver.key})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 O vínculo é pessoal e privado. Os demais membros do ministério não terão acesso à sua cifra.
@@ -1100,7 +1171,7 @@ export const SmartChordImportModal: React.FC<SmartChordImportModalProps> = ({
                 type="button"
                 className="btn btn-primary"
                 onClick={handleConfirmLink}
-                disabled={isLinking || !selectedSongId}
+                disabled={isLinking || !selectedSongId || (selectedSongVersions.length > 1 && !selectedVersionId)}
                 style={{ minHeight: '44px' }}
               >
                 {isLinking ? 'Vinculando...' : 'Vincular ao Repertório'}

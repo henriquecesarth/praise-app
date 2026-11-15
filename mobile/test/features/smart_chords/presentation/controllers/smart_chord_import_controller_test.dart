@@ -145,6 +145,7 @@ class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
   String? lastMinistryId;
   String? lastChordId;
   String? lastSongId;
+  String? lastVersionId;
 
   @override
   Future<SmartChordRepertoireLink> getRepertoireLink({
@@ -157,12 +158,14 @@ class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) async {
     linkCallCount++;
     if (linkCompleter != null) await linkCompleter!.future;
     lastMinistryId = ministryId;
     lastChordId = chordId;
     lastSongId = songId;
+    lastVersionId = versionId;
     if (errorToThrow != null) throw errorToThrow!;
     return SmartChordRepertoireLink(
       link: SmartChordSongLink(
@@ -170,6 +173,7 @@ class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
         userId: 'user-1',
         smartChordId: chordId,
         songId: songId,
+        versionId: versionId ?? '${songId}_v1',
         ministryId: ministryId,
       ),
       song: SmartChordSongSummary(id: songId, title: 'Song Title'),
@@ -186,6 +190,8 @@ class _FakeLinkRepo implements SmartChordRepertoireLinkRepository {
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) async => [];
 }
 

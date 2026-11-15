@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/smart_chord.dart';
 import '../controllers/smart_chord_providers.dart';
@@ -7,12 +7,16 @@ class SmartChordPickerModal extends ConsumerStatefulWidget {
   final String ministryId;
   final String songId;
   final String? songTitle;
+  final String? versionId;
+  final String? versionName;
 
   const SmartChordPickerModal({
     super.key,
     required this.ministryId,
     required this.songId,
     this.songTitle,
+    this.versionId,
+    this.versionName,
   });
 
   static Future<bool?> show(
@@ -20,6 +24,8 @@ class SmartChordPickerModal extends ConsumerStatefulWidget {
     required String ministryId,
     required String songId,
     String? songTitle,
+    String? versionId,
+    String? versionName,
   }) {
     return showModalBottomSheet<bool>(
       context: context,
@@ -32,6 +38,8 @@ class SmartChordPickerModal extends ConsumerStatefulWidget {
         ministryId: ministryId,
         songId: songId,
         songTitle: songTitle,
+        versionId: versionId,
+        versionName: versionName,
       ),
     );
   }
@@ -94,6 +102,7 @@ class _SmartChordPickerModalState extends ConsumerState<SmartChordPickerModal> {
       ministryId: widget.ministryId,
       chordId: chord.id,
       songId: widget.songId,
+      versionId: widget.versionId,
     );
 
     if (!mounted) return;
@@ -105,6 +114,7 @@ class _SmartChordPickerModalState extends ConsumerState<SmartChordPickerModal> {
       await ref.read(songSmartChordsNotifierProvider.notifier).load(
         widget.songId,
         ministryId: widget.ministryId,
+        versionId: widget.versionId,
         force: true,
       );
       if (!mounted) return;
@@ -164,11 +174,25 @@ class _SmartChordPickerModalState extends ConsumerState<SmartChordPickerModal> {
                   const Icon(Icons.queue_music, size: 24),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
-                      'Vincular Cifra Existente',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Vincular Cifra Existente',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (widget.versionName != null &&
+                            widget.versionName!.trim().isNotEmpty)
+                          Text(
+                            'Versão: ${widget.versionName!.trim()}',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                   IconButton(

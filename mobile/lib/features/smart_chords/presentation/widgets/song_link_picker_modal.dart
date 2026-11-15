@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../repertoire/domain/song_detail.dart';
 import '../../../repertoire/domain/song_summary.dart';
 import '../../../repertoire/presentation/controllers/repertoire_providers.dart';
 import '../controllers/smart_chord_providers.dart';
@@ -10,6 +11,7 @@ class SongLinkPickerModal extends ConsumerStatefulWidget {
   final String chordId;
   final String? chordTitle;
   final String? currentLinkedSongId;
+  final String? currentLinkedVersionId;
 
   const SongLinkPickerModal({
     super.key,
@@ -17,6 +19,7 @@ class SongLinkPickerModal extends ConsumerStatefulWidget {
     required this.chordId,
     this.chordTitle,
     this.currentLinkedSongId,
+    this.currentLinkedVersionId,
   });
 
   static Future<bool?> show(
@@ -25,6 +28,7 @@ class SongLinkPickerModal extends ConsumerStatefulWidget {
     required String chordId,
     String? chordTitle,
     String? currentLinkedSongId,
+    String? currentLinkedVersionId,
   }) {
     return showModalBottomSheet<bool>(
       context: context,
@@ -38,6 +42,7 @@ class SongLinkPickerModal extends ConsumerStatefulWidget {
         chordId: chordId,
         chordTitle: chordTitle,
         currentLinkedSongId: currentLinkedSongId,
+        currentLinkedVersionId: currentLinkedVersionId,
       ),
     );
   }
@@ -170,7 +175,90 @@ class _SongLinkPickerModalState extends ConsumerState<SongLinkPickerModal> {
     }
   }
 
+  Future<({String id, String name})?> _pickVersionForSong(
+    SongSummary song,
+  ) async {
+    final versions = song.versions;
+    return showDialog<({String id, String name})>(
+      context: context,
+      builder: (dialogCtx) {
+        final theme = Theme.of(dialogCtx);
+        return AlertDialog(
+          title: const Text('Selecionar Versão'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 360),
+            child: SizedBox(
+              width: double.maxFinite,
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: versions.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (_, idx) {
+                  final SongVersion v = versions[idx];
+                  final resolvedId = (v.id != null && v.id!.trim().isNotEmpty)
+                      ? v.id!.trim()
+                      : '${song.id}_v${idx + 1}';
+                  final isCurrentVersion =
+                      song.id == widget.currentLinkedSongId &&
+                      resolvedId == widget.currentLinkedVersionId;
+                  return ListTile(
+                    key: ValueKey('song_link_version_option_$resolvedId'),
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      isCurrentVersion
+                          ? Icons.check_circle
+                          : Icons.layers_outlined,
+                      color: isCurrentVersion
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                    title: Text(v.name),
+                    subtitle: v.key != null && v.key!.trim().isNotEmpty
+                        ? Text('Tom: ${v.key!.trim()}')
+                        : null,
+                    trailing: isCurrentVersion
+                        ? Chip(
+                            label: const Text('Atual'),
+                            backgroundColor:
+                                theme.colorScheme.primaryContainer,
+                          )
+                        : const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(dialogCtx).pop(
+                      (id: resolvedId, name: v.name),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: const Text('Cancelar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _selectSong(SongSummary song) async {
+    String? chosenVersionId;
+    String? chosenVersionName;
+
+    if (song.versions.length > 1) {
+      final selectedVersion = await _pickVersionForSong(song);
+      if (selectedVersion == null || !mounted) return;
+      chosenVersionId = selectedVersion.id;
+      chosenVersionName = selectedVersion.name;
+    } else if (song.versions.length == 1) {
+      final single = song.versions.first;
+      chosenVersionId = (single.id != null && single.id!.trim().isNotEmpty)
+          ? single.id!.trim()
+          : '${song.id}_v1';
+      chosenVersionName = single.name;
+    }
+
     setState(() {
       _linkingSongId = song.id;
     });
@@ -180,6 +268,7 @@ class _SongLinkPickerModalState extends ConsumerState<SongLinkPickerModal> {
       ministryId: widget.ministryId,
       chordId: widget.chordId,
       songId: song.id,
+      versionId: chosenVersionId,
     );
 
     if (!mounted) return;
@@ -189,9 +278,12 @@ class _SongLinkPickerModalState extends ConsumerState<SongLinkPickerModal> {
 
     if (success) {
       Navigator.of(context).pop(true);
+      final linkedLabel = chosenVersionName != null
+          ? 'Cifra vinculada a "${song.title}" ($chosenVersionName).'
+          : 'Cifra vinculada a "${song.title}".';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Cifra vinculada a "${song.title}".'),
+          content: Text(linkedLabel),
         ),
       );
     } else {
@@ -346,7 +438,14 @@ class _SongLinkPickerModalState extends ConsumerState<SongLinkPickerModal> {
                                     );
                                   }
                                 final song = _songs[index];
-                                final isCurrentlyLinked = song.id == widget.currentLinkedSongId;
+                                final isMultiVersionSong = song.versions.length > 1;
+                                final hasPendingCurrentSong =
+                                    song.id == widget.currentLinkedSongId &&
+                                    isMultiVersionSong &&
+                                    widget.currentLinkedVersionId == null;
+                                final isCurrentlyLinked =
+                                    song.id == widget.currentLinkedSongId &&
+                                    !hasPendingCurrentSong;
                                 final isMatchingTitle = _isTitleMatch(song.title);
                                 final isLinking = _linkingSongId == song.id;
 
@@ -407,15 +506,22 @@ class _SongLinkPickerModalState extends ConsumerState<SongLinkPickerModal> {
                                         song.artistName,
                                       if (song.originalKey != null && song.originalKey!.isNotEmpty)
                                         'Tom: ${song.originalKey}',
+                                      if (isMultiVersionSong)
+                                        '${song.versions.length} versões',
                                     ].join(' • '),
                                   ),
-                                  trailing: isCurrentlyLinked
+                                  trailing: hasPendingCurrentSong
                                       ? Chip(
-                                          label: const Text('Vinculada'),
-                                          backgroundColor: theme.colorScheme.primaryContainer,
+                                          label: const Text('Versão pendente'),
+                                          backgroundColor: theme.colorScheme.tertiaryContainer,
                                         )
-                                      : const Icon(Icons.chevron_right),
-                                  onTap: isLinking || isCurrentlyLinked
+                                      : isCurrentlyLinked
+                                          ? Chip(
+                                              label: const Text('Vinculada'),
+                                              backgroundColor: theme.colorScheme.primaryContainer,
+                                            )
+                                          : const Icon(Icons.chevron_right),
+                                  onTap: isLinking || (isCurrentlyLinked && !isMultiVersionSong)
                                       ? null
                                       : () => _selectSong(song),
                                 );

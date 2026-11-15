@@ -156,6 +156,8 @@ class _FakeSmartChordLinkRepository
   Future<List<SmartChord>> getMySmartChordsForSong({
     required String ministryId,
     required String songId,
+    String? versionId,
+    String? linkStatus,
   }) async {
     requestedMinistries.add(ministryId);
     final handler = _handlers[ministryId];
@@ -177,6 +179,7 @@ class _FakeSmartChordLinkRepository
     required String ministryId,
     required String chordId,
     required String songId,
+    String? versionId,
   }) async =>
       setLinkHandler != null
           ? setLinkHandler!(ministryId, chordId, songId)
