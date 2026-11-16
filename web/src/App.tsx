@@ -1361,6 +1361,8 @@ export default function App() {
             <SongDetail
               song={selectedSong}
               ministryId={activeGroup?.id || selectedSong.ministryId || groupId}
+              userRole={userRole}
+              currentUserId={currentUser?.id}
               chordFontFamily={currentUser?.preferences?.chordFontFamily}
               classifications={classifications}
               initialVersionId={routeState.songVersionId}
@@ -1629,6 +1631,7 @@ export default function App() {
               {mainModule === 'cifrador' && (
                 <RoutedSmartChords
                   currentUserId={currentUser?.id}
+                  userRole={userRole}
                   ministryId={groupId}
                   initialChordId={selectedSmartChordId || undefined}
                   onInitialChordConsumed={() => setSelectedSmartChordId(null)}

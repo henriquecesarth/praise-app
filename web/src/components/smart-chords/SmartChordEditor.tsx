@@ -22,6 +22,7 @@ interface Props {
   repertoireSongs: Song[];
   relationsLoading: boolean;
   linkLoading: boolean;
+  canManageRepertoireLinks?: boolean;
 }
 
 const keysList = [
@@ -44,6 +45,7 @@ export function SmartChordEditor({
   repertoireSongs,
   relationsLoading,
   linkLoading,
+  canManageRepertoireLinks = false,
   handleTitleChange,
   setArtistName,
   setOriginalKey,
@@ -129,7 +131,8 @@ export function SmartChordEditor({
         </div>
       </div>
 
-      {/* Vínculo com Música do Repertório */}
+      {/* Vínculo com Música do Repertório (somente administradores) */}
+      {canManageRepertoireLinks && (
       <details
         className="smart-chords-link"
         style={{
@@ -251,6 +254,7 @@ export function SmartChordEditor({
           )}
         </div>
       </details>
+      )}
 
       <div className="form-group smart-chords-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', marginBottom: 0 }}>
         <label className="form-label">Conteúdo da Cifra (Formato Bracket) *</label>

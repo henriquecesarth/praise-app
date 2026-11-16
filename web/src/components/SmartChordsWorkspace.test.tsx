@@ -353,7 +353,7 @@ describe('SmartChordsWorkspace', () => {
         return Promise.resolve({ link: null, song: null });
       });
 
-      render(<SmartChordsWorkspace ministryId="min-1" />);
+      render(<SmartChordsWorkspace ministryId="min-1" userRole="admin" />);
 
       await waitFor(() => {
         expect(screen.getByText('Cifra Um')).toBeInTheDocument();
@@ -404,7 +404,7 @@ describe('SmartChordsWorkspace', () => {
         return Promise.resolve({ link: null, song: null });
       });
 
-      const { rerender } = render(<SmartChordsWorkspace ministryId="min-alpha" />);
+      const { rerender } = render(<SmartChordsWorkspace ministryId="min-alpha" userRole="admin" />);
 
       await waitFor(() => {
         expect(screen.getByText('Cifra Alpha')).toBeInTheDocument();
@@ -414,7 +414,7 @@ describe('SmartChordsWorkspace', () => {
       fireEvent.click(screen.getByText('Cifra Alpha'));
 
       // Switch active ministry to Beta
-      rerender(<SmartChordsWorkspace ministryId="min-beta" />);
+      rerender(<SmartChordsWorkspace ministryId="min-beta" userRole="admin" />);
 
       // Late response for Alpha arrives
       resolveAlphaLink({
@@ -1842,7 +1842,7 @@ describe('SmartChordsWorkspace', () => {
       versionId: 'ver-2',
     });
 
-    render(<SmartChordsWorkspace ministryId="min-1" currentUserId="u1" />);
+    render(<SmartChordsWorkspace ministryId="min-1" currentUserId="u1" userRole="admin" />);
     fireEvent.click(await screen.findByText('Cifra Legada Ambígua'));
 
     expect(await screen.findByTestId('smart-chord-version-classification-alert')).toBeInTheDocument();
@@ -1855,6 +1855,46 @@ describe('SmartChordsWorkspace', () => {
     await waitFor(() => {
       expect(setSmartChordRepertoireLink).toHaveBeenCalledWith('min-1', 'c-pending', 'song-multi', 'ver-2');
     });
+    alertSpy.mockRestore();
+  });
+
+  it('R2.2 RBAC (member): hides repertoire linking controls and saves personal chord without song_id or link API calls', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    getSmartChords.mockResolvedValue([
+      { id: 'c-personal', userId: 'm1', title: 'Estudo Vocal', originalKey: 'G', content: '[G]Aleluia' },
+    ]);
+    updateSmartChord.mockResolvedValue({
+      id: 'c-personal',
+      userId: 'm1',
+      title: 'Estudo Vocal Editado',
+      originalKey: 'G',
+      content: '[G]Aleluia',
+    });
+
+    render(<SmartChordsWorkspace ministryId="min-1" currentUserId="m1" userRole="member" />);
+    fireEvent.click(await screen.findByText('Estudo Vocal'));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Estudo Vocal')).toBeInTheDocument();
+    });
+
+    // Member does NOT see repertoire linking section in SmartChordEditor
+    expect(screen.queryByText(/Vínculo com o repertório/i)).toBeNull();
+    expect(screen.queryByText(/Vincular a uma Música do Repertório/i)).toBeNull();
+
+    fireEvent.change(screen.getByDisplayValue('Estudo Vocal'), {
+      target: { value: 'Estudo Vocal Editado' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Salvar Cifra/i }));
+
+    await waitFor(() => {
+      expect(updateSmartChord).toHaveBeenCalledTimes(1);
+    });
+    const payload = updateSmartChord.mock.calls[0][1];
+    expect(payload.songId).toBeUndefined();
+    expect(payload.versionId).toBeUndefined();
+    expect(setSmartChordRepertoireLink).not.toHaveBeenCalled();
+    expect(removeSmartChordRepertoireLink).not.toHaveBeenCalled();
     alertSpy.mockRestore();
   });
 });

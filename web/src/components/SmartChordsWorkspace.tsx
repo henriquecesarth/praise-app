@@ -11,6 +11,7 @@ import {
   Song,
   SmartChordSongLink,
   SmartChordSongVersionSummary,
+  GroupRole,
 } from '../types';
 
 const getEffectiveSongVersions = (
@@ -115,6 +116,7 @@ export interface SmartChordsWorkspaceProps {
   onNavigate?: (path: string, replace?: boolean) => void;
   onDirtyChange?: (dirty: boolean) => void;
   currentUserId?: string;
+  userRole?: GroupRole;
   ministryId: string;
   initialChordId?: string;
   onInitialChordConsumed?: () => void;
@@ -130,7 +132,9 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   chordFontFamily,
   onFontPreferenceChange,
   currentUserId,
+  userRole = 'member',
 }) => {
+  const canManageRepertoireLinks = userRole === 'admin';
   const [smartChords, setSmartChords] = useState<SmartChord[]>([]);
   const [workspaceMode, setWorkspaceMode] = useState<'edit' | 'read'>('edit');
   const [selectedChord, setSelectedChord] = useState<SmartChord | null>(null);
@@ -859,12 +863,12 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
       setIsLoading(true);
       const savedSnapshot = formSnapshot();
 
-      let finalSongId = songId;
-      let finalVersionId = songVersionId;
+      let finalSongId = canManageRepertoireLinks ? songId : '';
+      let finalVersionId = canManageRepertoireLinks ? songVersionId : '';
       let resolvedVersions: SmartChordSongVersionSummary[] = [];
 
       // Auto-create song in Repertoire if "new" is selected and checked
-      if (songId === 'new' && autoCreateSong) {
+      if (canManageRepertoireLinks && songId === 'new' && autoCreateSong) {
         if (!newSongTitle.trim()) {
           alert('Por favor, informe o título da nova música.');
           setIsLoading(false);
@@ -900,8 +904,12 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
         title: title.trim(),
         artistName: artistName.trim() || undefined,
         artistId: artistId || undefined,
-        songId: finalSongId && finalSongId !== 'new' ? finalSongId : undefined,
-        ...(finalSongId && finalSongId !== 'new' && finalVersionId ? { versionId: finalVersionId } : {}),
+        ...(canManageRepertoireLinks && finalSongId && finalSongId !== 'new'
+          ? {
+              songId: finalSongId,
+              ...(finalVersionId ? { versionId: finalVersionId } : {}),
+            }
+          : {}),
         originalKey,
         content,
       };
@@ -917,8 +925,8 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
       if (!isCurrent()) return;
       setSelectedChord(activeChord);
 
-      // Sincroniza vínculo canônico com o repertório do ministério ativo
-      if (ministryId && activeChord.id) {
+      // Sincroniza vínculo canônico com o repertório do ministério ativo (somente administradores)
+      if (canManageRepertoireLinks && ministryId && activeChord.id) {
         if (finalSongId && finalSongId !== 'new') {
           await api.setSmartChordRepertoireLink(
             ministryId,
@@ -1409,6 +1417,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
             <SmartChordEditor
               title={title} artistName={artistName} originalKey={originalKey} songId={songId}
               songVersionId={songVersionId}
+              canManageRepertoireLinks={canManageRepertoireLinks}
               newSongTitle={newSongTitle} content={content} autoCreateSong={autoCreateSong}
               repertoireSongs={repertoireSongs} relationsLoading={relationsLoading} linkLoading={linkLoading}
               pendingLinkInfo={pendingLinkInfo}

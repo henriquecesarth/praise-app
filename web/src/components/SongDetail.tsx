@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Song, SongVersion, SmartChord, Classification } from '../types';
+import { Song, SongVersion, SmartChord, Classification, GroupRole } from '../types';
 import { api } from '../api';
 import {
   transposeChord,
@@ -97,6 +97,8 @@ function resolveVersionIndexById(versions: SongVersion[], targetVersionId?: stri
 interface SongDetailProps {
   song: Song;
   ministryId?: string;
+  userRole?: GroupRole;
+  currentUserId?: string;
   chordFontFamily?: string;
   classifications?: Classification[];
   initialVersionId?: string;
@@ -110,6 +112,8 @@ interface SongDetailProps {
 export const SongDetail: React.FC<SongDetailProps> = ({
   song,
   ministryId,
+  userRole = 'member',
+  currentUserId,
   chordFontFamily,
   classifications = [],
   initialVersionId,
@@ -120,6 +124,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   onOpenSmartChord,
 }) => {
   const effectiveMinistryId = ministryId || song.ministryId;
+  const canManageRepertoire = userRole === 'admin';
 
   const [effectiveFontFamily, setEffectiveFontFamily] = useState<string>(() =>
     resolveEffectiveFont(chordFontFamily)
@@ -218,6 +223,9 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   const activeChord: SmartChord | undefined = (linkedChords && linkedChords.length > 0)
     ? linkedChords[selectedChordIndex] || linkedChords[0]
     : undefined;
+  const canModifyActiveChord =
+    canManageRepertoire &&
+    Boolean(currentUserId && activeChord?.userId && activeChord.userId === currentUserId);
 
   const hasSmartChord = !!activeChord;
 
@@ -373,7 +381,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     setLoadingChords(true);
 
     const fetchPending =
-      typeof api.getMyPendingSmartChordsForSong === 'function'
+      canManageRepertoire && typeof api.getMyPendingSmartChordsForSong === 'function'
         ? api.getMyPendingSmartChordsForSong(currentMinistryId, currentSongId).catch(() => [] as SmartChord[])
         : Promise.resolve([] as SmartChord[]);
 
@@ -417,7 +425,14 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     return () => {
       active = false;
     };
-  }, [effectiveMinistryId, song.id, activeVersion.id, sessionToken, chordsRetryNonce]);
+  }, [effectiveMinistryId, song.id, activeVersion.id, sessionToken, chordsRetryNonce, canManageRepertoire]);
+
+  useEffect(() => {
+    if (!canManageRepertoire) {
+      setIsLinkModalOpen(false);
+      setPendingChords([]);
+    }
+  }, [canManageRepertoire]);
 
   const handleCloseLinkModal = () => {
     if (isLinking) return;
@@ -429,7 +444,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   };
 
   const handleOpenLinkModal = async () => {
-    if (!effectiveMinistryId) return;
+    if (!canManageRepertoire || !effectiveMinistryId) return;
 
     modalGenerationRef.current += 1;
     const currentModalGen = modalGenerationRef.current;
@@ -471,7 +486,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   };
 
   const handleConfirmLink = async () => {
-    if (!effectiveMinistryId || !song.id || !selectedChordToLink || isLinking) return;
+    if (!canManageRepertoire || !effectiveMinistryId || !song.id || !selectedChordToLink || isLinking) return;
     const targetMinistryId = effectiveMinistryId;
     const targetSongId = song.id;
     const targetVersionId = activeVersion.id;
@@ -512,7 +527,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   };
 
   const handleClassifyPendingChord = async (chordId: string) => {
-    if (!effectiveMinistryId || !song.id || classifyingChordId) return;
+    if (!canManageRepertoire || !effectiveMinistryId || !song.id || classifyingChordId) return;
     const targetMinistryId = effectiveMinistryId;
     const targetSongId = song.id;
     const targetVersionId = activeVersion.id;
@@ -543,7 +558,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   };
 
   const handleUnlinkChord = async (chordId: string) => {
-    if (!effectiveMinistryId || !song.id || loadingChords || isUnlinking) return;
+    if (!canManageRepertoire || !effectiveMinistryId || !song.id || loadingChords || isUnlinking) return;
     if (!linkedChords.some((c) => c.id === chordId)) return;
 
     const targetMinistryId = effectiveMinistryId;
@@ -597,6 +612,12 @@ export const SongDetail: React.FC<SongDetailProps> = ({
       : safeVersionIndex === 0 && song.classificationId
       ? [song.classificationId]
       : [];
+
+  const visiblePendingChords = canManageRepertoire
+    ? pendingChords.filter(
+        (chord) => Boolean(currentUserId && chord.userId && chord.userId === currentUserId)
+      )
+    : [];
 
   const activeClassificationLabels: string[] = activeClassificationIds
     .map((id: string) => classifications.find((c) => c.id === id)?.name || id)
@@ -1013,7 +1034,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
             )}
 
             <div className="music-stand-bar__actions">
-              {effectiveMinistryId && (
+              {canManageRepertoire && effectiveMinistryId && (
                 <button
                   type="button"
                   className="btn btn-secondary"
@@ -1026,7 +1047,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 </button>
               )}
 
-              {activeChord?.id && onOpenSmartChord && (
+              {canModifyActiveChord && activeChord?.id && onOpenSmartChord && (
                 <button
                   type="button"
                   className="btn btn-secondary"
@@ -1039,7 +1060,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 </button>
               )}
 
-              {activeChord?.id && linkedChords.some((c) => c.id === activeChord.id) && (
+              {canModifyActiveChord && activeChord?.id && linkedChords.some((c) => c.id === activeChord.id) && (
                 <button
                   type="button"
                   className="btn btn-danger"
@@ -1113,7 +1134,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
           </div>
         )}
 
-        {pendingChords.length > 0 && (
+        {visiblePendingChords.length > 0 && (
           <div
             className="music-stand-bar__alert"
             role="status"
@@ -1137,7 +1158,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0, maxWidth: '100%' }}>
-              {pendingChords.map((pendingChord) => (
+              {visiblePendingChords.map((pendingChord) => (
                 <div
                   key={pendingChord.id}
                   style={{
@@ -1593,7 +1614,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
       </div>
 
       {/* Modal Vincular Cifra Inteligente */}
-      {isLinkModalOpen && (
+      {canManageRepertoire && isLinkModalOpen && (
         <div
           className="modal-backdrop"
           role="dialog"

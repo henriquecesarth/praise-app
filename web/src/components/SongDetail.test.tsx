@@ -146,6 +146,8 @@ describe('SongDetail (D2-B Delivery 2)', () => {
       <SongDetail
         song={multiVersionSong}
         ministryId="min-1"
+        userRole="admin"
+        currentUserId="user-1"
         classifications={mockClassifications}
         onBack={vi.fn()}
       />
@@ -295,6 +297,8 @@ describe('SongDetail (D2-B Delivery 2)', () => {
       <SongDetail
         song={multiVersionSong}
         ministryId="min-1"
+        userRole="admin"
+        currentUserId="user-1"
         onBack={vi.fn()}
         onOpenSmartChord={onOpenSmartChord}
       />
@@ -314,6 +318,8 @@ describe('SongDetail (D2-B Delivery 2)', () => {
       <SongDetail
         song={secondSong}
         ministryId="min-1"
+        userRole="admin"
+        currentUserId="user-1"
         onBack={vi.fn()}
         onOpenSmartChord={onOpenSmartChord}
       />
@@ -349,6 +355,8 @@ describe('SongDetail (D2-B Delivery 2)', () => {
       <SongDetail
         song={multiVersionSong}
         ministryId="min-1"
+        userRole="admin"
+        currentUserId="user-1"
         classifications={mockClassifications}
         onBack={vi.fn()}
       />
@@ -388,6 +396,8 @@ describe('SongDetail (D2-B Delivery 2)', () => {
       <SongDetail
         song={{ ...multiVersionSong, ministryId: 'min-2' }}
         ministryId="min-2"
+        userRole="admin"
+        currentUserId="user-1"
         classifications={mockClassifications}
         onBack={vi.fn()}
       />
@@ -423,6 +433,8 @@ describe('SongDetail (D2-B Delivery 2)', () => {
       <SongDetail
         song={multiVersionSong}
         ministryId="min-1"
+        userRole="admin"
+        currentUserId="user-1"
         classifications={[]}
         initialVersionId="ver-2"
         onBack={vi.fn()}
@@ -470,5 +482,106 @@ describe('SongDetail (D2-B Delivery 2)', () => {
     expect(banner).toHaveTextContent(/não foi encontrada/i);
     expect(banner).toHaveTextContent(/Gravação Original/i);
     expect(screen.getByRole('button', { name: 'Voltar para Escala' })).toBeInTheDocument();
+  });
+
+  it('R2.2 RBAC (member & fail-closed): displays shared admin chord for reading/transposition while hiding all admin linking/unlinking controls', async () => {
+    const adminSharedChord: SmartChord = {
+      ...mockNotationChord,
+      userId: 'admin-owner-1',
+    };
+    vi.mocked(api.getMySmartChordsForSong).mockResolvedValue([adminSharedChord]);
+    vi.mocked(api.getMyPendingSmartChordsForSong).mockResolvedValue([mockSecondChord]);
+
+    const onOpenSmartChord = vi.fn();
+    const { rerender } = render(
+      <SongDetail
+        song={multiVersionSong}
+        ministryId="min-1"
+        userRole="member"
+        currentUserId="member-user-1"
+        classifications={mockClassifications}
+        onBack={vi.fn()}
+        onOpenSmartChord={onOpenSmartChord}
+      />
+    );
+
+    const chordSheet = await screen.findByTestId('song-detail-chord-sheet');
+    expect(chordSheet).toHaveTextContent('G(add9)/B');
+
+    // Member never fetches pending classification queue or renders admin controls
+    expect(api.getMyPendingSmartChordsForSong).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Vincular Cifra Inteligente' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Abrir no Cifrador' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Desvincular Cifra' })).toBeNull();
+    expect(screen.queryByTestId('pending-chords-classification-banner')).toBeNull();
+
+    // Ephemeral transposition + mode switch work for member
+    fireEvent.click(screen.getByRole('button', { name: '+1 Semitom' }));
+    expect(chordSheet).toHaveTextContent('G#(add9)/C');
+    fireEvent.click(screen.getByRole('button', { name: /Apenas Letra/i }));
+    expect(screen.getByTestId('song-detail-lyrics-sheet')).toBeInTheDocument();
+
+    // Omitting userRole must fail closed as member
+    rerender(
+      <SongDetail
+        song={multiVersionSong}
+        ministryId="min-1"
+        onBack={vi.fn()}
+        onOpenSmartChord={onOpenSmartChord}
+      />
+    );
+    expect(screen.queryByRole('button', { name: 'Vincular Cifra Inteligente' })).toBeNull();
+
+    // Secondary admin viewing another admin's shared chord can link another chord, but cannot open/unlink foreign owner's chord
+    rerender(
+      <SongDetail
+        song={multiVersionSong}
+        ministryId="min-1"
+        userRole="admin"
+        currentUserId="admin-other-2"
+        onBack={vi.fn()}
+        onOpenSmartChord={onOpenSmartChord}
+      />
+    );
+    expect(await screen.findByRole('button', { name: 'Vincular Cifra Inteligente' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Abrir no Cifrador' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Desvincular Cifra' })).toBeNull();
+    expect(screen.queryByTestId('pending-chords-classification-banner')).toBeNull();
+
+    // Missing currentUserId must fail closed even when userRole is admin
+    rerender(
+      <SongDetail
+        song={multiVersionSong}
+        ministryId="min-1"
+        userRole="admin"
+        onBack={vi.fn()}
+        onOpenSmartChord={onOpenSmartChord}
+      />
+    );
+    expect(screen.queryByRole('button', { name: 'Abrir no Cifrador' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Desvincular Cifra' })).toBeNull();
+    expect(screen.queryByTestId('pending-chords-classification-banner')).toBeNull();
+
+    // Missing chord.userId on active or pending chord must fail closed even for identified admin
+    vi.mocked(api.getMySmartChordsForSong).mockResolvedValue([
+      { ...adminSharedChord, userId: '' } as any,
+    ]);
+    vi.mocked(api.getMyPendingSmartChordsForSong).mockResolvedValue([
+      { ...adminSharedChord, id: 'pend-missing-owner', userId: '' } as any,
+    ]);
+    rerender(
+      <SongDetail
+        song={{ ...multiVersionSong, id: 'song-missing-owner' }}
+        ministryId="min-1"
+        userRole="admin"
+        currentUserId="admin-owner-1"
+        onBack={vi.fn()}
+        onOpenSmartChord={onOpenSmartChord}
+      />
+    );
+    expect(await screen.findByTestId('song-detail-chord-sheet')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Abrir no Cifrador' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Desvincular Cifra' })).toBeNull();
+    expect(screen.queryByTestId('pending-chords-classification-banner')).toBeNull();
   });
 });
