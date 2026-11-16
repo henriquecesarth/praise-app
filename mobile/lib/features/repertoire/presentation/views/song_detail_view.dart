@@ -2606,11 +2606,15 @@ class _SongFullscreenStandScreenState
                                 ),
                                 const SizedBox(height: 6),
                               ],
-                              SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Flexible(
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
                                     IconButton(
                                       tooltip: 'Meio tom abaixo',
                                       constraints: const BoxConstraints(
@@ -2716,24 +2720,27 @@ class _SongFullscreenStandScreenState
                                         ),
                                       ),
                                     ),
-                                    const SizedBox(width: 4),
-                                    FilledButton.tonalIcon(
-                                      key: const ValueKey(
-                                        'song_fullscreen_exit_button',
+                                        ],
                                       ),
-                                      style: FilledButton.styleFrom(
-                                        minimumSize: const Size(44, 44),
-                                      ),
-                                      onPressed: () =>
-                                          Navigator.of(context).pop(),
-                                      icon: const Icon(
-                                        Icons.fullscreen_exit_rounded,
-                                        size: 18,
-                                      ),
-                                      label: const Text('Sair'),
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  FilledButton.tonalIcon(
+                                    key: const ValueKey(
+                                      'song_fullscreen_exit_button',
+                                    ),
+                                    style: FilledButton.styleFrom(
+                                      minimumSize: const Size(44, 44),
+                                    ),
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(),
+                                    icon: const Icon(
+                                      Icons.fullscreen_exit_rounded,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Sair'),
+                                  ),
+                                ],
                               ),
                             ],
                           ),

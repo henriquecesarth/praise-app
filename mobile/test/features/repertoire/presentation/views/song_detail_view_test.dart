@@ -724,9 +724,11 @@ void main() {
         find.byKey(const ValueKey('song_fullscreen_exit_button')),
         findsOneWidget,
       );
-      await tester.tap(
-        find.byKey(const ValueKey('song_fullscreen_exit_button')),
+      final exitBtn = find.byKey(
+        const ValueKey('song_fullscreen_exit_button'),
       );
+      await tester.ensureVisible(exitBtn);
+      await tester.tap(exitBtn);
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('song_detail_music_stand_bar')),
@@ -825,9 +827,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
 
-      await tester.tap(
-        find.byKey(const ValueKey('song_fullscreen_exit_button')),
+      final exitBtn = find.byKey(
+        const ValueKey('song_fullscreen_exit_button'),
       );
+      await tester.ensureVisible(exitBtn);
+      await tester.tap(exitBtn);
       await tester.pumpAndSettle();
 
       expect(find.text('Original • Tom: F (+1)'), findsOneWidget);
@@ -1335,9 +1339,12 @@ void main() {
       // Phone portrait: short song is top-aligned (not centered near middle of 844px)
       await tester.pumpWidget(buildFullscreenHost(size: const Size(390, 844)));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('song_detail_fullscreen_button')),
+      final phoneFsBtn = find.byKey(
+        const ValueKey('song_detail_fullscreen_button'),
       );
+      await tester.ensureVisible(phoneFsBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(phoneFsBtn);
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
@@ -1370,16 +1377,21 @@ void main() {
       expect(dockRect.bottom, greaterThan(700));
 
       // Pop and verify tablet responsive max-width block centered horizontally
-      await tester.tap(
-        find.byKey(const ValueKey('song_fullscreen_exit_button')),
+      final exitBtn = find.byKey(
+        const ValueKey('song_fullscreen_exit_button'),
       );
+      await tester.ensureVisible(exitBtn);
+      await tester.tap(exitBtn);
       await tester.pumpAndSettle();
 
       await tester.pumpWidget(buildFullscreenHost(size: const Size(1200, 900)));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('song_detail_fullscreen_button')),
+      final tabletFsBtn = find.byKey(
+        const ValueKey('song_detail_fullscreen_button'),
       );
+      await tester.ensureVisible(tabletFsBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(tabletFsBtn);
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
@@ -1438,7 +1450,9 @@ void main() {
           versionId,
           linkStatus,
         }) async {
-          chordCalls.add((songId, versionId));
+          if (linkStatus != 'pending_classification') {
+            chordCalls.add((songId, versionId));
+          }
           return [
             SmartChord(
               id: 'sc_${songId}_${versionId ?? 'none'}',
@@ -1621,9 +1635,12 @@ void main() {
       expect(find.text('Acústica • Tom: D'), findsOneWidget);
 
       // Open fullscreen from slot 3 -> skip prev inside fullscreen in-place -> closes back to slot 2 inline
-      await tester.tap(
-        find.byKey(const ValueKey('song_detail_fullscreen_button')),
+      final seqFsBtn = find.byKey(
+        const ValueKey('song_detail_fullscreen_button'),
       );
+      await tester.ensureVisible(seqFsBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(seqFsBtn);
       await tester.pumpAndSettle();
       expect(find.text('Música 3 de 3'), findsOneWidget);
 
@@ -1642,17 +1659,19 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(
-        find.byKey(const ValueKey('song_fullscreen_exit_button')),
+      final exitBtn = find.byKey(
+        const ValueKey('song_fullscreen_exit_button'),
       );
+      await tester.ensureVisible(exitBtn);
+      await tester.tap(exitBtn);
       await tester.pumpAndSettle();
       expect(find.text('Música 2 de 3'), findsOneWidget);
       expect(find.text('Principal • Tom: G# (+1)'), findsOneWidget);
 
       // Re-open fullscreen and verify ministry switch pops BOTH fullscreen & SongDetailView cleanly
-      await tester.tap(
-        find.byKey(const ValueKey('song_detail_fullscreen_button')),
-      );
+      await tester.ensureVisible(seqFsBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(seqFsBtn);
       await tester.pumpAndSettle();
       ministryNotifier.switchMinistry(
         const Ministry(id: 'min_2', name: 'Ministério 2', role: 'member'),

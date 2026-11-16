@@ -824,7 +824,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final thirdRow = find.byKey(const ValueKey('detail_song_row_2'));
+      final thirdRow = find.byKey(const ValueKey('detail_song_row_3'));
       await tester.ensureVisible(thirdRow);
       await tester.pumpAndSettle();
       await tester.tap(thirdRow);

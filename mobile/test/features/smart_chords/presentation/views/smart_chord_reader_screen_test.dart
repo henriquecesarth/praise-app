@@ -285,6 +285,7 @@ void main() {
   });
 
   Widget buildApp({
+    Key? scopeKey,
     required String chordId,
     SmartChord? initialChord,
     String? chordFontOverride,
@@ -292,6 +293,7 @@ void main() {
     SmartChordPdfExporter? pdfExporterOverride,
   }) {
     return ProviderScope(
+      key: scopeKey,
       overrides: [
         smartChordRepositoryProvider.overrideWithValue(repo),
         smartChordRepertoireLinkRepositoryProvider.overrideWithValue(linkRepo),
@@ -1357,7 +1359,11 @@ void main() {
       );
 
       await tester.pumpWidget(
-        buildApp(chordId: sampleChord.id, initialChord: sampleChord),
+        buildApp(
+          scopeKey: const ValueKey('member_rbac_step_1'),
+          chordId: sampleChord.id,
+          initialChord: sampleChord,
+        ),
       );
       await tester.tap(find.text('Abrir Reader'));
       await tester.pumpAndSettle();
@@ -1368,8 +1374,6 @@ void main() {
       expect(find.byTooltip('Excluir Cifra'), findsOneWidget);
 
       // 2. Linked chord opened with member role -> shows read-only link info without Opções de vínculo menu
-      await tester.pageBack();
-      await tester.pumpAndSettle();
       linkRepo.linkToReturn = const SmartChordRepertoireLink(
         link: SmartChordSongLink(
           id: 'u_sc_min',
@@ -1389,6 +1393,13 @@ void main() {
           ],
         ),
       );
+      await tester.pumpWidget(
+        buildApp(
+          scopeKey: const ValueKey('member_rbac_step_2'),
+          chordId: sampleChord.id,
+          initialChord: sampleChord,
+        ),
+      );
       await tester.tap(find.text('Abrir Reader'));
       await tester.pumpAndSettle();
 
@@ -1397,8 +1408,6 @@ void main() {
       expect(find.text('Desvincular'), findsNothing);
 
       // 3. Pending classification for member -> hides banner and Classificar versão button
-      await tester.pageBack();
-      await tester.pumpAndSettle();
       linkRepo.linkToReturn = const SmartChordRepertoireLink(
         link: null,
         pendingLink: SmartChordSongLink(
@@ -1422,6 +1431,13 @@ void main() {
         ),
         requiresVersionSelection: true,
       );
+      await tester.pumpWidget(
+        buildApp(
+          scopeKey: const ValueKey('member_rbac_step_3'),
+          chordId: sampleChord.id,
+          initialChord: sampleChord,
+        ),
+      );
       await tester.tap(find.text('Abrir Reader'));
       await tester.pumpAndSettle();
 
@@ -1435,8 +1451,6 @@ void main() {
       );
 
       // 4. Fail-closed when owner userId on chord is missing/blank even for admin
-      await tester.pageBack();
-      await tester.pumpAndSettle();
       ministryNotifier.setMinistry(
         const Ministry(id: 'min-alpha', name: 'Alpha', role: 'admin'),
       );
@@ -1444,7 +1458,11 @@ void main() {
       repo.chord = missingOwnerChord;
       linkRepo.linkToReturn = const SmartChordRepertoireLink(link: null);
       await tester.pumpWidget(
-        buildApp(chordId: missingOwnerChord.id, initialChord: missingOwnerChord),
+        buildApp(
+          scopeKey: const ValueKey('member_rbac_step_4'),
+          chordId: missingOwnerChord.id,
+          initialChord: missingOwnerChord,
+        ),
       );
       await tester.tap(find.text('Abrir Reader'));
       await tester.pumpAndSettle();
