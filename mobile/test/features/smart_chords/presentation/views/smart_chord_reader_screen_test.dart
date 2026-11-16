@@ -291,14 +291,17 @@ void main() {
     String? chordFontOverride,
     double textScale = 1,
     SmartChordPdfExporter? pdfExporterOverride,
+    FakeAuthNotifier? authOverride,
+    FakeMinistryContextNotifier? ministryOverride,
   }) {
     return ProviderScope(
       key: scopeKey,
       overrides: [
         smartChordRepositoryProvider.overrideWithValue(repo),
         smartChordRepertoireLinkRepositoryProvider.overrideWithValue(linkRepo),
-        authNotifierProvider.overrideWith((ref) => authNotifier),
-        ministryContextNotifierProvider.overrideWith((ref) => ministryNotifier),
+        authNotifierProvider.overrideWith((ref) => authOverride ?? authNotifier),
+        ministryContextNotifierProvider
+            .overrideWith((ref) => ministryOverride ?? ministryNotifier),
         if (chordFontOverride != null)
           chordFontPreferenceProvider.overrideWithValue(chordFontOverride),
         if (pdfExporterOverride != null)
@@ -1352,17 +1355,25 @@ void main() {
     (tester) async {
       repo.chord = sampleChord;
 
+      FakeMinistryContextNotifier memberMinistryNotifier() =>
+          FakeMinistryContextNotifier(
+            const MinistryContextState(
+              status: MinistryBootstrapStatus.ready,
+              selectedMinistry:
+                  Ministry(id: 'min-alpha', name: 'Alpha', role: 'member'),
+            ),
+          );
+
       // 1. Unlinked personal chord for member -> hides Vincular banner, keeps Edit/Delete for owner
       linkRepo.linkToReturn = const SmartChordRepertoireLink(link: null);
-      ministryNotifier.setMinistry(
-        const Ministry(id: 'min-alpha', name: 'Alpha', role: 'member'),
-      );
 
       await tester.pumpWidget(
         buildApp(
           scopeKey: const ValueKey('member_rbac_step_1'),
           chordId: sampleChord.id,
           initialChord: sampleChord,
+          authOverride: FakeAuthNotifier(),
+          ministryOverride: memberMinistryNotifier(),
         ),
       );
       await tester.tap(find.text('Abrir Reader'));
@@ -1398,6 +1409,8 @@ void main() {
           scopeKey: const ValueKey('member_rbac_step_2'),
           chordId: sampleChord.id,
           initialChord: sampleChord,
+          authOverride: FakeAuthNotifier(),
+          ministryOverride: memberMinistryNotifier(),
         ),
       );
       await tester.tap(find.text('Abrir Reader'));
@@ -1436,6 +1449,8 @@ void main() {
           scopeKey: const ValueKey('member_rbac_step_3'),
           chordId: sampleChord.id,
           initialChord: sampleChord,
+          authOverride: FakeAuthNotifier(),
+          ministryOverride: memberMinistryNotifier(),
         ),
       );
       await tester.tap(find.text('Abrir Reader'));
@@ -1451,9 +1466,6 @@ void main() {
       );
 
       // 4. Fail-closed when owner userId on chord is missing/blank even for admin
-      ministryNotifier.setMinistry(
-        const Ministry(id: 'min-alpha', name: 'Alpha', role: 'admin'),
-      );
       final missingOwnerChord = sampleChord.copyWith(userId: '');
       repo.chord = missingOwnerChord;
       linkRepo.linkToReturn = const SmartChordRepertoireLink(link: null);
@@ -1462,6 +1474,8 @@ void main() {
           scopeKey: const ValueKey('member_rbac_step_4'),
           chordId: missingOwnerChord.id,
           initialChord: missingOwnerChord,
+          authOverride: FakeAuthNotifier(),
+          ministryOverride: FakeMinistryContextNotifier(),
         ),
       );
       await tester.tap(find.text('Abrir Reader'));

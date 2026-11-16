@@ -821,9 +821,13 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.tap(find.byTooltip('Meio tom acima'));
+      final fsTransposeUp = find.byTooltip('Meio tom acima');
+      await tester.ensureVisible(fsTransposeUp);
+      await tester.tap(fsTransposeUp);
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Aumentar zoom'));
+      final fsZoomIn = find.byTooltip('Aumentar zoom');
+      await tester.ensureVisible(fsZoomIn);
+      await tester.tap(fsZoomIn);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
 

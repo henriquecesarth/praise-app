@@ -809,9 +809,6 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
         oldWidget.activeSlotKey != widget.activeSlotKey ||
         oldWidget.ministryId != widget.ministryId) {
       _stopAutoScroll(updateState: false);
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(0);
-      }
       _selectedVersionIndex = _resolveVersionIndex(
         widget.song.effectiveVersions,
         widget.initialVersionId,
@@ -821,6 +818,9 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
       _hadLinkedChords = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
+          if (_scrollController.hasClients) {
+            _scrollController.jumpTo(0);
+          }
           _syncSmartChordsForActiveVersion(force: true);
         }
       });
@@ -2303,9 +2303,11 @@ class _SongFullscreenStandScreenState
     if (nextKey == _lastTrackKey) return;
     _lastTrackKey = nextKey;
     _stopAutoScroll(updateState: false);
-    if (_scrollController.hasClients) {
-      _scrollController.jumpTo(0);
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scrollController.hasClients) {
+        _scrollController.jumpTo(0);
+      }
+    });
     if (mounted) {
       setState(() {
         _semitones = 0;
@@ -2731,6 +2733,10 @@ class _SongFullscreenStandScreenState
                                     ),
                                     style: FilledButton.styleFrom(
                                       minimumSize: const Size(44, 44),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 8,
+                                      ),
                                     ),
                                     onPressed: () =>
                                         Navigator.of(context).pop(),
