@@ -32,9 +32,9 @@ Arquivos propostos: criar `shared/fixtures/music-theory-v1.json`; adaptar consum
 
 Produz: gramática v1, notas/intervalos/spelling e resultados JSON comuns descritos no ADR. Consome: corpus legado TS/Dart.
 
-- [ ] Comparar listas e registrar divergências antes de alterar resultados.
-- [ ] Criar casos estruturados e fazer TS/Dart lerem o mesmo artefato, incluindo inválidos, Unicode, slash bass, acidentes e transposição negativa.
-- [ ] Rodar testes direcionados de paridade, confirmar igualdade e revisão independente das expectativas musicais.
+- [x] Comparar listas e registrar divergências antes de alterar resultados.
+- [x] Criar casos estruturados e fazer TS/Dart lerem o mesmo artefato, incluindo inválidos, Unicode, slash bass, acidentes e transposição negativa.
+- [x] Rodar testes direcionados de paridade, confirmar igualdade e revisão independente das expectativas musicais (PASS).
 
 Aceite: nenhuma lista manual divergente; C/E +M2 = D/F#, desconhecido preservado e caso de grafia diatônica versus cromática explícito. Não exige Tonal instalado.
 
@@ -164,4 +164,31 @@ Fase 1 não significa concluir T1–T12 de uma vez: recomendar autorização ini
 - [x] Auditorias independentes A/B/C-D recebidas.
 - [x] Propostas/roadmap escritos somente como documentos.
 - [x] Revisão independente final e validação documental PASS (resultado no relatório de gates).
-- [ ] Implementação autorizada (pendente; não executar nesta tarefa).
+- [ ] Implementação autorizada na Fase 0 (não houve; autorização incremental posterior da T1 registrada abaixo).
+
+## Execução incremental — T1 (2026-11-16)
+
+O proprietário aprovou a arquitetura e autorizou exclusivamente T1 nesta sessão (G1 satisfeito para este recorte). A restrição histórica da Fase 0 acima não impede essa autorização posterior. T2–T12, commits, push, merge e deploy continuam sem autorização nesta missão.
+
+Base/HEAD preservado: `a788c15603d7925601ec4e9e69aa4329a7e0bbf9`, branch `fix/louvaio-audit-remediation-20261113`, worktree de remediação inicialmente limpo. Nenhum worktree foi criado, removido ou trocado; WIP da pasta principal preservado.
+
+Entrega: [contrato e corpus](../../../shared/fixtures/README.md), JSON único com 99 casos normativos futuros, 34 casos de notação R17 e 10 observações legadas (143 vetores). Os dois clientes consomem a mesma fonte; o teste de instruções musicais Dart permanece. Nenhum motor, interface, player, backend, schema, API ou dependência foi alterado. Núcleos determinísticos são trabalho de T2; estes testes não alegam conformidade de motores inexistentes.
+
+Decisões T1: intervalo diatônico usa movimentos de letra explícitos; cromático usa política sharp de raiz; notes representam conjunto teórico completo, não voicing. Qualidade diminuta + sétima menor representa meio diminuto. Acidentes até duplos são normativos; overflow triplo é unsupported. CanonicalSymbol nunca substitui originalText em cifras salvas.
+
+Comparação antes da extração: 34/34 IDs, source, expectedPlusTwo e flags Unicode equivalentes; comparação automatizada posterior por deep equality contra `git show a788c156:...` PASS. Nenhuma expectativa legada foi recalculada ou corrigida silenciosamente. Divergências intencionais de contratos registradas: nota Db em zero normaliza para C#, cifra Db em zero permanece Db; Calt é reconhecido pela regex legada, mas não define conjunto de notas normativo; sufixos 7M/(add9) são preservados no texto legado e normalizados apenas em memória no contrato futuro.
+
+Referência P2 consultada pelo conector GitHub sem merge/cherry-pick: branch `parallel/musical-integrity-p2-20261107`, arquivos `web/src/utils/smart_chord.ts` (blob `ca2e72fdac6998fa5c08d50e4c3cc5dc6f5a37b1`), `smart_chord.parallel.test.ts` (blob `852d6cbe4b76c9cf26645d0b618b6fb5012ae6c8`) e teste de segurança Dart (blob `363710f30cc5868232bdd13332f77281518b1f09`). A consulta Git CLI falhou no proxy local, mas o conector permitiu leitura dos arquivos. Nenhum código da branch foi incorporado.
+
+Escritor único: principal. `/root/audit_player` comparou os corpora sem edição; `/root/audit_theory` revisou os 99 vetores e a referência P2, sem erro musical concreto encontrado; `/root/review_v3` concluiu revisão independente somente leitura do contrato, consumidores e testes: **PASS**, sem findings acionáveis. Confirmou independentemente 34/34 casos legados intactos, corpus normativo separado de observações legadas e ausência de motores T2. Identidade efetiva de inferência: **Unknown / Not yet verified**.
+
+Validação real até este checkpoint local:
+
+- RED TS: ENOENT do JSON ainda ausente; RED Dart: StateError do corpus ausente. Ajustes iniciais de carregamento do teste TS foram resolvidos sem alterar configuração global.
+- GREEN Web: `npm test -- --run` nos seis arquivos de contrato/referência/parsers/notação, `--testTimeout=10000`: exit 0, **258 testes PASS** (111 do contrato/probes, 147 regressões).
+- GREEN Dart: `flutter test --no-pub` nos seis arquivos de contrato/referência/parser/segurança/progressão/parênteses, `--timeout 30s`: exit 0, **180 testes PASS** (111 do contrato/probes, 69 regressões).
+- Logs completos temporários: `louvaio-t1-web-tests.log`, `louvaio-t1-dart-tests.log`. Nenhum áudio real ou escrita externa nesses testes; sem emulador/backend necessário.
+- `node node_modules/typescript/bin/tsc --noEmit`: exit 0, PASS. `dart analyze` nos três arquivos de teste/suporte afetados: exit 0, No issues found. Logs temporários `louvaio-t1-tsc.log` e `louvaio-t1-dart-analyze.log`.
+- JSON parseável, links relativos válidos, `git diff --check` PASS e áreas fora do escopo sem diff. Os validadores e o loader novos são exclusivamente de testes. Hot reload não se aplica: nenhuma tela ou código de aplicativo Dart foi alterado.
+
+G2/T1: **PASS**, pronto para checkpoint posterior autorizado. Isso não inicia T2 automaticamente. Sem commit/push nesta tarefa.
