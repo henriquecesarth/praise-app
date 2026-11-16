@@ -1,5 +1,8 @@
 # LouvAIO — Configuração de Novo Computador (Windows / PowerShell)
 
+> [!IMPORTANT]
+> **Migração de 2026-11-16 (Mac -> Windows):** Para retomar diretamente os trabalhos mais recentes da **R2.2** (`fix/louvaio-audit-remediation-20261113`) e a preservação musical paralela (`parallel/musical-integrity-p2-20261107`), consulte também [`WINDOWS_MIGRATION_CONTINUITY_20261116.md`](./WINDOWS_MIGRATION_CONTINUITY_20261116.md).
+
 Este guia contém todos os passos e comandos prontos para copiar no **Windows PowerShell** para continuar o desenvolvimento do **LouvAIO** em uma nova estação de trabalho a partir da branch integrada de continuidade `handoff/louvaio-workstation-migration`.
 
 ---

@@ -121,3 +121,28 @@ Entregar uma experiência de Estante Musical compacta, responsiva e adequada ao 
     - Fullscreen top-aligned (verificar posição `y` do cabeçalho próxima do topo em tela alta 393x852, barra inferior centralizada sem overflow a 320px/360px/393px, tablet 800px, tema claro/escuro, `textScaleFactor: 1.5`).
     - Navegação sequencial na escala (`_SongsSection` e `_TimelineSection`, inclusive músicas repetidas em posições diferentes e versões distintas), navegação anterior/próxima dentro e fora da tela cheia sem empilhamento de rotas, cancelamento de corrida assíncrona (`Completer`), reset de transposição, preservação de fonte/velocidade, falha 404 com continuidade para próxima música, ausência da barra sequencial quando aberto pelo Repertório.
 - **Revisão independente Codex + Deploy Staging Web/Backend + GitHub Actions Android CI + APK Staging.**
+
+
+---
+
+## 5. Checkpoint Atual e Evidências Verificadas (2026-11-16)
+
+- **Branch / Worktree:** `fix/louvaio-audit-remediation-20261113` (`/Users/henrique/Documents/code projects/praise-app/praise-app-audit-remediation`)
+- **SHAs de Código Publicados no GitHub:**
+  - Backend RBAC/leitura compartilhada: `dad9878`
+  - Web RBAC/leitura compartilhada: `10e16ad`
+  - Mobile R2.2 (estante compacta, fullscreen top-aligned, navegação sequencial nas escalas e RBAC): `ec19f7f`, `3edf8fe`, `4b0306c`, `ae5a78ca36047fd4eda450ad1e9df30720b8ab5c`
+- **Revisões Independentes (Codex CLI):**
+  - Backend + Web (`codex_review_backend_web_v2`): **NO BLOCKING ISSUES FOUND**
+  - Mobile R2.2 (`codex_review_mobile_v3`): **NO BLOCKING ISSUES FOUND**
+- **Validação Backend (pós-última edição Backend):**
+  - `cd backend && npm run build && npm test`: **PASS** (`92` test files passed, `2611` tests passed, `0` failures).
+- **Validação Web (pós-última edição Web):**
+  - `cd web && npx tsc --noEmit && npx vite build --mode test`: **PASS**.
+  - `cd web && caffeinate -dimsu npx vitest run --maxWorkers=1`: **PASS** (`44` test files passed, `777` tests passed, `0` failures em `144.88s` com timeouts padrão).
+- **GitHub Actions Android (`LouvAIO Unified Staging CI & APK Build`):**
+  - Run [`43836618907`](https://github.com/henriquecesarth/praise-app/actions/runs/43836618907) no SHA `ae5a78ca36047fd4eda450ad1e9df30720b8ab5c`:
+    - Steps 1–11 concluídos com **success**: `Validate isolated staging configuration` (**PASS**), `Run static analysis` (`flutter analyze`, **PASS**), `Run Flutter test suite` (**PASS**), `Verify staging build consistency gate` (**PASS**).
+    - Steps 12–14 (`Build staging debug APK`, `Run Android Kotlin unit tests`, `Upload staging APK artifact`): **em andamento no momento deste checkpoint documental**.
+- **Continuidade Windows:** [`WINDOWS_MIGRATION_CONTINUITY_20261116.md`](../../development/WINDOWS_MIGRATION_CONTINUITY_20261116.md).
+- **Homologação física Android:** `PHYSICAL_VALIDATION_PENDING`.
