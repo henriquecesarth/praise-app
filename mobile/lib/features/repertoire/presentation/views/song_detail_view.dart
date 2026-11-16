@@ -2447,7 +2447,7 @@ class _SongFullscreenStandScreenState
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Text(
-                            '${displayTitle}${currentKey != null ? ' • Tom: $currentKey' : ''}${_semitones != 0 && currentKey != null ? ' (${_semitones > 0 ? '+$_semitones' : '$_semitones'})' : ''}',
+                            '$displayTitle${currentKey != null ? ' • Tom: $currentKey' : ''}${_semitones != 0 && currentKey != null ? ' (${_semitones > 0 ? '+$_semitones' : '$_semitones'})' : ''}',
                             key: const ValueKey('song_fullscreen_header_title'),
                             textAlign: TextAlign.start,
                             style: theme.textTheme.titleMedium?.copyWith(

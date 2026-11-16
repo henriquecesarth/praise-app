@@ -1419,7 +1419,10 @@ void main() {
 
       fakeRepo.onGetSongDetail = (ministryId, songId) async {
         if (songId == 's2' && failS2With404) {
-          throw const NotFoundFailure('Música não encontrada na escala');
+          throw const AppFailure(
+            message: 'Música não encontrada na escala',
+            statusCode: 404,
+          );
         }
         if (songId == 's2' && delayS2) {
           return s2Completer.future;
@@ -1670,7 +1673,7 @@ void main() {
         createdAt: '2026-11-10T00:00:00Z',
         updatedAt: '2026-11-10T00:00:00Z',
       );
-      final pendingForeignChord = SmartChord(
+      const pendingForeignChord = SmartChord(
         id: 'sc_pend_admin',
         userId: 'admin_owner',
         title: 'Cifra Pendente',
@@ -1678,7 +1681,7 @@ void main() {
         content: '[G]Pendente',
         createdAt: '2026-11-10T00:00:00Z',
         updatedAt: '2026-11-10T00:00:00Z',
-        repertoireLink: const SmartChordSongLink(
+        repertoireLink: SmartChordSongLink(
           id: 'l_pend',
           userId: 'admin_owner',
           smartChordId: 'sc_pend_admin',
