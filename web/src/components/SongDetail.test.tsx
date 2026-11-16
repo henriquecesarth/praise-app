@@ -584,4 +584,104 @@ describe('SongDetail (D2-B Delivery 2)', () => {
     expect(screen.queryByRole('button', { name: 'Desvincular Cifra' })).toBeNull();
     expect(screen.queryByTestId('pending-chords-classification-banner')).toBeNull();
   });
+
+  it('opens and closes piano diagram on chord click and keyboard (Enter/Space + Escape) with transposed chord, preserving scroll and restoring focus with zero content mutation', async () => {
+    const originalContentSnapshot = mockNotationChord.content;
+    vi.mocked(api.getMySmartChordsForSong).mockResolvedValue([mockNotationChord]);
+
+    render(
+      <SongDetail
+        song={multiVersionSong}
+        ministryId="min-1"
+        classifications={mockClassifications}
+        onBack={vi.fn()}
+      />
+    );
+
+    const chordSheet = await screen.findByTestId('song-detail-chord-sheet');
+    expect(chordSheet).toBeInTheDocument();
+
+    // 1. Click on chord button in SongDetail (e.g. G(add9)/B)
+    const chordBtn = screen.getByRole('button', { name: 'Ver diagrama do acorde G(add9)/B' });
+    expect(chordBtn).toBeInTheDocument();
+    chordBtn.focus();
+    fireEvent.click(chordBtn);
+
+    // Dialog opens with G(add9)/B
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText('G(add9)/B')).toBeInTheDocument();
+
+    // Close dialog via Escape key
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    // Focus returned to chord button
+    expect(document.activeElement).toBe(chordBtn);
+
+    // 2. Transpose +2 semitones -> G(add9)/B becomes A(add9)/C#
+    const plusBtn = screen.getByRole('button', { name: '+1 Semitom' });
+    fireEvent.click(plusBtn);
+    fireEvent.click(plusBtn);
+
+    const transposedBtn = screen.getByRole('button', { name: 'Ver diagrama do acorde A(add9)/C#' });
+    expect(transposedBtn).toBeInTheDocument();
+
+    // Trigger via keyboard Enter/click
+    transposedBtn.focus();
+    fireEvent.click(transposedBtn);
+
+    const transposedDialog = screen.getByRole('dialog');
+    expect(transposedDialog).toBeInTheDocument();
+    expect(within(transposedDialog).getByText('A(add9)/C#')).toBeInTheDocument();
+
+    // Close via Close button
+    const closeBtn = within(transposedDialog).getByTestId('chord-piano-close-btn');
+    fireEvent.click(closeBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(document.activeElement).toBe(transposedBtn);
+
+    // Persisted chord content is strictly unmutated
+    expect(mockNotationChord.content).toBe(originalContentSnapshot);
+  });
+
+  it('preserves both container scrollTop and window.scrollY when opening and closing piano diagram', async () => {
+    vi.mocked(api.getMySmartChordsForSong).mockResolvedValue([mockNotationChord]);
+    const scrollToSpy = vi.fn();
+    const originalScrollTo = window.scrollTo;
+    const originalScrollY = Object.getOwnPropertyDescriptor(window, 'scrollY');
+    Object.defineProperty(window, 'scrollTo', { configurable: true, value: scrollToSpy });
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 420 });
+
+    try {
+      render(
+        <SongDetail
+          song={multiVersionSong}
+          ministryId="min-1"
+          classifications={mockClassifications}
+          onBack={vi.fn()}
+        />
+      );
+
+      const chordBtn = await screen.findByRole('button', { name: 'Ver diagrama do acorde G(add9)/B' });
+      fireEvent.click(chordBtn);
+
+      const dialog = screen.getByRole('dialog');
+      fireEvent.click(within(dialog).getByTestId('chord-piano-close-btn'));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+      expect(scrollToSpy).toHaveBeenCalledWith({ top: 420 });
+    } finally {
+      Object.defineProperty(window, 'scrollTo', { configurable: true, value: originalScrollTo });
+      if (originalScrollY) {
+        Object.defineProperty(window, 'scrollY', originalScrollY);
+      }
+    }
+  });
 });

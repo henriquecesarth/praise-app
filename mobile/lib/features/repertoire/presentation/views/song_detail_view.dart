@@ -13,6 +13,7 @@ import '../../../smart_chords/domain/smart_chord_parser.dart';
 import '../../../smart_chords/presentation/views/smart_chord_reader_screen.dart';
 import '../../../smart_chords/presentation/views/smart_chord_form_screen.dart';
 import '../../../smart_chords/presentation/widgets/chord_lyric_line.dart';
+import '../../../smart_chords/presentation/widgets/chord_piano_diagram_sheet.dart';
 import '../../../smart_chords/presentation/widgets/musical_progression_line.dart';
 import '../../../smart_chords/presentation/widgets/smart_chord_picker_modal.dart';
 import '../../../schedules/domain/schedule_song_sequence.dart';
@@ -2218,6 +2219,11 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                                               fontFamily: fontConfig.fontFamily,
                                               fontFamilyFallback:
                                                   fontConfig.fallback,
+                                              onChordTap: (chord) =>
+                                                  showChordPianoDiagramSheet(
+                                                    context,
+                                                    chord,
+                                                  ),
                                             )
                                           : ChordLyricLine(
                                               line: inlineLines[i],
@@ -2234,6 +2240,11 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                                                         inlineLines[i - 1],
                                                       ) !=
                                                       null,
+                                              onChordTap: (chord) =>
+                                                  showChordPianoDiagramSheet(
+                                                    context,
+                                                    chord,
+                                                  ),
                                             ),
                                     ),
                                 ],
@@ -2699,6 +2710,11 @@ class _SongFullscreenStandScreenState
                                       fontSize: _fontSize,
                                       fontFamily: fontConfig.fontFamily,
                                       fontFamilyFallback: fontConfig.fallback,
+                                      onChordTap: (chord) =>
+                                          showChordPianoDiagramSheet(
+                                            context,
+                                            chord,
+                                          ),
                                     )
                                   : ChordLyricLine(
                                       line: lines[i],
@@ -2713,6 +2729,11 @@ class _SongFullscreenStandScreenState
                                                 lines[i - 1],
                                               ) !=
                                               null,
+                                      onChordTap: (chord) =>
+                                          showChordPianoDiagramSheet(
+                                            context,
+                                            chord,
+                                          ),
                                     ),
                               SizedBox(height: lineSpacingPx),
                             ],

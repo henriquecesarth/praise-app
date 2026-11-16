@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Song, SongVersion, SmartChord, Classification, GroupRole } from '../types';
 import { api } from '../api';
+import { ChordPianoDiagramPanel } from './smart-chords/ChordPianoDiagram';
 import {
   transposeChord,
   rawToVisual,
@@ -131,6 +132,10 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   );
   const [lineSpacingPx, setLineSpacingPx] = useState(resolveEffectiveLineSpacing);
   const spacingUserSelectedRef = useRef(false);
+  const [activePianoChord, setActivePianoChord] = useState<string | null>(null);
+  const pianoTriggerRef = useRef<HTMLElement | null>(null);
+  const chordSheetContainerRef = useRef<HTMLDivElement | null>(null);
+  const savedScrollPosRef = useRef<{ containerTop: number; windowY: number }>({ containerTop: 0, windowY: 0 });
 
   useEffect(() => {
     setEffectiveFontFamily(resolveEffectiveFont(chordFontFamily));
@@ -1233,6 +1238,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
         <div className="detail-main-content">
           {activeView === 'cifra' && hasSmartChord && rawLines.some((l) => l.trim().length > 0) ? (
             <div
+              ref={chordSheetContainerRef}
               className="lyrics-box song-detail-sheet"
               data-testid="song-detail-chord-sheet"
               style={{
@@ -1307,22 +1313,39 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                             const targetAnnotations = anchoredInstructions.filter(item => targetChordOrdinal(item) === token.chordIndex);
                             const transposedChord = transposeNotationChord(token.value, semitones);
                             return (
-                              <span
+                              <button
+                                type="button"
                                 key={tokenIdx}
                                 className="has-chord"
                                 data-chord-display
+                                data-chord={transposedChord}
                                 data-bar-chord-idx={token.chordIndex}
+                                aria-label={`Ver diagrama do acorde ${transposedChord}`}
+                                onClick={(e) => {
+                                  savedScrollPosRef.current = {
+                                    containerTop: chordSheetContainerRef.current?.scrollTop ?? 0,
+                                    windowY: typeof window !== 'undefined' ? window.scrollY : 0,
+                                  };
+                                  setActivePianoChord(transposedChord);
+                                  pianoTriggerRef.current = e.currentTarget;
+                                }}
                                 style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  font: 'inherit',
+                                  cursor: 'pointer',
                                   color: 'var(--chord-text)',
                                   fontWeight: 'bold',
                                   textDecoration: 'underline 2px solid var(--chord-text)',
                                   padding: '0 1px',
                                   position: 'relative',
+                                  textAlign: 'inherit',
+                                  lineHeight: 'inherit',
                                 }}
                               >
                                 {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: '0.8em', color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
                                 {transposedChord}
-                              </span>
+                              </button>
                             );
                           }
 
@@ -1428,13 +1451,26 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                             }}
                           >
                             {hasChord && (
-                              <span
-                                aria-hidden="true"
+                              <button
+                                type="button"
                                 className="print-chord-span"
                                 data-chord={transposedChord}
                                 data-chord-display
                                 data-anchor-idx={charIdx}
+                                aria-label={`Ver diagrama do acorde ${transposedChord}`}
+                                onClick={(e) => {
+                                  savedScrollPosRef.current = {
+                                    containerTop: chordSheetContainerRef.current?.scrollTop ?? 0,
+                                    windowY: typeof window !== 'undefined' ? window.scrollY : 0,
+                                  };
+                                  setActivePianoChord(transposedChord);
+                                  pianoTriggerRef.current = e.currentTarget;
+                                }}
                                 style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  font: 'inherit',
+                                  cursor: 'pointer',
                                   position: 'absolute',
                                   bottom: '100%',
                                   left: 0,
@@ -1443,11 +1479,13 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                   fontSize: `${Math.round(chordFontSize * 0.86)}px`,
                                   whiteSpace: 'nowrap',
                                   padding: '0 1px',
+                                  textAlign: 'inherit',
+                                  lineHeight: 'inherit',
                                 }}
                               >
                                 {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: '0.8em', color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
                                 {transposedChord}
-                              </span>
+                              </button>
                             )}
                             <span
                               aria-hidden="true"
@@ -1483,13 +1521,26 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                               marginLeft: '4px',
                             }}
                           >
-                            <span
-                              aria-hidden="true"
+                            <button
+                              type="button"
                               className="print-chord-span"
                               data-chord-display
                               data-chord={transposedExtra}
                               data-anchor-idx={text.length}
+                              aria-label={`Ver diagrama do acorde ${transposedExtra}`}
+                              onClick={(e) => {
+                                savedScrollPosRef.current = {
+                                  containerTop: chordSheetContainerRef.current?.scrollTop ?? 0,
+                                  windowY: typeof window !== 'undefined' ? window.scrollY : 0,
+                                };
+                                setActivePianoChord(transposedExtra);
+                                pianoTriggerRef.current = e.currentTarget;
+                              }}
                               style={{
+                                background: 'none',
+                                border: 'none',
+                                font: 'inherit',
+                                cursor: 'pointer',
                                 position: 'absolute',
                                 bottom: '100%',
                                 left: 0,
@@ -1498,11 +1549,13 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                 fontSize: `${Math.round(chordFontSize * 0.86)}px`,
                                 whiteSpace: 'nowrap',
                                 padding: '0 1px',
+                                textAlign: 'inherit',
+                                lineHeight: 'inherit',
                               }}
                             >
                               {extraTargetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: '0.8em', color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
                               {transposedExtra}
-                            </span>
+                            </button>
                             <span style={{ visibility: 'hidden', whiteSpace: 'pre' }}> </span>
                           </div>
                         );
@@ -1844,6 +1897,24 @@ export const SongDetail: React.FC<SongDetailProps> = ({
           </div>
         </div>
       )}
+
+      <ChordPianoDiagramPanel
+        chordSymbol={activePianoChord}
+        onClose={() => {
+          setActivePianoChord(null);
+          if (chordSheetContainerRef.current) {
+            chordSheetContainerRef.current.scrollTop = savedScrollPosRef.current.containerTop;
+          }
+          try {
+            if (typeof window !== 'undefined' && typeof window.scrollTo === 'function' && (savedScrollPosRef.current.windowY !== 0 || window.scrollY !== 0)) {
+              window.scrollTo({ top: savedScrollPosRef.current.windowY });
+            }
+          } catch {
+            // jsdom may not implement window.scrollTo
+          }
+        }}
+        triggerRef={pianoTriggerRef}
+      />
     </div>
   );
 };

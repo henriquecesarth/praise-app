@@ -48,6 +48,7 @@ import {
   getFontFamilyCss,
 } from '../utils/smart_chord';
 import { SmartChordImportModal } from './SmartChordImportModal';
+import { ChordPianoDiagramPanel } from './smart-chords/ChordPianoDiagram';
 import { preferenceWriter } from '../utils/preferenceWriter';
 import { transposeNotationChord } from '../utils/smart_chord_notation';
 import { parseNotation } from '../utils/smart_chord_notation';
@@ -140,6 +141,9 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   const [selectedChord, setSelectedChord] = useState<SmartChord | null>(null);
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [workspacePianoChord, setWorkspacePianoChord] = useState<string | null>(null);
+  const workspacePianoTriggerRef = useRef<HTMLElement | null>(null);
+  const workspacePianoAnchorRef = useRef<{ lineIdx: number; charIdx?: number; barChordIdx?: number } | null>(null);
 
   // Repertoire Relations
   const [artists, setArtists] = useState<Artist[]>([]);
@@ -1380,6 +1384,41 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
             fontFamily: 'monospace'
           }}
         />
+
+        <button
+          type="button"
+          data-testid="inline-chord-view-piano"
+          aria-label="Ver piano"
+          onMouseDown={(e) => {
+            e.preventDefault();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            workspacePianoAnchorRef.current = { lineIdx, charIdx, barChordIdx };
+            workspacePianoTriggerRef.current = null;
+            const currentChordVal = editingChordValue.trim();
+            const chordToView = currentChordVal ? (transposeNotationChord(currentChordVal, semitones) || currentChordVal) : '';
+            setEditingCell(null);
+            if (chordToView) {
+              setWorkspacePianoChord(chordToView);
+            }
+          }}
+          style={{
+            marginTop: '4px',
+            minHeight: '26px',
+            padding: '2px 8px',
+            fontSize: '11px',
+            fontWeight: 600,
+            backgroundColor: 'var(--action-primary-subtle, #F9ECE7)',
+            color: 'var(--action-primary-bg, #AE5235)',
+            border: '1px solid var(--action-primary-bg, #AE5235)',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Ver piano
+        </button>
       </div>
     );
   };
@@ -1956,6 +1995,30 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
           }}
         />
       )}
+
+      <ChordPianoDiagramPanel
+        chordSymbol={workspacePianoChord}
+        onClose={() => {
+          setWorkspacePianoChord(null);
+          const anchor = workspacePianoAnchorRef.current;
+          workspacePianoAnchorRef.current = null;
+          if (anchor) {
+            const selector = anchor.barChordIdx !== undefined
+              ? `[data-chord-cell-line="${anchor.lineIdx}"][data-chord-cell-bar="${anchor.barChordIdx}"]`
+              : `[data-chord-cell-line="${anchor.lineIdx}"][data-chord-cell-char="${anchor.charIdx}"]`;
+            const target = document.querySelector<HTMLElement>(selector);
+            if (target) {
+              workspacePianoTriggerRef.current = target;
+              requestAnimationFrame(() => {
+                if (typeof target.focus === 'function') {
+                  target.focus();
+                }
+              });
+            }
+          }
+        }}
+        triggerRef={workspacePianoTriggerRef}
+      />
     </div>
   );
 };

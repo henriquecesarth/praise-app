@@ -1,6 +1,6 @@
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { RoutedSmartChords } from './smart-chords/RoutedSmartChords';
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SmartChordsWorkspace } from './SmartChordsWorkspace';
 
@@ -1896,5 +1896,57 @@ describe('SmartChordsWorkspace', () => {
     expect(setSmartChordRepertoireLink).not.toHaveBeenCalled();
     expect(removeSmartChordRepertoireLink).not.toHaveBeenCalled();
     alertSpy.mockRestore();
+  });
+
+  describe('T3 — Diagrama de piano e ação complementar no popover inline', () => {
+    it('primary click opens inline-chord-input, and "Ver piano" button opens ChordPianoDiagramPanel with transposed chord without altering chord content', async () => {
+      getSmartChords.mockResolvedValueOnce([
+        {
+          id: 'sc-piano-test',
+          title: 'Cifra Piano Test',
+          originalKey: 'C',
+          content: '[C]Graça [G]sublime',
+          createdAt: '',
+          updatedAt: '',
+        },
+      ]);
+
+      render(<SmartChordsWorkspace ministryId="min-1" currentUserId="user-piano-1" />);
+      fireEvent.click(await screen.findByText('Cifra Piano Test'));
+
+      // 1. Primary click on chord button MUST open inline-chord-input (preserves critical existing behavior)
+      const chordButtons = screen.getAllByRole('button', { name: /Editar acorde/i });
+      expect(chordButtons.length).toBeGreaterThan(0);
+      fireEvent.click(chordButtons[0]);
+
+      const inlineInput = screen.getByTestId('inline-chord-input');
+      expect(inlineInput).toBeInTheDocument();
+      expect(inlineInput).toHaveValue('C');
+
+      // "Ver piano" button is present in the inline popover
+      const viewPianoBtn = screen.getByTestId('inline-chord-view-piano');
+      expect(viewPianoBtn).toBeInTheDocument();
+
+      // Clicking "Ver piano" closes inline input without mutating content and opens ChordPianoDiagramPanel
+      fireEvent.mouseDown(viewPianoBtn);
+      fireEvent.click(viewPianoBtn);
+
+      expect(screen.queryByTestId('inline-chord-input')).not.toBeInTheDocument();
+
+      const dialog = screen.getByRole('dialog');
+      expect(dialog).toBeInTheDocument();
+      expect(within(dialog).getByRole('heading', { name: 'C' })).toBeInTheDocument();
+      expect(within(dialog).getByTestId('chord-quality-pill')).toHaveTextContent('Qualidade: Maior');
+
+      // Close dialog and verify focus is restored to the sheet chord cell button
+      fireEvent.click(within(dialog).getByTestId('chord-piano-close-btn'));
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+      await waitFor(() => {
+        const restoredCellBtn = screen.getAllByRole('button', { name: /Editar acorde/i })[0];
+        expect(document.activeElement).toBe(restoredCellBtn);
+      });
+    });
   });
 });

@@ -18,6 +18,7 @@ import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_import.d
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoire_link.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_reader_screen.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_lyric_line.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_piano_diagram_sheet.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
 import 'package:louvaio_mobile/features/smart_chords/services/smart_chord_pdf_exporter.dart';
 
@@ -1484,6 +1485,52 @@ void main() {
       expect(find.byTooltip('Editar Cifra'), findsNothing);
       expect(find.byTooltip('Excluir Cifra'), findsNothing);
       expect(find.text('Vincular'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'tapping chord in SmartChordReaderScreen opens ChordPianoDiagramSheet for transposed chord, dismisses cleanly, and preserves scroll position without mutating chord content',
+    (tester) async {
+      repo.chord = sampleChord; // '[C]Tu és [G]Deus'
+      await tester.pumpWidget(
+        buildApp(
+          chordId: sampleChord.id,
+          initialChord: sampleChord,
+        ),
+      );
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      // Transpose +2: C -> D, G -> A
+      await tester.tap(find.byTooltip('Meio tom acima (+1)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Meio tom acima (+1)'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('D'), findsOneWidget);
+      expect(find.text('A'), findsOneWidget);
+
+      // Tap on transposed chord D
+      await tester.tap(find.text('D'));
+      await tester.pumpAndSettle();
+
+      // Verify ChordPianoDiagramSheet opens
+      expect(find.byType(ChordPianoDiagramSheet), findsOneWidget);
+      expect(find.text('Maior'), findsOneWidget);
+      expect(find.text('D — Fundamental (1ª)'), findsOneWidget);
+
+      // Dismiss modal
+      final closeBtn = find.byTooltip('Fechar diagrama');
+      expect(closeBtn, findsOneWidget);
+      await tester.tap(closeBtn);
+      await tester.pumpAndSettle();
+
+      // Modal is gone, reader is intact with transposed chord and preserved content
+      expect(find.byType(ChordPianoDiagramSheet), findsNothing);
+      expect(find.text('D'), findsOneWidget);
+      expect(find.text('A'), findsOneWidget);
+      expect(repo.chord!.content, '[C]Tu és [G]Deus'); // unmutated!
+      expect(tester.takeException(), isNull);
     },
   );
 }

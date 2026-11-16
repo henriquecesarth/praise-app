@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SmartChordReader } from './SmartChordReader';
 import { SmartChordsWorkspace } from '../SmartChordsWorkspace';
@@ -282,6 +282,70 @@ describe('D2-A Dedicated Musical Reader & Auto-Scroll Engine', () => {
     } finally {
       window.matchMedia = originalMatchMedia;
     }
+  });
+
+  it('supports "Piano ao tocar" mode toggle to directly open ChordPianoDiagram without opening inline editor, pauses autoscroll and returns focus', () => {
+    const setEditingCell = vi.fn();
+    const setEditingChordValue = vi.fn();
+
+    render(
+      <SmartChordReader
+        title="Hosana"
+        selectedArtistName="Gabriela Rocha"
+        originalKey="G"
+        currentKeyTransposed="G"
+        content="[G]Glória nas [C]alturas"
+        semitones={0}
+        sheetFontFamily="monospace"
+        printFontSize={14}
+        pdfFontSize={12}
+        chordLineSpacingPx={0}
+        editingCell={null}
+        setEditingCell={setEditingCell}
+        setEditingChordValue={setEditingChordValue}
+        setSemitones={vi.fn()}
+        setPrintFontSize={vi.fn()}
+        handleChordLineSpacingChange={vi.fn().mockResolvedValue(undefined)}
+        handleFontFamilyChange={vi.fn()}
+        renderInlineEditor={() => null}
+        isActive={true}
+      />
+    );
+
+    const toggleBtn = screen.getByTestId('reader-piano-on-tap-toggle');
+    expect(toggleBtn).toBeInTheDocument();
+    expect(toggleBtn).toHaveAttribute('aria-pressed', 'false');
+
+    // 1. With toggle OFF (default), clicking chord button opens inline editing
+    const chordButtons = screen.getAllByRole('button', { name: /Editar acorde/i });
+    fireEvent.click(chordButtons[0]);
+    expect(setEditingCell).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    setEditingCell.mockClear();
+
+    // 2. Enable "Piano ao tocar" toggle
+    fireEvent.click(toggleBtn);
+    expect(toggleBtn).toHaveAttribute('aria-pressed', 'true');
+
+    // aria-label updates to "Ver diagrama do acorde ..." when pianoOnTap is true
+    const pianoChordButtons = screen.getAllByRole('button', { name: /Ver diagrama do acorde/i });
+    expect(pianoChordButtons.length).toBeGreaterThan(0);
+
+    // Clicking chord button now opens ChordPianoDiagram directly (no inline editing)
+    pianoChordButtons[0].focus();
+    fireEvent.click(pianoChordButtons[0]);
+    expect(setEditingCell).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: 'G' })).toBeInTheDocument();
+    expect(within(dialog).getByTestId('chord-piano-live-region')).toHaveTextContent('Acorde G');
+
+    // Close dialog
+    const closeBtn = within(dialog).getByTestId('chord-piano-close-btn');
+    fireEvent.click(closeBtn);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('preserves offline reading for previously cached chords when navigator.onLine is false', async () => {

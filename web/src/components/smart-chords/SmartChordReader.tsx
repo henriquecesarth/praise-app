@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { ChordPianoDiagramPanel } from './ChordPianoDiagram';
 import {
   CHORD_FONT_FAMILIES,
   getFontFamilyCss,
@@ -87,6 +88,10 @@ export function SmartChordReader({
   });
   const [allowReducedMotionScroll, setAllowReducedMotionScroll] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [activePianoChord, setActivePianoChord] = useState<string | null>(null);
+  const pianoTriggerRef = useRef<HTMLElement | null>(null);
+  const [pianoOnTap, setPianoOnTap] = useState<boolean>(false);
+  const savedScrollPosRef = useRef<{ containerTop: number; windowY: number }>({ containerTop: 0, windowY: 0 });
 
   const scrollAccumulatorRef = useRef<number>(0);
   const lastProgrammaticScrollTopRef = useRef<number>(0);
@@ -561,6 +566,26 @@ export function SmartChordReader({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginLeft: 'auto' }}>
           <button
             type="button"
+            data-testid="reader-piano-on-tap-toggle"
+            aria-label="Piano ao tocar"
+            aria-pressed={pianoOnTap}
+            className="btn btn-secondary"
+            onClick={() => setPianoOnTap((prev) => !prev)}
+            style={{
+              minHeight: '44px',
+              padding: '8px 12px',
+              fontSize: '0.82rem',
+              backgroundColor: pianoOnTap ? 'var(--action-primary-subtle, #F9ECE7)' : undefined,
+              borderColor: pianoOnTap ? 'var(--action-primary-bg, #AE5235)' : undefined,
+              color: pianoOnTap ? 'var(--chord-text, #9E4427)' : undefined,
+              fontWeight: pianoOnTap ? 700 : 500,
+            }}
+          >
+            Piano ao tocar
+          </button>
+
+          <button
+            type="button"
             data-testid="reader-fullscreen-toggle"
             aria-label={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
             aria-pressed={isFullscreen}
@@ -869,9 +894,21 @@ export function SmartChordReader({
                           key={tokenIdx}
                           type="button"
                           className="smart-chord-inline-btn"
-                          aria-label={`Editar acorde ${transposedChord}${targetAnnotations.length ? `; ${targetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
-                          onClick={() => {
-                            if (token.chordIndex !== undefined) {
+                          data-chord-cell-line={lineIdx}
+                          data-chord-cell-bar={token.chordIndex}
+                          aria-label={`${pianoOnTap ? 'Ver diagrama do acorde' : 'Editar acorde'} ${transposedChord}${targetAnnotations.length ? `; ${targetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
+                          onClick={(e) => {
+                            if (pianoOnTap) {
+                              if (autoScrollState === 'playing') {
+                                handlePauseScroll();
+                              }
+                              savedScrollPosRef.current = {
+                                containerTop: sheetScrollRef.current?.scrollTop ?? 0,
+                                windowY: typeof window !== 'undefined' ? window.scrollY : 0,
+                              };
+                              setActivePianoChord(transposedChord);
+                              pianoTriggerRef.current = e.currentTarget;
+                            } else if (token.chordIndex !== undefined) {
                               setEditingCell({ lineIdx, barChordIdx: token.chordIndex });
                               setEditingChordValue(token.value);
                             }
@@ -1115,10 +1152,28 @@ export function SmartChordReader({
                       key={charIdx}
                       type="button"
                       className="smart-chord-char-btn"
-                      aria-label={`Editar acorde ${transposedChord} na linha ${lineIdx + 1}, posição ${charIdx + 1}${targetAnnotations.length ? `; ${targetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
-                      onClick={() => {
-                        setEditingCell({ lineIdx, charIdx });
-                        setEditingChordValue(chord);
+                      data-chord-cell-line={lineIdx}
+                      data-chord-cell-char={charIdx}
+                      aria-label={pianoOnTap && hasChord
+                        ? `Ver diagrama do acorde ${transposedChord} na linha ${lineIdx + 1}, posição ${charIdx + 1}${targetAnnotations.length ? `; ${targetAnnotations.map(item => item.displayText).join(', ')}` : ''}`
+                        : `Editar acorde ${transposedChord} na linha ${lineIdx + 1}, posição ${charIdx + 1}${targetAnnotations.length ? `; ${targetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
+                      onClick={(e) => {
+                        if (pianoOnTap) {
+                          if (hasChord) {
+                            if (autoScrollState === 'playing') {
+                              handlePauseScroll();
+                            }
+                            savedScrollPosRef.current = {
+                              containerTop: sheetScrollRef.current?.scrollTop ?? 0,
+                              windowY: typeof window !== 'undefined' ? window.scrollY : 0,
+                            };
+                            setActivePianoChord(transposedChord);
+                            pianoTriggerRef.current = e.currentTarget;
+                          }
+                        } else {
+                          setEditingCell({ lineIdx, charIdx });
+                          setEditingChordValue(chord);
+                        }
                       }}
                       style={cellStyle}
                     >
@@ -1152,6 +1207,7 @@ export function SmartChordReader({
                   const isEditingExtra = editingCell && editingCell.lineIdx === lineIdx && editingCell.charIdx === text.length;
                   const hasExtraChord = visual.chords[text.length] !== undefined;
                   const extraChord = visual.chords[text.length] || '';
+                  const transposedExtra = hasExtraChord ? transposeNotationChord(extraChord, semitones) : '';
                   const extraChordOrdinal = visualChordIndexes.indexOf(text.length);
                   const extraTargetAnnotations = anchoredInstructions.filter(item => targetChordOrdinal(item) === extraChordOrdinal);
                   const extraStyle = {
@@ -1185,10 +1241,28 @@ export function SmartChordReader({
                     <button
                       type="button"
                       className="smart-chord-end-btn"
-                      aria-label={`Inserir acorde ao final da linha ${lineIdx + 1}${extraTargetAnnotations.length ? `; ${extraTargetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
-                      onClick={() => {
-                        setEditingCell({ lineIdx, charIdx: text.length });
-                        setEditingChordValue(extraChord);
+                      data-chord-cell-line={lineIdx}
+                      data-chord-cell-char={text.length}
+                      aria-label={pianoOnTap && hasExtraChord
+                        ? `Ver diagrama do acorde ${transposedExtra} ao final da linha ${lineIdx + 1}${extraTargetAnnotations.length ? `; ${extraTargetAnnotations.map(item => item.displayText).join(', ')}` : ''}`
+                        : `Inserir acorde ao final da linha ${lineIdx + 1}${extraTargetAnnotations.length ? `; ${extraTargetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
+                      onClick={(e) => {
+                        if (pianoOnTap) {
+                          if (hasExtraChord) {
+                            if (autoScrollState === 'playing') {
+                              handlePauseScroll();
+                            }
+                            savedScrollPosRef.current = {
+                              containerTop: sheetScrollRef.current?.scrollTop ?? 0,
+                              windowY: typeof window !== 'undefined' ? window.scrollY : 0,
+                            };
+                            setActivePianoChord(transposedExtra);
+                            pianoTriggerRef.current = e.currentTarget;
+                          }
+                        } else {
+                          setEditingCell({ lineIdx, charIdx: text.length });
+                          setEditingChordValue(extraChord);
+                        }
                       }}
                       style={extraStyle}
                     >
@@ -1222,6 +1296,24 @@ export function SmartChordReader({
           })}
         </div>
       </div>
+
+      <ChordPianoDiagramPanel
+        chordSymbol={activePianoChord}
+        onClose={() => {
+          setActivePianoChord(null);
+          if (sheetScrollRef.current) {
+            sheetScrollRef.current.scrollTop = savedScrollPosRef.current.containerTop;
+          }
+          try {
+            if (typeof window !== 'undefined' && typeof window.scrollTo === 'function' && (savedScrollPosRef.current.windowY !== 0 || window.scrollY !== 0)) {
+              window.scrollTo({ top: savedScrollPosRef.current.windowY });
+            }
+          } catch {
+            // jsdom may not implement window.scrollTo
+          }
+        }}
+        triggerRef={pianoTriggerRef}
+      />
     </div>
   );
 }

@@ -330,3 +330,331 @@
     text-decoration-color: black !important;
   }
 }
+
+/* ==========================================================================
+   T3: Diagrama de Piano & Painel Interativo Acessível (ChordPianoDiagram)
+   ========================================================================== */
+.chord-piano-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1250;
+  background: var(--bg-overlay, rgba(15, 42, 31, 0.65));
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.chord-piano-dialog {
+  background: var(--bg-surface, #ffffff);
+  color: var(--text-primary, #18221D);
+  width: min(760px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle, #DCD3C6);
+  padding: 20px;
+  box-shadow: var(--shadow-elevated, 0 16px 48px rgba(0, 0, 0, 0.28));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.chord-piano-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chord-piano-header-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chord-piano-close-btn {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--border-subtle, #DCD3C6);
+  color: var(--text-secondary, #46544E);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.chord-piano-close-btn:hover,
+.chord-piano-close-btn:focus-visible {
+  background: var(--bg-surface-subtle, #EFE8DC);
+  color: var(--text-primary, #18221D);
+  outline: 2px solid var(--focus-ring, #0F2A1F);
+  outline-offset: 2px;
+}
+
+.chord-piano-legend {
+  font-size: 0.8125rem;
+  color: var(--text-secondary, #46544E);
+  background: var(--bg-surface-subtle, #EFE8DC);
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 3px solid var(--action-primary-bg, #AE5235);
+  line-height: 1.4;
+}
+
+.chord-piano-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.chord-piano-ctrl-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, #DCD3C6);
+  background: var(--bg-surface, #ffffff);
+  color: var(--text-primary, #18221D);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chord-piano-ctrl-btn:hover:not(:disabled),
+.chord-piano-ctrl-btn:focus-visible:not(:disabled) {
+  background: var(--bg-surface-subtle, #EFE8DC);
+  border-color: var(--border-strong, #B8AEA0);
+  outline: 2px solid var(--focus-ring, #0F2A1F);
+  outline-offset: 2px;
+}
+
+.chord-piano-ctrl-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chord-piano-svg-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle, #DCD3C6);
+  background: var(--bg-surface-subtle, #EFE8DC);
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.chord-piano-svg-wrap svg {
+  min-width: 308px;
+}
+
+/* Teclas Brancas */
+.chord-key-white {
+  fill: #FFFFFF;
+  stroke: var(--border-subtle, #DCD3C6);
+  stroke-width: 1.2px;
+  transition: fill 0.15s ease, stroke 0.15s ease;
+}
+
+.chord-key-white.active-root,
+.chord-key-white.active-root-bass {
+  fill: var(--action-primary-bg, #AE5235) !important;
+  stroke: var(--chord-text, #9E4427) !important;
+}
+
+.chord-key-white.active-chord-tone {
+  fill: var(--structural-accent, #0F2A1F) !important;
+  stroke: var(--structural-accent, #0F2A1F) !important;
+}
+
+.chord-key-white.active-bass {
+  fill: var(--chord-badge-bg, #F6E6E0) !important;
+  stroke: var(--action-primary-bg, #AE5235) !important;
+  stroke-width: 3.5px !important;
+}
+
+/* Teclas Pretas */
+.chord-key-black {
+  fill: #18221D;
+  stroke: #0A1E16;
+  stroke-width: 1.2px;
+  transition: fill 0.15s ease, stroke 0.15s ease;
+}
+
+.chord-key-black.active-root,
+.chord-key-black.active-root-bass {
+  fill: var(--action-primary-bg, #AE5235) !important;
+  stroke: #FFFFFF !important;
+  stroke-width: 1.8px !important;
+}
+
+.chord-key-black.active-chord-tone {
+  fill: var(--structural-accent, #0F2A1F) !important;
+  stroke: #FFFFFF !important;
+  stroke-width: 1.8px !important;
+}
+
+.chord-key-black.active-bass {
+  fill: #78351F !important;
+  stroke: var(--brand-cream, #F5EFE6) !important;
+  stroke-width: 3px !important;
+}
+
+/* Badges e Rótulos das Teclas */
+.key-badge-circle.root,
+.key-badge-circle.root-bass {
+  fill: #FFFFFF;
+}
+
+.key-badge-circle.chord-tone {
+  display: none;
+}
+
+.key-badge-circle.bass {
+  fill: #FFFFFF;
+  stroke: var(--action-primary-bg, #AE5235);
+  stroke-width: 1.5px;
+}
+
+.key-badge-text {
+  fill: var(--action-primary-bg, #AE5235);
+  font-family: inherit;
+  user-select: none;
+}
+
+.key-spelling-text {
+  fill: #FFFFFF;
+  font-family: inherit;
+  user-select: none;
+}
+
+.chord-key-white.active-bass ~ .key-spelling-text {
+  fill: var(--chord-text, #9E4427) !important;
+}
+
+/* Modo Escuro */
+.dark .chord-piano-dialog {
+  background: var(--bg-surface, #11231B);
+  color: var(--text-primary, #F5EFE6);
+  border-color: var(--border-subtle, #1E3D2F);
+}
+
+.dark .chord-piano-legend {
+  background: var(--bg-surface-subtle, #162C22);
+  color: var(--text-secondary, #A0AFA7);
+}
+
+.dark .chord-piano-ctrl-btn {
+  background: var(--bg-surface, #11231B);
+  border-color: var(--border-subtle, #1E3D2F);
+  color: var(--text-primary, #F5EFE6);
+}
+
+.dark .chord-piano-ctrl-btn:hover:not(:disabled),
+.dark .chord-piano-ctrl-btn:focus-visible:not(:disabled) {
+  background: var(--bg-surface-subtle, #162C22);
+  border-color: var(--border-strong, #2D5945);
+}
+
+.dark .chord-piano-svg-wrap {
+  background: #08140F;
+  border-color: var(--border-subtle, #1E3D2F);
+}
+
+.dark .chord-key-white {
+  fill: #E5DED2;
+  stroke: #1E3D2F;
+}
+
+.dark .chord-key-white.active-chord-tone {
+  fill: var(--structural-accent, #7CC4A4) !important;
+  stroke: var(--structural-accent, #7CC4A4) !important;
+}
+
+.dark .chord-key-white.active-chord-tone ~ .key-spelling-text {
+  fill: #0F2A1F !important;
+}
+
+.dark .chord-key-black {
+  fill: #0D1C15;
+  stroke: #060E0A;
+}
+
+.dark .chord-key-black.active-chord-tone {
+  fill: var(--structural-accent, #7CC4A4) !important;
+  stroke: #FFFFFF !important;
+}
+
+.dark .chord-key-black.active-chord-tone ~ .key-spelling-text {
+  fill: #0F2A1F !important;
+}
+
+/* Metadados e Pílulas */
+.chord-piano-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--bg-surface-subtle, #EFE8DC);
+  border: 1px solid var(--border-subtle, #DCD3C6);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.dark .chord-piano-metadata {
+  background: var(--bg-surface-subtle, #162C22);
+  border-color: var(--border-subtle, #1E3D2F);
+}
+
+.chord-piano-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: var(--bg-surface, #ffffff);
+  border: 1px solid var(--border-subtle, #DCD3C6);
+  color: var(--text-primary, #18221D);
+}
+
+.dark .chord-piano-pill {
+  background: var(--bg-surface, #11231B);
+  border-color: var(--border-subtle, #1E3D2F);
+  color: var(--text-primary, #F5EFE6);
+}
+
+.chord-piano-pill.is-root {
+  background: var(--action-primary-subtle, #F9ECE7);
+  border-color: var(--action-primary-bg, #AE5235);
+  color: var(--chord-text, #9E4427);
+}
+
+.dark .chord-piano-pill.is-root {
+  background: rgba(174, 82, 53, 0.2);
+  border-color: #AE5235;
+  color: #E69176;
+}
+
+.chord-piano-pill.is-bass {
+  background: var(--status-warning-bg, #FEF3E2);
+  border-color: var(--status-warning-border, #F3C88B);
+  color: var(--status-warning-text, #944D10);
+}
+
+.dark .chord-piano-pill.is-bass {
+  background: rgba(180, 83, 9, 0.2);
+  border-color: #B45309;
+  color: #FCD34D;
+}

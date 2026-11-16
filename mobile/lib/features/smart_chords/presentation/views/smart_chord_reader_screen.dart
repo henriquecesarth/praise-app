@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../widgets/chord_lyric_line.dart';
+import '../widgets/chord_piano_diagram_sheet.dart';
 import '../widgets/musical_progression_line.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -924,7 +925,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
   }) {
     if (SmartChordParser.progressionTokens(lineText) != null) {
       return MusicalProgressionLine(line: lineText, semitones: semitones, fontSize: _fontSize,
-        fontFamily: fontConfig.fontFamily, fontFamilyFallback: fontConfig.fallback);
+        fontFamily: fontConfig.fontFamily, fontFamilyFallback: fontConfig.fallback,
+        onChordTap: (chord) => showChordPianoDiagramSheet(context, chord));
     }
     if (alignedLyrics && !SmartChordParser.parse(lineText).any(
         (line) => line.segments.any((segment) => segment.hasChord))) {
@@ -961,7 +963,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     List<String> fontFamilyFallback,
     double spacingPx,
   ) => ChordLyricLine(line: lineText, semitones: semitones, fontSize: _fontSize,
-      fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: true, spacingPx: spacingPx);
+      fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: true, spacingPx: spacingPx,
+      onChordTap: (chord) => showChordPianoDiagramSheet(context, chord));
 
   Widget _buildProportionalLine(
     String lineText,
@@ -971,7 +974,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     List<String> fontFamilyFallback,
     double spacingPx,
   ) => ChordLyricLine(line: lineText, semitones: semitones, fontSize: _fontSize,
-      fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: false, spacingPx: spacingPx);
+      fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: false, spacingPx: spacingPx,
+      onChordTap: (chord) => showChordPianoDiagramSheet(context, chord));
 
   Widget _buildRepertoireLinkBanner(
     BuildContext context,

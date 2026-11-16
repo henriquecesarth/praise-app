@@ -241,4 +241,57 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  group('ChordLyricLine onChordTap integration and invariant safety', () {
+    testWidgets('tapping chord triggers onChordTap callback with transposed chord symbol while preserving 2 Text widgets per fragment and exact alignment', (tester) async {
+      String? tappedChord;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: ChordLyricLine(
+            line: '[C]Amanhece [Am]luz',
+            semitones: 2,
+            fontSize: 16,
+            fontFamily: 'Georgia',
+            fontFamilyFallback: const ['serif'],
+            monospace: false,
+            onChordTap: (chord) => tappedChord = chord,
+          ),
+        ),
+      ));
+
+      // Transposed: C -> D, Am -> Bm
+      expect(find.text('D'), findsOneWidget);
+      expect(find.text('Bm'), findsOneWidget);
+
+      final fragment0 = find.byKey(const ValueKey('reader-fragment-0'));
+      final tiers = find.descendant(of: fragment0, matching: find.byType(Text));
+      expect(tiers, findsNWidgets(2));
+
+      final chordRect = tester.getRect(tiers.at(0));
+      final lyricRect = tester.getRect(tiers.at(1));
+      expect(chordRect.left, closeTo(lyricRect.left, 0.1));
+
+      // Check Semantics label
+      expect(
+        find.byWidgetPredicate((w) => w is Semantics && w.properties.label == 'Ver diagrama do acorde D'),
+        findsOneWidget,
+      );
+      expect(
+        find.byWidgetPredicate((w) => w is Semantics && w.properties.label == 'Ver diagrama do acorde Bm'),
+        findsOneWidget,
+      );
+
+      // Tap on D
+      await tester.tap(find.text('D'));
+      await tester.pump();
+      expect(tappedChord, 'D');
+
+      // Tap on Bm
+      await tester.tap(find.text('Bm'));
+      await tester.pump();
+      expect(tappedChord, 'Bm');
+
+      expect(tester.takeException(), isNull);
+    });
+  });
 }

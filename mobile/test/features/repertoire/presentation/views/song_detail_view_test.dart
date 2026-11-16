@@ -32,6 +32,7 @@ import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/sm
 import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/song_smart_chords_controller.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_form_screen.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_lyric_line.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_piano_diagram_sheet.dart';
 
 class _FakeAuthRepo implements AuthRepository {
   @override
@@ -2556,6 +2557,110 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Abrir Música'), findsOneWidget);
     });
+
+    testWidgets(
+      'tapping chord in inline and fullscreen views opens ChordPianoDiagramSheet and dismisses cleanly',
+      (tester) async {
+        const chord = SmartChord(
+          id: 'sc_diagram',
+          userId: 'member_user',
+          title: 'Em Teus Braços',
+          originalKey: 'E',
+          content: '[C]Tu és [G]Deus',
+          createdAt: '2026-11-10T00:00:00Z',
+          updatedAt: '2026-11-10T00:00:00Z',
+        );
+        fakeRepo.detail = const SongDetail(
+          id: 'song_diag',
+          ministryId: 'min_1',
+          title: 'Em Teus Braços',
+          artistName: 'Laura Souguellis',
+          originalKey: 'E',
+        );
+        final linkRepo = _FakeLinkRepo(
+          onGetChordsForSong: () async => const [chord],
+          onRemoveLink: (_, __) async {},
+        );
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              appEnvironmentProvider.overrideWithValue(
+                const AppEnvironment(
+                  env: AppEnv.development,
+                  apiBaseUrl: 'http://localhost:3000/api/v1',
+                ),
+              ),
+              repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+              songDetailNotifierProvider.overrideWith((ref) {
+                return SongDetailNotifier(repository: fakeRepo);
+              }),
+              ministryContextNotifierProvider
+                  .overrideWith((ref) => FakeMinistryContextNotifier()),
+              authNotifierProvider.overrideWith((ref) => _FakeAuthNotifier()),
+              smartChordRepertoireLinkRepositoryProvider
+                  .overrideWithValue(linkRepo),
+              songSmartChordsNotifierProvider.overrideWith(
+                (ref) => SongSmartChordsNotifier(
+                  repository: _NoopSmartChordRepo(),
+                  linkRepository: linkRepo,
+                ),
+              ),
+              smartChordRepertoireLinkNotifierProvider.overrideWith(
+                (ref) => SmartChordRepertoireLinkNotifier(
+                  repository: linkRepo,
+                ),
+              ),
+            ],
+            child: const MaterialApp(
+              home: SongDetailView(
+                ministryId: 'min_1',
+                songId: 'song_diag',
+                initialTitle: 'Em Teus Braços',
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Inline chord card shows C and G
+        expect(find.text('C'), findsWidgets);
+        expect(find.text('G'), findsWidgets);
+
+        // Tap chord in inline card
+        await tester.tap(find.text('C').first);
+        await tester.pumpAndSettle();
+
+        // Verify sheet opened
+        expect(find.byType(ChordPianoDiagramSheet), findsOneWidget);
+        expect(find.text('C — Fundamental (1ª)'), findsOneWidget);
+
+        // Close sheet
+        await tester.tap(find.byTooltip('Fechar diagrama'));
+        await tester.pumpAndSettle();
+        expect(find.byType(ChordPianoDiagramSheet), findsNothing);
+
+        // Enter fullscreen
+        final fullscreenBtn = find.byKey(
+          const ValueKey('song_detail_fullscreen_button'),
+        );
+        await tester.ensureVisible(fullscreenBtn);
+        await tester.tap(fullscreenBtn);
+        await tester.pumpAndSettle();
+
+        // Tap chord in fullscreen view
+        await tester.tap(find.text('G').first);
+        await tester.pumpAndSettle();
+
+        expect(find.byType(ChordPianoDiagramSheet), findsOneWidget);
+        expect(find.text('G — Fundamental (1ª)'), findsOneWidget);
+
+        await tester.tap(find.byTooltip('Fechar diagrama'));
+        await tester.pumpAndSettle();
+        expect(find.byType(ChordPianoDiagramSheet), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 }
 

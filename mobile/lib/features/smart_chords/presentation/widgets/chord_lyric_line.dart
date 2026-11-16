@@ -13,12 +13,14 @@ class ChordLyricLine extends StatelessWidget {
   final bool monospace;
   final double spacingPx;
   final bool alignedLyrics;
+  final ValueChanged<String>? onChordTap;
 
   const ChordLyricLine({super.key, required this.line, required this.semitones,
     required this.fontSize, required this.fontFamily,
     required this.fontFamilyFallback, required this.monospace,
     this.spacingPx = AuthUser.defaultChordLineSpacingPxDouble,
-    this.alignedLyrics = false});
+    this.alignedLyrics = false,
+    this.onChordTap});
 
   @override
   Widget build(BuildContext context) {
@@ -69,8 +71,9 @@ class ChordLyricLine extends StatelessWidget {
       final chord = hasChord ? SmartChordParser.transposeChord(fragment.chord, semitones) : '';
       final comment = fragment.comment;
 
+      final Widget chordWidget;
       if (hasChord && hasComment) {
-        return Text.rich(
+        chordWidget = Text.rich(
           TextSpan(children: [
             TextSpan(text: chord, style: chordStyle),
             const TextSpan(text: ' '),
@@ -79,10 +82,23 @@ class ChordLyricLine extends StatelessWidget {
           softWrap: false,
         );
       } else if (hasChord) {
-        return Text(chord, style: chordStyle, softWrap: false);
+        chordWidget = Text(chord, style: chordStyle, softWrap: false);
       } else {
-        return Text(comment, style: commentStyle, softWrap: false);
+        chordWidget = Text(comment, style: commentStyle, softWrap: false);
       }
+
+      if (onChordTap != null && hasChord) {
+        return Semantics(
+          button: true,
+          label: 'Ver diagrama do acorde $chord',
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => onChordTap!(chord),
+            child: chordWidget,
+          ),
+        );
+      }
+      return chordWidget;
     }
 
     double chordTierWidth(SmartChordSegment fragment) {
