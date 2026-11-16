@@ -44,9 +44,9 @@ Arquivos propostos: `web/src/music/theory.ts`, `mobile/lib/core/music/theory.dar
 
 Consome T1 revisada (G2); produz `parseChord`, `transpose`, `spellPitch` e `chordTones`, com Unsupported e política legada. Sem I/O.
 
-- [ ] Criar testes falhando para intervalos/grafias, preservação de layout e `chordTones` de C, Cm e C7.
-- [ ] Implementar o mínimo, manter wrappers existentes e comparar corpus completo TS/Dart.
-- [ ] Rodar testes de parsers/renderização afetados; revisar diff de comportamento, sem reformatar cifras salvas.
+- [x] Criar testes falhando para intervalos/grafias, preservação de layout e `chordTones` de C, Cm e C7.
+- [x] Implementar o mínimo, manter wrappers existentes e comparar corpus completo TS/Dart.
+- [x] Rodar testes de parsers/renderização afetados; revisar diff de comportamento, sem reformatar cifras salvas (PASS).
 
 Aceite: mesmo JSON nos dois runtimes, separadores/CRLF intactos, sem mudança silenciosa da escrita legada. Build pertinente só após alteração real de código.
 
@@ -192,3 +192,56 @@ Validação real até este checkpoint local:
 - JSON parseável, links relativos válidos, `git diff --check` PASS e áreas fora do escopo sem diff. Os validadores e o loader novos são exclusivamente de testes. Hot reload não se aplica: nenhuma tela ou código de aplicativo Dart foi alterado.
 
 G2/T1: **PASS**, pronto para checkpoint posterior autorizado. Isso não inicia T2 automaticamente. Sem commit/push nesta tarefa.
+
+## Execução incremental — T2 (2026-11-16)
+
+Autorização posterior do proprietário: exclusivamente núcleos TS/Dart e testes T2, sem commit/push e sem iniciar T3–T12. Base `a2da9c46f018a139388dae980cf37c34f3fd4e1a`, branch `fix/louvaio-audit-remediation-20261113`, worktree de remediação inicialmente limpo. Worktrees existentes preservados; as 185 entradas de WIP da pasta principal mantêm o estado anterior.
+
+Responsabilidade de escrita: `/root/t2_typescript` somente `web/src/music/theory.ts` e `theory.test.ts`; `/root/t2_dart` somente `mobile/lib/core/music/theory.dart` e `mobile/test/core/music/theory_test.dart`; principal somente este registro e validação de integração. Revisão musical `/root/audit_theory` e revisão independente separada, ambas somente leitura. Workers solicitados como Sol/high com contexto separado; identidade efetiva de inferência: **Unknown / Not yet verified**.
+
+Ruling: o corpus publicado T1 é a autoridade normativa da T2 e permanece intacto. Embora o ADR cite omit5 entre casos mínimos futuros, T1 fixa omissions vazio: omissões explícitas ficam unsupported em v1, sem ampliar o contrato silenciosamente. A inversão de T1 é relação simbólica do baixo com a lista teórica de notas, não inferência de voicing instrumental. C## + intervalo diatônico A1 excede acidente duplo; C## +1 cromático pode ser D#, portanto não confundir os dois modos. O custo dessa delimitação é manter omissões e demais sufixos fora da gramática v1 indisponíveis até novo contrato.
+
+Ruling: os novos módulos puros não substituem wrappers nem renderizadores legados nesta tarefa. Diferenças normativas de grafia/canonicalSymbol permanecem isoladas; nenhum texto persistido ou comportamento visível é reformatado. A entrega deve provar o novo motor nos 99 casos normativos, além de manter os 34 vetores de notação e 10 observações no fluxo legado.
+
+Helpers sem vetores diretos em T1: `spellPitch` retorna o envelope de nota (originalText é a representação textual da classe recebida; oitava/MIDI nulos), aceita classe inteira 0..11, letra explícita opcional ou preferência sharps/flats, sem inferir tonalidade. `chordTones(text)` retorna o envelope harmônico completo, com notes e projeções, como conveniência segura de parseChord. Ambos os runtimes devem seguir a mesma decisão e ter testes diretos fora do corpus. Numericamente, usar apenas inteiros seguros equivalentes ao domínio JS; entradas malformadas retornam Unsupported tipado.
+
+Ruling: chromaticSharps escolhe a grafia da raiz; todos os constituintes e o baixo, inclusive baixo externo, seguem o movimento diatônico derivado dessa raiz. Assim C/E +1 resulta C#/E# e C/F# +1 resulta C#/F##. Essa escolha preserva a relação intervalar escrita e pode exibir um acidente duplo em lugar da alternativa enarmônica simples; não é inferência de função harmônica nem normalização independente do baixo.
+
+### Artefatos e interfaces T2
+
+- [Motor TS](../../../web/src/music/theory.ts) e [testes TS](../../../web/src/music/theory.test.ts).
+- [Motor Dart](../../../mobile/lib/core/music/theory.dart) e [testes Dart](../../../mobile/test/core/music/theory_test.dart).
+- Sete APIs: parseNote, parseInterval, parseChord, transposeNote, transposeChord, spellPitch e chordTones. TS retorna união discriminada Result<T>; Dart retorna TheoryResult<T> selado com Parsed<T>/Unsupported<T> e toJson(). Envelopes comparáveis preservam originalText, normalized, notes, diatonicSpellings e pitchClasses; falhas não expõem interpretação parcial.
+- Opções de transposição: política diatonic com intervalo assinado ou chromaticSharps com semitons inteiros seguros; não aceitar opções contraditórias. Dart usa SignedInterval(posição diatônica, semitons), TS usa objeto com esses dois campos. Sem tonalidade inferida. BigInt interno evita perda de precisão; saídas numéricas continuam no domínio seguro comum.
+- Gramática de acordes limitada e explícita: qualidades maior/menor/diminuta/aumentada/sus2/sus4, aliases min/+ e brasileiros 7M/m7(b5), 6/7/9/11/13, adições 9/11/13, alterações de extensão e slash bass. Grupos parentetizados só para modificadores reconhecidos; baixo numérico /9 é extensão, não nota de baixo. Não importar arquivos/fixtures/JSON ou fazer I/O nos motores.
+- Nomes canônicos são apenas representações em memória: por exemplo Cmmaj7add9 e Cm(maj7)add9 convergem em Cm(maj7)add9, mantendo o original de cada chamada. O parser de documento continua responsável por comentários, compassos, letras e tablaturas.
+
+### Validação e revisões T2
+
+Resultados reais, com logs completos em temporários e sem instalação de dependências:
+
+| Verificação | Resultado |
+| --- | --- |
+| Testes do motor TS, `npm test -- src/music/theory.test.ts --testTimeout=10000` | PASS, 108 testes; 99 comparações integrais contra os resultados normativos T1 + helpers/limites/aliases |
+| Testes do motor Dart, `flutter test --no-pub test/core/music/theory_test.dart --timeout 30s` | PASS, 114 testes; os mesmos 99 resultados normativos + helpers/limites/aliases |
+| Regressões Web, oito arquivos de notação/parser/contrato T1 e leitores/fontes | PASS, 270 testes; inclui 34 vetores R17 e 10 observações, preservação literal e alinhamento |
+| Regressões Dart, diretório domain Smart Chords e widgets chord_lyric_line/musical_progression_line | PASS, 252 testes; inclui R17, observações, referência M20 de alinhamento, tablaturas e progressões |
+| TypeScript `npx tsc --noEmit` após correção revisada | PASS, exit 0 |
+| `dart analyze lib/core/music/theory.dart test/core/music/theory_test.dart` após correções | PASS, No issues found |
+| Comparação direta de resultados reais TS/Dart em runner temporário | PASS, 2.576 entradas e zero diferenças de envelopes JSON |
+| `npm run build` padrão local | BLOCKED pelo guard preexistente: Verified publish environment required; nenhum ambiente/credencial de publicação foi configurado |
+| `npm run build -- --mode test` local, modo explicitamente previsto pelo guard | PASS, exit 0, inclusive nova execução após última correção TS; sem deploy |
+
+A matriz diferencial inclui os 99 vetores normativos, 35 raízes (sete letras e cinco acidentes), 24 sufixos, slash bass, helpers de grafia, intervalos assinados, oitavas, transposições positivas/negativas, entradas inválidas e os limites de inteiros seguros. Ela inclui também os 27 probes da revisão independente. Comparação por deep equality após serialização; não é mock do motor nem comparação apenas de formato. Os 34 vetores legados e 10 probes observacionais continuam sendo executados no fluxo legado; diferenças deliberadas entre esses contratos não são forçadas no novo núcleo.
+
+Logs temporários: louvaio-t2-ts-{red,green,tsc}.log e louvaio-t2-ts-review-{red,green,tsc}.log, louvaio-dart-theory-green.log e logs de RED/order da correção, louvaio-t2-web-legacy.log, louvaio-t2-dart-legacy.log, louvaio-t2-web-final-build.log. Runners/entradas/resultados diferenciais temporários louvaio-t2-differential-final.mjs, louvaio-t2-differential.dart, louvaio-t2-differential-inputs.json, louvaio-t2-typescript-results.json, louvaio-t2-dart-results.json e louvaio-t2-parity-differences-final.json (lista vazia após correções). Não são dados de usuário nem artefatos de áudio.
+
+RED comprovado antes dos motores e antes das correções: testes reais chamam as funções novas e comparam o envelope completo com expected. Revisão musical /root/audit_theory: sem falhas musicais concretas em notas, intervalos, oitavas, qualidades, alterações e baixos; política de baixo externo documentada acima.
+
+Revisão independente /root/t2_review detectou e motivou correções com RED/GREEN: alias min em meio diminuto, canônico de menor com sétima maior e adição, intervalos numéricos sem qualidade, reconhecimento de microtons/validação lexical completa e prioridade de erros em extremos numéricos. A fonte normativa não foi alterada. Em parseNote, texto lexicalmente incompleto não ganha interpretação parcial; em transposição diatônica, primeiro validar a grafia resultante e depois as coordenadas numéricas finais. Essa prioridade mantém categorias de Unsupported equivalentes entre runtimes.
+
+Re-revisão independente final /root/t2_review: **PASS**, todos os achados corrigidos, sem findings abertos. O revisor executou independentemente 36 probes cirúrgicos (27 de aliases/erros e nove de precedência nos extremos), com zero diferenças; confirmou chamadas reais dos motores nos testes, ausência de I/O/lookup do corpus em runtime e escopo de quatro arquivos novos + este ledger. A análise musical /root/audit_theory também concluiu sem falhas musicais concretas.
+
+Checks finais: corpus SHA-256 preservado `5bd27986e83ea9631763f42bcbddaf7b8082f5eca54b1617f5b498cf45e4c594`, dependências e fontes legadas sem diff, JSON/links/whitespace validados, índice vazio e HEAD ainda na base. As 185 entradas da pasta principal mantêm o mesmo hash de status anterior. Nenhuma tela Dart foi alterada ou importa o núcleo nesta etapa; hot reload não integra a comprovação destes módulos puros, que foram compilados e executados pelos testes.
+
+**Gate T2: PASS local, pronto para revisão/checkpoint posteriormente autorizado.** Nenhum commit/push, publicação, alteração de backend/API, UI, M21, faturamento ou dado persistido foi realizado. O build de publicação permanece sujeito ao guard e não foi homologado; o build local de teste passou. T3 não foi iniciada.
