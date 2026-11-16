@@ -124,7 +124,7 @@ class ScheduleSongSequenceContext {
       hasNext ? items[currentIndex + 1] : null;
 
   String get positionLabel =>
-      items.isEmpty ? '' : 'Música ${currentIndex + 1} de ${items.length}';
+      items.isEmpty ? '' : '${currentIndex + 1} de ${items.length}';
 
   ScheduleSongSequenceContext moveToIndex(int index) {
     if (items.isEmpty) {

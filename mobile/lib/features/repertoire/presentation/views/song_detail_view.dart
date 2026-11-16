@@ -131,6 +131,9 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
 
   void _loadActiveSong({bool forceChords = false}) {
     if (_isDismissed || !mounted) return;
+    final isAdmin =
+        ref.read(ministryContextNotifierProvider).selectedMinistry?.isAdmin ??
+            false;
     ref
         .read(songDetailNotifierProvider.notifier)
         .load(widget.ministryId, _activeSongId);
@@ -139,6 +142,7 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
           ministryId: widget.ministryId,
           versionId: _activeVersionId,
           force: forceChords,
+          includePending: isAdmin,
         );
   }
 
@@ -159,7 +163,7 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
       _standSemitones = 0;
     });
     _fullscreenSessionNotifier.value = _buildSessionContext();
-    _loadActiveSong(forceChords: true);
+    _loadActiveSong(forceChords: false);
   }
 
   @override
@@ -258,6 +262,9 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
 
     if (updated != null && mounted) {
       ref
+          .read(songSmartChordsNotifierProvider.notifier)
+          .invalidateSong(widget.ministryId, _activeSongId);
+      ref
           .read(songDetailNotifierProvider.notifier)
           .load(widget.ministryId, _activeSongId);
       ref
@@ -355,13 +362,19 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
 
     final detailState = ref.watch(songDetailNotifierProvider);
     final theme = Theme.of(context);
-    final ministryState = ref.watch(ministryContextNotifierProvider);
-    final isAdmin = ministryState.selectedMinistry?.isAdmin ?? false;
+    final isAdmin = ref.watch(
+      ministryContextNotifierProvider
+          .select((s) => s.selectedMinistry?.isAdmin ?? false),
+    );
     final isMatchingContext = detailState.ministryId == widget.ministryId &&
         detailState.songId == _activeSongId;
     final loadedSong =
         (isMatchingContext && detailState.error == null) ? detailState.song : null;
     final displayTitle = loadedSong?.title ?? _activeTitle ?? 'Música';
+    final hasContextBackLabel =
+        widget.backLabel != null && widget.backLabel!.trim().isNotEmpty;
+    final hasSequence = _activeSequence != null && _activeSequence!.isNotEmpty;
+    final hasHeaderControls = hasContextBackLabel || hasSequence;
 
     Widget body;
 
@@ -417,6 +430,7 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
             ministryId: widget.ministryId,
             initialVersionId: _activeVersionId,
             activeSlotKey: _activeSequence?.currentIndex ?? 0,
+            hasHeaderControls: hasHeaderControls,
             isAdmin: isAdmin,
             semitones: _standSemitones,
             fontSize: _standFontSize,
@@ -483,10 +497,6 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
       body = const SizedBox.shrink();
     }
 
-    final hasContextBackLabel =
-        widget.backLabel != null && widget.backLabel!.trim().isNotEmpty;
-    final hasSequence = _activeSequence != null && _activeSequence!.isNotEmpty;
-
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -518,38 +528,61 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (hasContextBackLabel || hasSequence)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      alignment: hasContextBackLabel
-                          ? WrapAlignment.spaceBetween
-                          : WrapAlignment.end,
-                      crossAxisAlignment: WrapCrossAlignment.center,
+                if (hasHeaderControls)
+                  Container(
+                    key: const ValueKey('song_detail_context_header'),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: theme.dividerColor.withValues(alpha: 0.14),
+                        ),
+                      ),
+                    ),
+                    padding: EdgeInsets.fromLTRB(
+                      hasContextBackLabel ? 8 : 12,
+                      4,
+                      12,
+                      4,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         if (hasContextBackLabel)
-                          TextButton.icon(
-                            key: const ValueKey(
-                              'song_detail_context_back_button',
-                            ),
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
+                          Expanded(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
+                                key: const ValueKey(
+                                  'song_detail_context_back_button',
+                                ),
+                                style: TextButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 0,
+                                  ),
+                                  minimumSize: const Size(44, 44),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                onPressed: () {
+                                  if (Navigator.of(context).canPop()) {
+                                    Navigator.of(context).pop();
+                                  }
+                                },
+                                icon: const Icon(Icons.arrow_back, size: 18),
+                                label: Text(
+                                  widget.backLabel!.trim(),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
-                              minimumSize: const Size(44, 44),
                             ),
-                            onPressed: () {
-                              if (Navigator.of(context).canPop()) {
-                                Navigator.of(context).pop();
-                              }
-                            },
-                            icon: const Icon(Icons.arrow_back, size: 16),
-                            label: Text(widget.backLabel!.trim()),
                           ),
-                        if (hasSequence)
+                        if (hasSequence) ...[
+                          if (hasContextBackLabel)
+                            const SizedBox(width: 8)
+                          else
+                            const Spacer(),
                           _SequenceNavigationControls(
                             sequence: _activeSequence!,
                             onSelectIndex: _selectSequenceIndex,
@@ -564,6 +597,7 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
                               'song_detail_sequence_position_label',
                             ),
                           ),
+                        ],
                       ],
                     ),
                   ),
@@ -619,18 +653,22 @@ class _SequenceNavigationControls extends StatelessWidget {
               minHeight: 44,
             ),
             padding: EdgeInsets.zero,
+            style: IconButton.styleFrom(
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
             icon: const Icon(Icons.chevron_left_rounded, size: 22),
             onPressed: sequence.hasPrevious
                 ? () => onSelectIndex(sequence.currentIndex - 1)
                 : null,
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Semantics(
               label: sequence.positionLabel,
               child: Text(
                 sequence.positionLabel,
                 key: labelKey,
+                maxLines: 1,
                 style: theme.textTheme.labelMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -647,6 +685,9 @@ class _SequenceNavigationControls extends StatelessWidget {
               minHeight: 44,
             ),
             padding: EdgeInsets.zero,
+            style: IconButton.styleFrom(
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
             icon: const Icon(Icons.chevron_right_rounded, size: 22),
             onPressed: sequence.hasNext
                 ? () => onSelectIndex(sequence.currentIndex + 1)
@@ -669,6 +710,7 @@ class _SongDetailContent extends ConsumerStatefulWidget {
   final String ministryId;
   final String? initialVersionId;
   final int activeSlotKey;
+  final bool hasHeaderControls;
   final bool isAdmin;
   final int semitones;
   final double fontSize;
@@ -685,6 +727,7 @@ class _SongDetailContent extends ConsumerStatefulWidget {
     required this.ministryId,
     this.initialVersionId,
     this.activeSlotKey = 0,
+    this.hasHeaderControls = false,
     required this.isAdmin,
     required this.semitones,
     required this.fontSize,
@@ -708,8 +751,8 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
 
   int _selectedVersionIndex = 0;
   int _selectedChordIndex = 0;
-  String _readingMode = 'lyrics';
-  bool _hadLinkedChords = false;
+  String _readingMode = 'cifra';
+  bool _hasSeenChordsForCurrentSong = false;
   bool _isUnlinkingChord = false;
   String? _classifyingChordId;
 
@@ -720,27 +763,60 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
     return idx >= 0 ? idx : 0;
   }
 
+  List<String> _collectVersionIds() {
+    return <String>[
+      for (final v in widget.song.effectiveVersions)
+        if (v.id != null && v.id!.trim().isNotEmpty) v.id!.trim(),
+    ];
+  }
+
+  void _prefetchOtherVersions(String? activeVersionId) {
+    final others =
+        _collectVersionIds().where((id) => id != activeVersionId).toList();
+    if (others.isEmpty) return;
+    ref.read(songSmartChordsNotifierProvider.notifier).prefetchVersions(
+          songId: widget.song.id,
+          ministryId: widget.ministryId,
+          versionIds: others,
+          includePending: widget.isAdmin,
+        );
+  }
+
   void _syncSmartChordsForActiveVersion({bool force = false}) {
     final versions = widget.song.effectiveVersions;
     if (versions.isEmpty) return;
-    final idx = _selectedVersionIndex < versions.length ? _selectedVersionIndex : 0;
+    final idx =
+        _selectedVersionIndex < versions.length ? _selectedVersionIndex : 0;
     final rawVersionId = versions[idx].id?.trim();
     final activeVersionId =
         (rawVersionId != null && rawVersionId.isNotEmpty) ? rawVersionId : null;
-    if (activeVersionId == null) return;
+    final allVersionIds = _collectVersionIds();
+    final notifier = ref.read(songSmartChordsNotifierProvider.notifier);
 
-    final current = ref.read(songSmartChordsNotifierProvider);
-    if (force ||
-        current.songId != widget.song.id ||
-        current.ministryId != widget.ministryId ||
-        current.versionId != activeVersionId) {
-      ref.read(songSmartChordsNotifierProvider.notifier).load(
+    if (force) {
+      notifier
+          .load(
             widget.song.id,
             ministryId: widget.ministryId,
             versionId: activeVersionId,
-            force: force,
-          );
+            force: true,
+            includePending: widget.isAdmin,
+          )
+          .then((_) {
+        if (mounted) {
+          _prefetchOtherVersions(activeVersionId);
+        }
+      });
+      return;
     }
+
+    notifier.resolveSongVersions(
+      songId: widget.song.id,
+      ministryId: widget.ministryId,
+      activeVersionId: activeVersionId,
+      versionIds: allVersionIds,
+      includePending: widget.isAdmin,
+    );
   }
 
   @override
@@ -814,14 +890,14 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
         widget.initialVersionId,
       );
       _selectedChordIndex = 0;
-      _readingMode = 'lyrics';
-      _hadLinkedChords = false;
+      _readingMode = 'cifra';
+      _hasSeenChordsForCurrentSong = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           if (_scrollController.hasClients) {
             _scrollController.jumpTo(0);
           }
-          _syncSmartChordsForActiveVersion(force: true);
+          _syncSmartChordsForActiveVersion(force: false);
         }
       });
     } else {
@@ -856,8 +932,10 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
             ministryId: ministryId,
             versionId: versionId,
             force: true,
+            includePending: widget.isAdmin,
           );
       if (mounted) {
+        _prefetchOtherVersions(versionId);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -947,12 +1025,16 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
       versionName: activeVersionName,
     );
     if (linked == true && context.mounted) {
-      ref.read(songSmartChordsNotifierProvider.notifier).load(
+      await ref.read(songSmartChordsNotifierProvider.notifier).load(
             song.id,
             ministryId: ministryId,
             versionId: activeVersionId,
             force: true,
+            includePending: widget.isAdmin,
           );
+      if (mounted) {
+        _prefetchOtherVersions(activeVersionId);
+      }
     }
   }
 
@@ -977,12 +1059,16 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
       ),
     );
     if (created != null && context.mounted) {
-      ref.read(songSmartChordsNotifierProvider.notifier).load(
+      await ref.read(songSmartChordsNotifierProvider.notifier).load(
             song.id,
             ministryId: ministryId,
             versionId: activeVersionId,
             force: true,
+            includePending: widget.isAdmin,
           );
+      if (mounted) {
+        _prefetchOtherVersions(activeVersionId);
+      }
     }
   }
 
@@ -1112,10 +1198,16 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
         .toList();
 
     // Resolve classifications for active version
-    final listClassifications =
-        ref.watch(repertoireListNotifierProvider).availableClassifications;
-    final formClassifications =
-        ref.watch(songFormNotifierProvider).classifications;
+    final listClassifications = ref.watch(
+      repertoireListNotifierProvider.select((s) => s.availableClassifications),
+    );
+    final formClassifications = ref.watch(
+      songFormNotifierProvider.select((s) => s.classifications),
+    );
+    final authUser = ref.watch(authNotifierProvider.select((s) => s.user));
+    final currentUserId = authUser?.id.trim();
+    final canManageMinistryChords =
+        widget.isAdmin && currentUserId != null && currentUserId.isNotEmpty;
 
     final resolvedClassifications = <({String id, String name, Color color})>[];
     if (activeVersion.classificationIds.isNotEmpty) {
@@ -1151,7 +1243,12 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
 
     return SingleChildScrollView(
       controller: _scrollController,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        widget.hasHeaderControls ? 8 : 12,
+        16,
+        20,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1163,14 +1260,14 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
               letterSpacing: -0.5,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             song.displayArtist,
             style: theme.textTheme.titleMedium?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
 
           // Versions Selector Chips
           if (versions.isNotEmpty) ...[
@@ -1201,8 +1298,15 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                       label: Text(versions[i].name),
                       selected: activeIndex == i,
                       onSelected: (_) {
+                        if (activeIndex == i) return;
                         final selectedVerId = versions[i].id?.trim();
+                        final normalizedVerId =
+                            (selectedVerId != null && selectedVerId.isNotEmpty)
+                                ? selectedVerId
+                                : null;
+                        _stopAutoScroll(updateState: false);
                         setState(() {
+                          _isAutoScrolling = false;
                           _selectedVersionIndex = i;
                           _selectedChordIndex = 0;
                         });
@@ -1212,11 +1316,9 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                             .load(
                               song.id,
                               ministryId: ministryId,
-                              versionId: (selectedVerId != null &&
-                                      selectedVerId.isNotEmpty)
-                                  ? selectedVerId
-                                  : null,
-                              force: true,
+                              versionId: normalizedVerId,
+                              force: false,
+                              includePending: canManageMinistryChords,
                             );
                       },
                     ),
@@ -1224,7 +1326,7 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
           ],
 
           if ((widget.initialVersionId?.trim().isNotEmpty ?? false) &&
@@ -1314,7 +1416,7 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                 ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 14),
 
           // Active Version Notes
           if (activeVersionNotes != null) ...[
@@ -1406,11 +1508,6 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
               final chords = chordsMatchSong
                   ? smartChordsState.items
                   : const <SmartChord>[];
-              final authUser = ref.watch(authNotifierProvider).user;
-              final currentUserId = authUser?.id.trim();
-              final canManageMinistryChords = widget.isAdmin &&
-                  currentUserId != null &&
-                  currentUserId.isNotEmpty;
 
               bool canModifyChord(SmartChord? chord) {
                 if (!canManageMinistryChords || chord == null) return false;
@@ -1426,31 +1523,13 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                   : smartChordsState.pendingItems
                       .where((c) => canModifyChord(c))
                       .toList();
-              final isLoadingChords =
-                  smartChordsState.isLoading || !chordsMatchSong;
+              final isLoadingChords = smartChordsState.isLoading ||
+                  (!chordsMatchSong && !smartChordsState.hasError);
 
-              if (chords.isNotEmpty && !_hadLinkedChords) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) {
-                    setState(() {
-                      _hadLinkedChords = true;
-                      _readingMode = 'cifra';
-                    });
-                  }
-                });
-              } else if (!isLoadingChords && chords.isEmpty && _hadLinkedChords) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) {
-                    setState(() {
-                      _hadLinkedChords = false;
-                      _readingMode = 'lyrics';
-                      _selectedChordIndex = 0;
-                    });
-                    if (widget.semitones != 0) {
-                      widget.onSemitonesChanged(0);
-                    }
-                  }
-                });
+              if (chords.isNotEmpty) {
+                _hasSeenChordsForCurrentSong = true;
+              } else if (!isLoadingChords) {
+                _hasSeenChordsForCurrentSong = false;
               }
 
               if (!canManageMinistryChords &&
@@ -1459,7 +1538,11 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                 return const SizedBox.shrink();
               }
 
-              final effectiveMode = chords.isEmpty ? 'lyrics' : _readingMode;
+              final effectiveMode = (chords.isEmpty && !isLoadingChords)
+                  ? 'lyrics'
+                  : _readingMode;
+              final showStandBar = chords.isNotEmpty ||
+                  (isLoadingChords && _hasSeenChordsForCurrentSong);
               final activeChordIndex =
                   _selectedChordIndex < chords.length ? _selectedChordIndex : 0;
               final activeChord =
@@ -1470,12 +1553,58 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                       activeChord.originalKey,
                       widget.semitones,
                     )
-                  : null;
+                  : activeKey;
               final fontConfig =
                   ChordFontFamilyResolver.resolve(authUser?.chordFontFamily);
               final lineSpacingPx = (authUser?.chordLineSpacingPx ??
                       AuthUser.defaultChordLineSpacingPx)
                   .toDouble();
+
+              final readoutLabel = activeChord != null
+                  ? '${activeVersion.name} • Tom: $transposedChordKey${widget.semitones != 0 ? ' (${widget.semitones > 0 ? '+${widget.semitones}' : '${widget.semitones}'})' : ''}'
+                  : '${activeVersion.name}${transposedChordKey != null ? ' • Tom: $transposedChordKey' : ''}';
+              final readoutTooltip = activeChord != null
+                  ? 'Versão: ${activeVersion.name} • ${activeChord.title} (Original: ${activeChord.originalKey})'
+                  : 'Versão: ${activeVersion.name}';
+
+              Widget buildContentLoadingCard() {
+                return Container(
+                  key: const ValueKey('song_detail_chord_content_loading'),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 20,
+                    horizontal: 16,
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: theme.dividerColor.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 10),
+                      Flexible(
+                        child: Text(
+                          'Carregando cifra...',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1625,18 +1754,9 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                     ),
                   ],
                   const SizedBox(height: 6),
-                  if (isLoadingChords && chords.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8.0),
-                      child: Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ),
-                    )
-                  else if (chords.isNotEmpty && activeChord != null) ...[
+                  if (isLoadingChords && !showStandBar)
+                    buildContentLoadingCard()
+                  else if (showStandBar) ...[
                     // D1 Compact Music Stand Bar
                     Card(
                       key: const ValueKey('song_detail_music_stand_bar'),
@@ -1691,10 +1811,9 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Tooltip(
-                                    message:
-                                        'Versão: ${activeVersion.name} • ${activeChord.title} (Original: ${activeChord.originalKey})',
+                                    message: readoutTooltip,
                                     child: Text(
-                                      '${activeVersion.name} • Tom: $transposedChordKey${widget.semitones != 0 ? ' (${widget.semitones > 0 ? '+${widget.semitones}' : '${widget.semitones}'})' : ''}',
+                                      readoutLabel,
                                       key: const ValueKey(
                                         'song_detail_chord_key_readout',
                                       ),
@@ -1710,7 +1829,8 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                                     ),
                                   ),
                                 ),
-                                if (canModifyActiveChord) ...[
+                                if (canModifyActiveChord &&
+                                    activeChord != null) ...[
                                   IconButton(
                                     key: const ValueKey(
                                       'song_detail_open_smart_chord_button',
@@ -1736,7 +1856,7 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                                         ),
                                       );
                                       if (context.mounted) {
-                                        ref
+                                        await ref
                                             .read(
                                               songSmartChordsNotifierProvider
                                                   .notifier,
@@ -1746,7 +1866,12 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                                               ministryId: ministryId,
                                               versionId: activeVersionId,
                                               force: true,
+                                              includePending: widget.isAdmin,
                                             );
+                                        if (mounted) {
+                                          _prefetchOtherVersions(
+                                              activeVersionId);
+                                        }
                                       }
                                     },
                                   ),
@@ -1838,200 +1963,216 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                             ],
                             if (effectiveMode == 'cifra') ...[
                               const SizedBox(height: 8),
-                              SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    _buildStandControlPill(theme, [
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  _buildStandControlPill(theme, [
+                                    IconButton(
+                                      key: const ValueKey(
+                                        'song_detail_transpose_down_button',
+                                      ),
+                                      tooltip: 'Meio tom abaixo',
+                                      constraints: const BoxConstraints(
+                                        minWidth: 44,
+                                        minHeight: 44,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      icon: const Icon(Icons.remove, size: 18),
+                                      onPressed: activeChord != null
+                                          ? () => widget.onSemitonesChanged(
+                                                widget.semitones - 1,
+                                              )
+                                          : null,
+                                    ),
+                                    if (widget.semitones != 0 &&
+                                        activeChord != null)
                                       IconButton(
                                         key: const ValueKey(
-                                          'song_detail_transpose_down_button',
+                                          'song_detail_transpose_reset_button',
                                         ),
-                                        tooltip: 'Meio tom abaixo',
-                                        constraints: const BoxConstraints(
-                                          minWidth: 44,
-                                          minHeight: 44,
-                                        ),
-                                        padding: EdgeInsets.zero,
-                                        icon:
-                                            const Icon(Icons.remove, size: 18),
-                                        onPressed: () =>
-                                            widget.onSemitonesChanged(
-                                          widget.semitones - 1,
-                                        ),
-                                      ),
-                                      if (widget.semitones != 0)
-                                        IconButton(
-                                          key: const ValueKey(
-                                            'song_detail_transpose_reset_button',
-                                          ),
-                                          tooltip:
-                                              'Restaurar tom original (${activeChord.originalKey})',
-                                          constraints: const BoxConstraints(
-                                            minWidth: 44,
-                                            minHeight: 44,
-                                          ),
-                                          padding: EdgeInsets.zero,
-                                          icon: Icon(
-                                            Icons.restart_alt_rounded,
-                                            size: 18,
-                                            color: theme.colorScheme.primary,
-                                          ),
-                                          onPressed: () =>
-                                              widget.onSemitonesChanged(0),
-                                        ),
-                                      IconButton(
-                                        key: const ValueKey(
-                                          'song_detail_transpose_up_button',
-                                        ),
-                                        tooltip: 'Meio tom acima',
-                                        constraints: const BoxConstraints(
-                                          minWidth: 44,
-                                          minHeight: 44,
-                                        ),
-                                        padding: EdgeInsets.zero,
-                                        icon: const Icon(Icons.add, size: 18),
-                                        onPressed: () =>
-                                            widget.onSemitonesChanged(
-                                          widget.semitones + 1,
-                                        ),
-                                      ),
-                                    ]),
-                                    const SizedBox(width: 6),
-                                    _buildStandControlPill(theme, [
-                                      IconButton(
-                                        key: const ValueKey(
-                                          'song_detail_zoom_out_button',
-                                        ),
-                                        tooltip: 'Diminuir fonte',
-                                        constraints: const BoxConstraints(
-                                          minWidth: 44,
-                                          minHeight: 44,
-                                        ),
-                                        padding: EdgeInsets.zero,
-                                        icon: const Icon(
-                                          Icons.text_decrease,
-                                          size: 18,
-                                        ),
-                                        onPressed: widget.fontSize > 11.0
-                                            ? () => widget.onFontSizeChanged(
-                                                  (widget.fontSize - 1.0)
-                                                      .clamp(11.0, 24.0),
-                                                )
-                                            : null,
-                                      ),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 2,
-                                        ),
-                                        child: Text(
-                                          '${widget.fontSize.round()}px',
-                                          key: const ValueKey(
-                                            'song_detail_font_size_label',
-                                          ),
-                                          style: theme.textTheme.labelSmall
-                                              ?.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                      ),
-                                      IconButton(
-                                        key: const ValueKey(
-                                          'song_detail_zoom_in_button',
-                                        ),
-                                        tooltip: 'Aumentar fonte',
-                                        constraints: const BoxConstraints(
-                                          minWidth: 44,
-                                          minHeight: 44,
-                                        ),
-                                        padding: EdgeInsets.zero,
-                                        icon: const Icon(
-                                          Icons.text_increase,
-                                          size: 18,
-                                        ),
-                                        onPressed: widget.fontSize < 24.0
-                                            ? () => widget.onFontSizeChanged(
-                                                  (widget.fontSize + 1.0)
-                                                      .clamp(11.0, 24.0),
-                                                )
-                                            : null,
-                                      ),
-                                    ]),
-                                    const SizedBox(width: 6),
-                                    _buildStandControlPill(theme, [
-                                      IconButton.filledTonal(
-                                        key: const ValueKey(
-                                          'song_detail_autoscroll_toggle_button',
-                                        ),
-                                        tooltip: _isAutoScrolling
-                                            ? 'Pausar rolagem'
-                                            : 'Rolagem automática',
+                                        tooltip:
+                                            'Restaurar tom original (${activeChord.originalKey})',
                                         constraints: const BoxConstraints(
                                           minWidth: 44,
                                           minHeight: 44,
                                         ),
                                         padding: EdgeInsets.zero,
                                         icon: Icon(
-                                          _isAutoScrolling
-                                              ? Icons.pause_rounded
-                                              : Icons.play_arrow_rounded,
+                                          Icons.restart_alt_rounded,
                                           size: 18,
+                                          color: theme.colorScheme.primary,
                                         ),
-                                        onPressed: _toggleAutoScroll,
-                                      ),
-                                      IconButton(
-                                        key: const ValueKey(
-                                          'song_detail_autoscroll_speed_button',
-                                        ),
-                                        tooltip:
-                                            'Velocidade da rolagem (${widget.autoScrollSpeed}x)',
-                                        constraints: const BoxConstraints(
-                                          minWidth: 44,
-                                          minHeight: 44,
-                                        ),
-                                        padding: EdgeInsets.zero,
                                         onPressed: () =>
-                                            widget.onAutoScrollSpeedChanged(
-                                          widget.autoScrollSpeed >= 5
-                                              ? 1
-                                              : widget.autoScrollSpeed + 1,
-                                        ),
-                                        icon: Text(
-                                          '${widget.autoScrollSpeed}x',
-                                          style: theme.textTheme.labelMedium
-                                              ?.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
+                                            widget.onSemitonesChanged(0),
                                       ),
-                                    ]),
-                                    const SizedBox(width: 6),
-                                    IconButton.outlined(
+                                    IconButton(
                                       key: const ValueKey(
-                                        'song_detail_fullscreen_button',
+                                        'song_detail_transpose_up_button',
                                       ),
-                                      tooltip: 'Tela cheia',
+                                      tooltip: 'Meio tom acima',
+                                      constraints: const BoxConstraints(
+                                        minWidth: 44,
+                                        minHeight: 44,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      icon: const Icon(Icons.add, size: 18),
+                                      onPressed: activeChord != null
+                                          ? () => widget.onSemitonesChanged(
+                                                widget.semitones + 1,
+                                              )
+                                          : null,
+                                    ),
+                                  ]),
+                                  _buildStandControlPill(theme, [
+                                    IconButton(
+                                      key: const ValueKey(
+                                        'song_detail_zoom_out_button',
+                                      ),
+                                      tooltip: 'Diminuir fonte',
                                       constraints: const BoxConstraints(
                                         minWidth: 44,
                                         minHeight: 44,
                                       ),
                                       padding: EdgeInsets.zero,
                                       icon: const Icon(
-                                        Icons.fullscreen_rounded,
-                                        size: 20,
+                                        Icons.text_decrease,
+                                        size: 18,
                                       ),
-                                      onPressed: () {
-                                        _stopAutoScroll();
-                                        widget.onOpenFullscreen?.call(
-                                          activeVersionId: activeVersionId,
-                                          activeVersionName: activeVersion.name,
-                                          selectedChordIndex: activeChordIndex,
-                                        );
-                                      },
+                                      onPressed: widget.fontSize > 11.0
+                                          ? () => widget.onFontSizeChanged(
+                                                (widget.fontSize - 1.0)
+                                                    .clamp(11.0, 24.0),
+                                              )
+                                          : null,
                                     ),
-                                  ],
-                                ),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 2,
+                                      ),
+                                      child: Text(
+                                        '${widget.fontSize.round()}px',
+                                        key: const ValueKey(
+                                          'song_detail_font_size_label',
+                                        ),
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      key: const ValueKey(
+                                        'song_detail_zoom_in_button',
+                                      ),
+                                      tooltip: 'Aumentar fonte',
+                                      constraints: const BoxConstraints(
+                                        minWidth: 44,
+                                        minHeight: 44,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      icon: const Icon(
+                                        Icons.text_increase,
+                                        size: 18,
+                                      ),
+                                      onPressed: widget.fontSize < 24.0
+                                          ? () => widget.onFontSizeChanged(
+                                                (widget.fontSize + 1.0)
+                                                    .clamp(11.0, 24.0),
+                                              )
+                                          : null,
+                                    ),
+                                  ]),
+                                  _buildStandControlPill(theme, [
+                                    IconButton.filledTonal(
+                                      key: const ValueKey(
+                                        'song_detail_autoscroll_toggle_button',
+                                      ),
+                                      tooltip: _isAutoScrolling
+                                          ? 'Pausar rolagem'
+                                          : 'Rolagem automática',
+                                      constraints: const BoxConstraints(
+                                        minWidth: 44,
+                                        minHeight: 44,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      icon: Icon(
+                                        _isAutoScrolling
+                                            ? Icons.pause_rounded
+                                            : Icons.play_arrow_rounded,
+                                        size: 18,
+                                      ),
+                                      onPressed: activeChord != null
+                                          ? _toggleAutoScroll
+                                          : null,
+                                    ),
+                                    IconButton(
+                                      key: const ValueKey(
+                                        'song_detail_autoscroll_speed_button',
+                                      ),
+                                      tooltip:
+                                          'Velocidade da rolagem (${widget.autoScrollSpeed}x)',
+                                      constraints: const BoxConstraints(
+                                        minWidth: 44,
+                                        minHeight: 44,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      onPressed: () =>
+                                          widget.onAutoScrollSpeedChanged(
+                                        widget.autoScrollSpeed >= 5
+                                            ? 1
+                                            : widget.autoScrollSpeed + 1,
+                                      ),
+                                      icon: Text(
+                                        '${widget.autoScrollSpeed}x',
+                                        style: theme.textTheme.labelMedium
+                                            ?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  ]),
+                                  Tooltip(
+                                    message: 'Tela cheia',
+                                    child: FilledButton.tonalIcon(
+                                      key: const ValueKey(
+                                        'song_detail_fullscreen_button',
+                                      ),
+                                      style: FilledButton.styleFrom(
+                                        minimumSize: const Size(44, 44),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 0,
+                                        ),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                        ),
+                                      ),
+                                      onPressed: activeChord != null
+                                          ? () {
+                                              _stopAutoScroll();
+                                              widget.onOpenFullscreen?.call(
+                                                activeVersionId:
+                                                    activeVersionId,
+                                                activeVersionName:
+                                                    activeVersion.name,
+                                                selectedChordIndex:
+                                                    activeChordIndex,
+                                              );
+                                            }
+                                          : null,
+                                      icon: const Icon(
+                                        Icons.fullscreen_rounded,
+                                        size: 19,
+                                      ),
+                                      label: const Text('Tela cheia'),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ],
@@ -2040,64 +2181,68 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                     ),
                     if (effectiveMode == 'cifra') ...[
                       const SizedBox(height: 10),
-                      Container(
-                        key: const ValueKey('song_detail_inline_chord_sheet'),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.surfaceContainerHighest
-                              .withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: theme.dividerColor.withValues(alpha: 0.25),
+                      if (activeChord != null)
+                        Container(
+                          key: const ValueKey('song_detail_inline_chord_sheet'),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surfaceContainerHighest
+                                .withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: theme.dividerColor.withValues(alpha: 0.25),
+                            ),
                           ),
-                        ),
-                        child: Builder(
-                          builder: (_) {
-                            final inlineLines = activeChord.content
-                                .replaceAll('\r\n', '\n')
-                                .replaceAll('\r', '\n')
-                                .split('\n');
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                for (int i = 0; i < inlineLines.length; i++)
-                                  Padding(
-                                    padding:
-                                        EdgeInsets.only(bottom: lineSpacingPx),
-                                    child: SmartChordParser.progressionTokens(
-                                              inlineLines[i],
-                                            ) !=
-                                            null
-                                        ? MusicalProgressionLine(
-                                            line: inlineLines[i],
-                                            semitones: widget.semitones,
-                                            fontSize: widget.fontSize,
-                                            fontFamily: fontConfig.fontFamily,
-                                            fontFamilyFallback:
-                                                fontConfig.fallback,
-                                          )
-                                        : ChordLyricLine(
-                                            line: inlineLines[i],
-                                            semitones: widget.semitones,
-                                            fontSize: widget.fontSize,
-                                            fontFamily: fontConfig.fontFamily,
-                                            fontFamilyFallback:
-                                                fontConfig.fallback,
-                                            monospace: fontConfig.isMonospace,
-                                            spacingPx: lineSpacingPx,
-                                            alignedLyrics: i > 0 &&
-                                                SmartChordParser
-                                                        .progressionTokens(
-                                                      inlineLines[i - 1],
-                                                    ) !=
-                                                    null,
-                                          ),
-                                  ),
-                              ],
-                            );
-                          },
-                        ),
-                      ),
+                          child: Builder(
+                            builder: (_) {
+                              final inlineLines = activeChord.content
+                                  .replaceAll('\r\n', '\n')
+                                  .replaceAll('\r', '\n')
+                                  .split('\n');
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  for (int i = 0; i < inlineLines.length; i++)
+                                    Padding(
+                                      padding: EdgeInsets.only(
+                                        bottom: lineSpacingPx,
+                                      ),
+                                      child: SmartChordParser.progressionTokens(
+                                                inlineLines[i],
+                                              ) !=
+                                              null
+                                          ? MusicalProgressionLine(
+                                              line: inlineLines[i],
+                                              semitones: widget.semitones,
+                                              fontSize: widget.fontSize,
+                                              fontFamily: fontConfig.fontFamily,
+                                              fontFamilyFallback:
+                                                  fontConfig.fallback,
+                                            )
+                                          : ChordLyricLine(
+                                              line: inlineLines[i],
+                                              semitones: widget.semitones,
+                                              fontSize: widget.fontSize,
+                                              fontFamily: fontConfig.fontFamily,
+                                              fontFamilyFallback:
+                                                  fontConfig.fallback,
+                                              monospace: fontConfig.isMonospace,
+                                              spacingPx: lineSpacingPx,
+                                              alignedLyrics: i > 0 &&
+                                                  SmartChordParser
+                                                          .progressionTokens(
+                                                        inlineLines[i - 1],
+                                                      ) !=
+                                                      null,
+                                            ),
+                                    ),
+                                ],
+                              );
+                            },
+                          ),
+                        )
+                      else if (isLoadingChords)
+                        buildContentLoadingCard(),
                     ],
                   ] else if (canManageMinistryChords)
                     Card(
@@ -2232,17 +2377,42 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
               ),
             ),
           ] else ...[
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 32.0),
-                child: Text(
-                  'Letra não cadastrada para esta música.',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                    fontStyle: FontStyle.italic,
+            Builder(
+              builder: (context) {
+                final hasChords = ref.watch(
+                  songSmartChordsNotifierProvider.select((s) {
+                    final matches = s.songId == song.id &&
+                        s.ministryId == ministryId &&
+                        (activeVersionId == null ||
+                            s.versionId == activeVersionId);
+                    return matches && s.items.isNotEmpty;
+                  }),
+                );
+                final chordsPending = ref.watch(
+                  songSmartChordsNotifierProvider.select((s) {
+                    final matches = s.songId == song.id &&
+                        s.ministryId == ministryId &&
+                        (activeVersionId == null ||
+                            s.versionId == activeVersionId);
+                    return s.isLoading || (!matches && !s.hasError);
+                  }),
+                );
+                if (chordsPending || (hasChords && _readingMode == 'cifra')) {
+                  return const SizedBox.shrink();
+                }
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 32.0),
+                    child: Text(
+                      'Letra não cadastrada para esta música.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ],
           const SizedBox(height: 32),
@@ -2408,7 +2578,8 @@ class _SongFullscreenStandScreenState
             chords.isNotEmpty ? chords[safeChordIdx] : null;
         final isLoading = !detailMatches ||
             detailState.isLoading ||
-            (!chordsMatch && smartChordsState.isLoading);
+            (!chordsMatch && !smartChordsState.hasError) ||
+            (chordsMatch && smartChordsState.isLoading && chords.isEmpty);
         final sequence = session.scheduleSequence;
         final hasSequence = sequence != null && sequence.isNotEmpty;
         final displayTitle = loadedSong?.title ?? session.title;

@@ -1003,7 +1003,7 @@ void main() {
               songId: 'song_ver',
               initialTitle: 'Lugar Secreto',
               initialVersionId: 'v2',
-              backLabel: 'Voltar para Escala',
+              backLabel: 'Voltar',
             ),
           ),
         ),
@@ -1011,7 +1011,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Context back button & active version scoped chord
-      expect(find.text('Voltar para Escala'), findsOneWidget);
+      expect(find.text('Voltar'), findsOneWidget);
       expect(find.text('Tom: D'), findsOneWidget);
       expect(find.text('Acústica • Tom: D'), findsOneWidget);
       expect(find.textContaining('Lugar Secreto (Original)'), findsNothing);
@@ -1120,7 +1120,7 @@ void main() {
             songId: 'song_ver',
             initialTitle: 'Lugar Secreto',
             initialVersionId: 'ver-removida',
-            backLabel: 'Voltar para Escala',
+            backLabel: 'Voltar',
           ),
         ),
       );
@@ -1545,17 +1545,18 @@ void main() {
             songId: 's1',
             initialTitle: 'Música Um',
             initialVersionId: 'v1',
-            backLabel: 'Voltar para Escala',
+            backLabel: 'Voltar',
             scheduleSequence: sequence,
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Voltar para Escala'), findsOneWidget);
-      expect(find.text('Música 1 de 3'), findsOneWidget);
+      expect(find.text('Voltar'), findsOneWidget);
+      expect(find.text('1 de 3'), findsOneWidget);
       expect(find.text('Original • Tom: C'), findsOneWidget);
-      expect(chordCalls.last, equals(('s1', 'v1')));
+      expect(chordCalls, contains(('s1', 'v1')));
+      expect(chordCalls, contains(('s1', 'v2')));
 
       // Modify transpose, zoom and scroll speed on song 1
       final seqTransposeUp = find.byKey(
@@ -1586,20 +1587,20 @@ void main() {
         find.byKey(const ValueKey('song_detail_sequence_next_button')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Música 2 de 3'), findsOneWidget);
+      expect(find.text('2 de 3'), findsOneWidget);
       expect(find.text('Principal • Tom: G'), findsOneWidget);
       expect(find.text('16px'), findsOneWidget);
       expect(find.text('3x'), findsOneWidget);
-      expect(chordCalls.last, equals(('s2', 'v_two')));
+      expect(chordCalls, contains(('s2', 'v_two')));
 
-      // Advance inline: 2 -> 3 (repeated song s1 with version v2)
+      // Advance inline: 2 -> 3 (repeated song s1 with version v2 served from cache)
       await tester.tap(
         find.byKey(const ValueKey('song_detail_sequence_next_button')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Música 3 de 3'), findsOneWidget);
+      expect(find.text('3 de 3'), findsOneWidget);
       expect(find.text('Acústica • Tom: D'), findsOneWidget);
-      expect(chordCalls.last, equals(('s1', 'v2')));
+      expect(chordCalls.where((c) => c == ('s1', 'v2')).length, equals(1));
 
       // 404 resilience: skip back to s2 when s2 throws 404 -> sequence bar still works to move to s1 (v1)
       failS2With404 = true;
@@ -1607,7 +1608,7 @@ void main() {
         find.byKey(const ValueKey('song_detail_sequence_prev_button')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Música 2 de 3'), findsOneWidget);
+      expect(find.text('2 de 3'), findsOneWidget);
       expect(find.text('Música não encontrada na escala'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('song_detail_sequence_prev_button')),
@@ -1620,7 +1621,7 @@ void main() {
         find.byKey(const ValueKey('song_detail_sequence_prev_button')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Música 1 de 3'), findsOneWidget);
+      expect(find.text('1 de 3'), findsOneWidget);
 
       delayS2 = true;
       await tester.tap(
@@ -1635,7 +1636,7 @@ void main() {
       await tester.pumpAndSettle();
       delayS2 = false;
 
-      expect(find.text('Música 3 de 3'), findsOneWidget);
+      expect(find.text('3 de 3'), findsOneWidget);
       expect(find.text('Acústica • Tom: D'), findsOneWidget);
 
       // Open fullscreen from slot 3 -> skip prev inside fullscreen in-place -> closes back to slot 2 inline
@@ -1646,13 +1647,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(seqFsBtn);
       await tester.pumpAndSettle();
-      expect(find.text('Música 3 de 3'), findsOneWidget);
+      expect(find.text('3 de 3'), findsOneWidget);
 
       await tester.tap(
         find.byKey(const ValueKey('song_fullscreen_sequence_prev_button')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Música 2 de 3'), findsOneWidget);
+      expect(find.text('2 de 3'), findsOneWidget);
       expect(find.textContaining('Música Dois'), findsWidgets);
 
       await tester.tap(
@@ -1669,7 +1670,7 @@ void main() {
       await tester.ensureVisible(exitBtn);
       await tester.tap(exitBtn);
       await tester.pumpAndSettle();
-      expect(find.text('Música 2 de 3'), findsOneWidget);
+      expect(find.text('2 de 3'), findsOneWidget);
       expect(find.text('Principal • Tom: G# (+1)'), findsOneWidget);
 
       // Re-open fullscreen and verify ministry switch pops BOTH fullscreen & SongDetailView cleanly
@@ -1984,6 +1985,576 @@ void main() {
       expect(find.byTooltip('Nova Cifra para esta música'), findsNothing);
       expect(find.text('Vincular cifra existente'), findsNothing);
       expect(find.text('Cadastrar nova cifra inteligente'), findsNothing);
+    });
+
+    testWidgets(
+        'R2.2.1 Compact Header & Fullscreen: aligns Voltar and 1 de 2 on single row and keeps visible Tela cheia button for admin and member across 320dp, 360dp and 393dp',
+        (tester) async {
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      const chord = SmartChord(
+        id: 'sc_r221_hdr',
+        userId: 'admin_owner',
+        title: 'Cifra R221',
+        versionId: 'v1',
+        originalKey: 'E',
+        content: '[E]VersaoUm',
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+      );
+      fakeRepo.detail = const SongDetail(
+        id: 's1',
+        ministryId: 'min_1',
+        title: 'Música da Escala',
+        artistName: 'Banda Teste',
+        originalKey: 'E',
+        versions: [
+          SongVersion(id: 'v1', name: 'Original', key: 'E'),
+          SongVersion(id: 'v2', name: 'Acústica', key: 'G'),
+        ],
+      );
+      final linkRepo = _FakeLinkRepo(
+        onGetChordsForSong: () async => const [chord],
+        onRemoveLink: (_, __) async {},
+      );
+      final sequence = ScheduleSongSequenceContext.fromScheduleSongs(
+        ministryId: 'min_1',
+        scheduleId: 'sch_r221',
+        songs: const [
+          ScheduleSong(
+            id: 's1',
+            title: 'Música da Escala',
+            versionId: 'v1',
+            versionName: 'Original',
+          ),
+          ScheduleSong(
+            id: 's2',
+            title: 'Segunda Música',
+            versionId: 'v2',
+            versionName: 'Principal',
+          ),
+        ],
+        initialScheduleSlotIndex: 0,
+      );
+
+      for (final viewportWidth in const [320.0, 360.0, 393.0]) {
+        for (final role in const ['member', 'admin']) {
+          tester.view.physicalSize = Size(viewportWidth, 740);
+          tester.view.devicePixelRatio = 1.0;
+
+          await tester.pumpWidget(
+            ProviderScope(
+              overrides: [
+                appEnvironmentProvider.overrideWithValue(
+                  const AppEnvironment(
+                    env: AppEnv.development,
+                    apiBaseUrl: 'http://localhost:3000/api/v1',
+                  ),
+                ),
+                repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+                songDetailNotifierProvider.overrideWith(
+                  (ref) => SongDetailNotifier(repository: fakeRepo),
+                ),
+                ministryContextNotifierProvider.overrideWith(
+                  (ref) => FakeMinistryContextNotifier(
+                    MinistryContextState(
+                      status: MinistryBootstrapStatus.ready,
+                      selectedMinistry: Ministry(
+                        id: 'min_1',
+                        name: 'Ministério 1',
+                        role: role,
+                      ),
+                    ),
+                  ),
+                ),
+                authNotifierProvider.overrideWith(
+                  (ref) => _FakeAuthNotifier(
+                    userId: role == 'admin' ? 'admin_owner' : 'member_user',
+                  ),
+                ),
+                smartChordRepertoireLinkRepositoryProvider
+                    .overrideWithValue(linkRepo),
+                songSmartChordsNotifierProvider.overrideWith(
+                  (ref) => SongSmartChordsNotifier(
+                    repository: _NoopSmartChordRepo(),
+                    linkRepository: linkRepo,
+                  ),
+                ),
+                smartChordRepertoireLinkNotifierProvider.overrideWith(
+                  (ref) =>
+                      SmartChordRepertoireLinkNotifier(repository: linkRepo),
+                ),
+              ],
+              child: MaterialApp(
+                key: ValueKey('hdr_${viewportWidth}_$role'),
+                home: Scaffold(
+                  body: Builder(
+                    builder: (context) => Center(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => SongDetailView(
+                                ministryId: 'min_1',
+                                songId: 's1',
+                                initialTitle: 'Música da Escala',
+                                initialVersionId: 'v1',
+                                backLabel: 'Voltar',
+                                scheduleSequence: sequence,
+                              ),
+                            ),
+                          );
+                        },
+                        child: const Text('Abrir'),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.tap(find.text('Abrir'));
+          await tester.pumpAndSettle();
+
+          expect(
+            tester.takeException(),
+            isNull,
+            reason: 'No overflow for $role at ${viewportWidth}dp',
+          );
+          expect(find.text('Voltar'), findsOneWidget);
+          expect(find.text('Voltar para Escala'), findsNothing);
+          expect(find.text('1 de 2'), findsOneWidget);
+          expect(find.text('Música 1 de 2'), findsNothing);
+
+          final headerRect = tester.getRect(
+            find.byKey(const ValueKey('song_detail_context_header')),
+          );
+          final backRect = tester.getRect(
+            find.byKey(const ValueKey('song_detail_context_back_button')),
+          );
+          final seqRect = tester.getRect(
+            find.byKey(const ValueKey('song_detail_sequence_bar')),
+          );
+          expect(headerRect.height, lessThanOrEqualTo(60.0));
+          expect(
+            (backRect.center.dy - seqRect.center.dy).abs(),
+            lessThanOrEqualTo(2.0),
+            reason: 'Header items vertically aligned at ${viewportWidth}dp',
+          );
+          expect(backRect.right, lessThanOrEqualTo(seqRect.left));
+          expect(seqRect.right, lessThanOrEqualTo(viewportWidth));
+
+          final fsFinder = find.byKey(
+            const ValueKey('song_detail_fullscreen_button'),
+          );
+          expect(fsFinder, findsOneWidget);
+          expect(find.text('Tela cheia'), findsOneWidget);
+          final fsRect = tester.getRect(fsFinder);
+          expect(fsRect.left, greaterThanOrEqualTo(0.0));
+          expect(fsRect.right, lessThanOrEqualTo(viewportWidth));
+          expect(fsRect.width, greaterThanOrEqualTo(44.0));
+          expect(fsRect.height, greaterThanOrEqualTo(44.0));
+        }
+      }
+
+      // Open and exit fullscreen stand cleanly as member on narrow width (320dp)
+      tester.view.physicalSize = const Size(320, 740);
+      tester.view.devicePixelRatio = 1.0;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(
+                env: AppEnv.development,
+                apiBaseUrl: 'http://localhost:3000/api/v1',
+              ),
+            ),
+            repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+            songDetailNotifierProvider.overrideWith(
+              (ref) => SongDetailNotifier(repository: fakeRepo),
+            ),
+            ministryContextNotifierProvider.overrideWith(
+              (ref) => FakeMinistryContextNotifier(),
+            ),
+            authNotifierProvider.overrideWith(
+              (ref) => _FakeAuthNotifier(userId: 'member_user'),
+            ),
+            smartChordRepertoireLinkRepositoryProvider
+                .overrideWithValue(linkRepo),
+            songSmartChordsNotifierProvider.overrideWith(
+              (ref) => SongSmartChordsNotifier(
+                repository: _NoopSmartChordRepo(),
+                linkRepository: linkRepo,
+              ),
+            ),
+            smartChordRepertoireLinkNotifierProvider.overrideWith(
+              (ref) => SmartChordRepertoireLinkNotifier(repository: linkRepo),
+            ),
+          ],
+          child: MaterialApp(
+            home: SongDetailView(
+              ministryId: 'min_1',
+              songId: 's1',
+              initialTitle: 'Música da Escala',
+              initialVersionId: 'v1',
+              backLabel: 'Voltar',
+              scheduleSequence: sequence,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('song_detail_fullscreen_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(
+        find.byKey(const ValueKey('song_fullscreen_exit_button')),
+        findsOneWidget,
+      );
+      expect(find.text('VersaoUm'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('song_fullscreen_exit_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('song_detail_fullscreen_button')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+        'R2.2.1 Cached Prefetch Version Switch: switches between prefetched versions instantaneously without redundant requests or loading flicker',
+        (tester) async {
+      fakeRepo.detail = const SongDetail(
+        id: 's_cache',
+        ministryId: 'min_1',
+        title: 'Música Multi-Versão',
+        artistName: 'Banda Teste',
+        originalKey: 'E',
+        versions: [
+          SongVersion(id: 'v1', name: 'Original', key: 'E'),
+          SongVersion(id: 'v2', name: 'Acústica', key: 'G'),
+          SongVersion(id: 'v3', name: 'Ao Vivo', key: 'D'),
+        ],
+      );
+      final calls = <(String?, String?)>[];
+      const chordsByVer = <String, SmartChord>{
+        'v1': SmartChord(
+          id: 'sc_v1',
+          userId: 'admin_owner',
+          title: 'Cifra Original',
+          versionId: 'v1',
+          originalKey: 'E',
+          content: '[E]VersaoUm',
+          createdAt: '2026-11-10T00:00:00Z',
+          updatedAt: '2026-11-10T00:00:00Z',
+        ),
+        'v2': SmartChord(
+          id: 'sc_v2',
+          userId: 'admin_owner',
+          title: 'Cifra Acústica',
+          versionId: 'v2',
+          originalKey: 'G',
+          content: '[G]VersaoDois',
+          createdAt: '2026-11-10T00:00:00Z',
+          updatedAt: '2026-11-10T00:00:00Z',
+        ),
+        'v3': SmartChord(
+          id: 'sc_v3',
+          userId: 'admin_owner',
+          title: 'Cifra Ao Vivo',
+          versionId: 'v3',
+          originalKey: 'D',
+          content: '[D]VersaoTres',
+          createdAt: '2026-11-10T00:00:00Z',
+          updatedAt: '2026-11-10T00:00:00Z',
+        ),
+      };
+
+      final linkRepo = _FakeLinkRepo(
+        onGetChordsForSong: () async => const [],
+        onGetChordsForSongScoped: ({
+          required ministryId,
+          required songId,
+          versionId,
+          linkStatus,
+        }) async {
+          calls.add((versionId, linkStatus));
+          if (linkStatus == 'pending_classification') return const [];
+          final chord = chordsByVer[versionId];
+          return chord != null ? [chord] : const [];
+        },
+        onRemoveLink: (_, __) async {},
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(
+                env: AppEnv.development,
+                apiBaseUrl: 'http://localhost:3000/api/v1',
+              ),
+            ),
+            repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+            songDetailNotifierProvider.overrideWith(
+              (ref) => SongDetailNotifier(repository: fakeRepo),
+            ),
+            ministryContextNotifierProvider.overrideWith(
+              (ref) => FakeMinistryContextNotifier(),
+            ),
+            authNotifierProvider.overrideWith(
+              (ref) => _FakeAuthNotifier(userId: 'member_user'),
+            ),
+            smartChordRepertoireLinkRepositoryProvider
+                .overrideWithValue(linkRepo),
+            songSmartChordsNotifierProvider.overrideWith(
+              (ref) => SongSmartChordsNotifier(
+                repository: _NoopSmartChordRepo(),
+                linkRepository: linkRepo,
+              ),
+            ),
+            smartChordRepertoireLinkNotifierProvider.overrideWith(
+              (ref) => SmartChordRepertoireLinkNotifier(repository: linkRepo),
+            ),
+          ],
+          child: const MaterialApp(
+            home: SongDetailView(
+              ministryId: 'min_1',
+              songId: 's_cache',
+              initialTitle: 'Música Multi-Versão',
+              initialVersionId: 'v1',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Member does not fetch pending_classification, and all versions are prefetched.
+      expect(calls.where((c) => c.$2 == 'pending_classification'), isEmpty);
+      expect(calls.map((c) => c.$1), containsAll(const ['v1', 'v2', 'v3']));
+      final callsBeforeSwitch = calls.length;
+
+      expect(find.text('Original • Tom: E'), findsOneWidget);
+      expect(find.text('VersaoUm'), findsOneWidget);
+
+      // Instant v1 -> v2 switch (single frame, 0 network calls, no loading card)
+      await tester.tap(find.byKey(const ValueKey('detail_version_chip_v2')));
+      await tester.pump();
+      expect(calls.length, equals(callsBeforeSwitch));
+      expect(
+        find.byKey(const ValueKey('song_detail_chord_content_loading')),
+        findsNothing,
+      );
+      expect(find.text('Letra não cadastrada para esta música.'), findsNothing);
+      expect(find.text('Acústica • Tom: G'), findsOneWidget);
+      expect(find.text('Tom: G'), findsOneWidget);
+      expect(find.text('VersaoDois'), findsOneWidget);
+
+      // Instant v2 -> v3 switch
+      await tester.tap(find.byKey(const ValueKey('detail_version_chip_v3')));
+      await tester.pump();
+      expect(calls.length, equals(callsBeforeSwitch));
+      expect(find.text('Ao Vivo • Tom: D'), findsOneWidget);
+      expect(find.text('Tom: D'), findsOneWidget);
+      expect(find.text('VersaoTres'), findsOneWidget);
+
+      // Instant v3 -> v1 switch
+      await tester.tap(find.byKey(const ValueKey('detail_version_chip_v1')));
+      await tester.pump();
+      expect(calls.length, equals(callsBeforeSwitch));
+      expect(find.text('Original • Tom: E'), findsOneWidget);
+      expect(find.text('Tom: E'), findsOneWidget);
+      expect(find.text('VersaoUm'), findsOneWidget);
+    });
+
+    testWidgets(
+        'R2.2.1 Uncached Version Transition UX: updates selection & key immediately, preserves stand bar, scopes loading to content area without empty-lyrics flash or navigation lock',
+        (tester) async {
+      fakeRepo.detail = const SongDetail(
+        id: 's_slow',
+        ministryId: 'min_1',
+        title: 'Música Transição',
+        artistName: 'Banda Teste',
+        originalKey: 'E',
+        versions: [
+          SongVersion(id: 'v1', name: 'Original', key: 'E'),
+          SongVersion(id: 'v2', name: 'Versão 2', key: 'A'),
+        ],
+      );
+      final v2Completer = Completer<List<SmartChord>>();
+      final linkRepo = _FakeLinkRepo(
+        onGetChordsForSong: () async => const [],
+        onGetChordsForSongScoped: ({
+          required ministryId,
+          required songId,
+          versionId,
+          linkStatus,
+        }) {
+          if (linkStatus == 'pending_classification') {
+            return Future.value(const <SmartChord>[]);
+          }
+          if (versionId == 'v2') {
+            return v2Completer.future;
+          }
+          return Future.value(const [
+            SmartChord(
+              id: 'sc_slow_v1',
+              userId: 'admin_owner',
+              title: 'Cifra V1',
+              versionId: 'v1',
+              originalKey: 'E',
+              content: '[E]ConteudoUm',
+              createdAt: '2026-11-10T00:00:00Z',
+              updatedAt: '2026-11-10T00:00:00Z',
+            ),
+          ]);
+        },
+        onRemoveLink: (_, __) async {},
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(
+                env: AppEnv.development,
+                apiBaseUrl: 'http://localhost:3000/api/v1',
+              ),
+            ),
+            repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+            songDetailNotifierProvider.overrideWith(
+              (ref) => SongDetailNotifier(repository: fakeRepo),
+            ),
+            ministryContextNotifierProvider.overrideWith(
+              (ref) => FakeMinistryContextNotifier(
+                const MinistryContextState(
+                  status: MinistryBootstrapStatus.ready,
+                  selectedMinistry: Ministry(
+                    id: 'min_1',
+                    name: 'Ministério 1',
+                    role: 'admin',
+                  ),
+                ),
+              ),
+            ),
+            authNotifierProvider.overrideWith(
+              (ref) => _FakeAuthNotifier(userId: 'admin_owner'),
+            ),
+            smartChordRepertoireLinkRepositoryProvider
+                .overrideWithValue(linkRepo),
+            songSmartChordsNotifierProvider.overrideWith(
+              (ref) => SongSmartChordsNotifier(
+                repository: _NoopSmartChordRepo(),
+                linkRepository: linkRepo,
+              ),
+            ),
+            smartChordRepertoireLinkNotifierProvider.overrideWith(
+              (ref) => SmartChordRepertoireLinkNotifier(repository: linkRepo),
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const SongDetailView(
+                          ministryId: 'min_1',
+                          songId: 's_slow',
+                          initialTitle: 'Música Transição',
+                          initialVersionId: 'v1',
+                          backLabel: 'Voltar',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Abrir Música'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Abrir Música'));
+      // Advance frames for v1 to load while v2Completer remains pending.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('ConteudoUm'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('song_detail_music_stand_bar')),
+        findsOneWidget,
+      );
+
+      // Switch to slow uncached v2: chip, key, stand bar & scoped loading update cleanly
+      await tester.tap(find.byKey(const ValueKey('detail_version_chip_v2')));
+      await tester.pump();
+
+      final v2Chip = tester.widget<ChoiceChip>(
+        find.byKey(const ValueKey('detail_version_chip_v2')),
+      );
+      expect(v2Chip.selected, isTrue);
+      expect(
+        find.byKey(const ValueKey('song_detail_music_stand_bar')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('song_detail_chord_content_loading')),
+        findsOneWidget,
+      );
+      expect(find.text('Versão 2 • Tom: A'), findsOneWidget);
+      expect(find.text('Tom: A'), findsOneWidget);
+      expect(find.text('Letra não cadastrada para esta música.'), findsNothing);
+
+      // User can switch right back to cached v1 even while v2 request is still in-flight
+      await tester.tap(find.byKey(const ValueKey('detail_version_chip_v1')));
+      await tester.pump();
+      expect(find.text('ConteudoUm'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('song_detail_chord_content_loading')),
+        findsNothing,
+      );
+
+      // Tap back to v2 and complete v2 request -> coherent chord sheet renders
+      await tester.tap(find.byKey(const ValueKey('detail_version_chip_v2')));
+      await tester.pump();
+      v2Completer.complete(const [
+        SmartChord(
+          id: 'sc_slow_v2',
+          userId: 'admin_owner',
+          title: 'Cifra V2',
+          versionId: 'v2',
+          originalKey: 'A',
+          content: '[A]ConteudoDois',
+          createdAt: '2026-11-10T00:00:00Z',
+          updatedAt: '2026-11-10T00:00:00Z',
+        ),
+      ]);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('song_detail_chord_content_loading')),
+        findsNothing,
+      );
+      expect(find.text('Versão 2 • Tom: A'), findsOneWidget);
+      expect(find.text('ConteudoDois'), findsOneWidget);
+
+      // Navigation stays unlocked
+      await tester.tap(
+        find.byKey(const ValueKey('song_detail_context_back_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Abrir Música'), findsOneWidget);
     });
   });
 }

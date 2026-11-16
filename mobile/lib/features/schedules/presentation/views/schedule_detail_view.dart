@@ -817,7 +817,7 @@ void _openScheduleSongDetail(
         songId: song.id,
         initialTitle: song.title,
         initialVersionId: song.versionId,
-        backLabel: 'Voltar para Escala',
+        backLabel: 'Voltar',
         scheduleSequence: sequence.isEmpty ? null : sequence,
       ),
     ),

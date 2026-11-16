@@ -142,6 +142,26 @@ class FakeSmartChordRepository implements SmartChordRepository {
   }
 }
 
+class _CallbackLinkRepository extends FakeSmartChordRepertoireLinkRepository {
+  final Future<List<SmartChord>> Function(
+    String ministryId,
+    String songId,
+    String? versionId,
+    String? linkStatus,
+  ) _handler;
+
+  _CallbackLinkRepository(this._handler);
+
+  @override
+  Future<List<SmartChord>> getMySmartChordsForSong({
+    required String ministryId,
+    required String songId,
+    String? versionId,
+    String? linkStatus,
+  }) =>
+      _handler(ministryId, songId, versionId, linkStatus);
+}
+
 class FakeSmartChordRepertoireLinkRepository implements SmartChordRepertoireLinkRepository {
   List<SmartChord> chordsToReturn = [];
   int getMySmartChordsCallCount = 0;
@@ -417,6 +437,275 @@ void main() {
       notifier.reset();
       expect(notifier.state.items, isEmpty);
       expect(notifier.state.songId, isNull);
+    });
+
+    test(
+        'fetches active and pending chords in parallel, caches by (ministryId, songId, versionId), and skips pending when includePending is false',
+        () async {
+      final activeCompleter = Completer<List<SmartChord>>();
+      final pendingCompleter = Completer<List<SmartChord>>();
+      final calls = <(String?, String?)>[];
+
+      final linkRepo = _CallbackLinkRepository((
+        ministryId,
+        songId,
+        versionId,
+        linkStatus,
+      ) async {
+        calls.add((versionId, linkStatus));
+        if (linkStatus == 'pending_classification') {
+          return pendingCompleter.future;
+        }
+        if (versionId == 'v1') {
+          return activeCompleter.future;
+        }
+        return [
+          SmartChord(
+            id: 'sc-$versionId',
+            userId: 'u',
+            songId: songId,
+            versionId: versionId,
+            title: 'Chord $versionId',
+            originalKey: 'D',
+            content: '[$versionId]Test',
+            createdAt: '',
+            updatedAt: '',
+          ),
+        ];
+      });
+
+      final notifier = SongSmartChordsNotifier(
+        repository: repository,
+        linkRepository: linkRepo,
+      );
+
+      final loadV1Future = notifier.load(
+        'song-1',
+        ministryId: 'min-1',
+        versionId: 'v1',
+      );
+
+      // Both active and pending must have been dispatched concurrently before either completes
+      expect(calls, containsAll([('v1', null), (null, 'pending_classification')]));
+
+      activeCompleter.complete([
+        const SmartChord(
+          id: 'sc-v1',
+          userId: 'u',
+          songId: 'song-1',
+          versionId: 'v1',
+          title: 'Chord v1',
+          originalKey: 'C',
+          content: '[C]Test',
+          createdAt: '',
+          updatedAt: '',
+        ),
+      ]);
+      pendingCompleter.complete([
+        const SmartChord(
+          id: 'sc-pend',
+          userId: 'u',
+          songId: 'song-1',
+          title: 'Pending',
+          originalKey: 'G',
+          content: '',
+          createdAt: '',
+          updatedAt: '',
+          repertoireLink: SmartChordSongLink(
+            id: 'l-p',
+            userId: 'u',
+            smartChordId: 'sc-pend',
+            ministryId: 'min-1',
+            songId: 'song-1',
+            linkStatus: 'pending_classification',
+          ),
+        ),
+      ]);
+      await loadV1Future;
+      expect(notifier.state.items.map((c) => c.id), ['sc-v1']);
+      expect(notifier.state.pendingItems.map((c) => c.id), ['sc-pend']);
+
+      // Switch to v2: pending already cached for (min-1, song-1), so only v2 is requested
+      calls.clear();
+      await notifier.load('song-1', ministryId: 'min-1', versionId: 'v2');
+      expect(calls, [('v2', null)]);
+      expect(notifier.state.items.map((c) => c.id), ['sc-v2']);
+      expect(notifier.state.pendingItems.map((c) => c.id), ['sc-pend']);
+
+      // Switch back to v1: 100% cache hit -> ZERO network calls!
+      calls.clear();
+      await notifier.load('song-1', ministryId: 'min-1', versionId: 'v1');
+      expect(calls, isEmpty);
+      expect(notifier.state.items.map((c) => c.id), ['sc-v1']);
+      expect(notifier.state.isLoading, isFalse);
+
+      // Different ministry never reuses min-1 cache and member (includePending: false) skips pending call
+      calls.clear();
+      await notifier.load(
+        'song-1',
+        ministryId: 'min-2',
+        versionId: 'v1',
+        includePending: false,
+      );
+      expect(calls, [('v1', null)]);
+
+      // Reset clears all caches
+      notifier.reset();
+      calls.clear();
+      await notifier.load(
+        'song-1',
+        ministryId: 'min-1',
+        versionId: 'v1',
+        includePending: false,
+      );
+      expect(calls, [('v1', null)]);
+    });
+
+    test(
+        'prefetchVersions runs in parallel, deduplicates in-flight loads, and resolveSongVersions partitions unscoped backend chords',
+        () async {
+      final v2Completer = Completer<List<SmartChord>>();
+      final calls = <(String?, String?)>[];
+
+      final linkRepo = _CallbackLinkRepository((
+        ministryId,
+        songId,
+        versionId,
+        linkStatus,
+      ) async {
+        calls.add((versionId, linkStatus));
+        if (songId == 'song-unscoped' && versionId == null) {
+          return const [
+            SmartChord(
+              id: 'sc-u-v1',
+              userId: 'u',
+              songId: 'song-unscoped',
+              title: 'U V1',
+              originalKey: 'C',
+              content: '[C]A',
+              createdAt: '',
+              updatedAt: '',
+              repertoireLink: SmartChordSongLink(
+                id: 'lu1',
+                userId: 'u',
+                smartChordId: 'sc-u-v1',
+                ministryId: 'min-1',
+                songId: 'song-unscoped',
+                versionId: 'v1',
+                linkStatus: 'active',
+              ),
+            ),
+            SmartChord(
+              id: 'sc-u-v2',
+              userId: 'u',
+              songId: 'song-unscoped',
+              title: 'U V2',
+              originalKey: 'D',
+              content: '[D]B',
+              createdAt: '',
+              updatedAt: '',
+              repertoireLink: SmartChordSongLink(
+                id: 'lu2',
+                userId: 'u',
+                smartChordId: 'sc-u-v2',
+                ministryId: 'min-1',
+                songId: 'song-unscoped',
+                versionId: 'v2',
+                linkStatus: 'active',
+              ),
+            ),
+          ];
+        }
+        if (versionId == 'v2') {
+          return v2Completer.future;
+        }
+        return [
+          SmartChord(
+            id: 'sc-$versionId',
+            userId: 'u',
+            songId: songId,
+            versionId: versionId,
+            title: 'Chord $versionId',
+            originalKey: 'E',
+            content: '[E]C',
+            createdAt: '',
+            updatedAt: '',
+          ),
+        ];
+      });
+
+      final notifier = SongSmartChordsNotifier(
+        repository: repository,
+        linkRepository: linkRepo,
+      );
+
+      // Unscoped load + resolveSongVersions partitions all versions in 1 call
+      await notifier.load(
+        'song-unscoped',
+        ministryId: 'min-1',
+        includePending: false,
+      );
+      await notifier.resolveSongVersions(
+        songId: 'song-unscoped',
+        ministryId: 'min-1',
+        activeVersionId: 'v1',
+        versionIds: const ['v1', 'v2', 'v3'],
+        includePending: false,
+      );
+      expect(notifier.state.versionId, 'v1');
+      expect(notifier.state.items.map((c) => c.id), ['sc-u-v1']);
+      expect(
+        calls.where((c) => c.$1 == 'v1' || c.$1 == 'v2' || c.$1 == 'v3'),
+        isEmpty,
+      );
+
+      calls.clear();
+      await notifier.load(
+        'song-unscoped',
+        ministryId: 'min-1',
+        versionId: 'v2',
+        includePending: false,
+      );
+      expect(notifier.state.items.map((c) => c.id), ['sc-u-v2']);
+      await notifier.load(
+        'song-unscoped',
+        ministryId: 'min-1',
+        versionId: 'v3',
+        includePending: false,
+      );
+      expect(notifier.state.items, isEmpty);
+      expect(calls, isEmpty);
+
+      // In-flight deduplication: prefetch starts v2; load joins same Future instead of calling twice
+      calls.clear();
+      final prefetchFuture = notifier.prefetchVersions(
+        songId: 'song-dedup',
+        ministryId: 'min-1',
+        versionIds: const ['v2'],
+      );
+      final loadFuture = notifier.load(
+        'song-dedup',
+        ministryId: 'min-1',
+        versionId: 'v2',
+        includePending: false,
+      );
+      expect(calls, [('v2', null)]);
+      v2Completer.complete(const [
+        SmartChord(
+          id: 'sc-v2-dedup',
+          userId: 'u',
+          songId: 'song-dedup',
+          versionId: 'v2',
+          title: 'Dedup V2',
+          originalKey: 'D',
+          content: '[D]Hi',
+          createdAt: '',
+          updatedAt: '',
+        ),
+      ]);
+      await Future.wait([prefetchFuture, loadFuture]);
+      expect(notifier.state.items.map((c) => c.id), ['sc-v2-dedup']);
+      expect(calls, [('v2', null)]);
     });
   });
 

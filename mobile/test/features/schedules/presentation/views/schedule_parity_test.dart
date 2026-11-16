@@ -97,7 +97,7 @@ void main() {
     final destination = route.builder(tester.element(detailFinder())) as SongDetailView;
     expect(destination.songId, 'oceanos');
     expect(destination.ministryId, 'min_1');
-    expect(destination.backLabel, 'Voltar para Escala');
+    expect(destination.backLabel, 'Voltar');
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -131,7 +131,7 @@ void main() {
     final listDest = listRoute.builder(tester.element(detailFinder())) as SongDetailView;
     expect(listDest.songId, 'oceanos');
     expect(listDest.initialVersionId, 'ver-acustico');
-    expect(listDest.backLabel, 'Voltar para Escala');
+    expect(listDest.backLabel, 'Voltar');
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

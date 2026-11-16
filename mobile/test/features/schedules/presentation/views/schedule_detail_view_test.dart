@@ -835,16 +835,16 @@ void main() {
       );
       expect(songView.songId, equals('s1'));
       expect(songView.initialVersionId, equals('v2'));
-      expect(songView.backLabel, equals('Voltar para Escala'));
+      expect(songView.backLabel, equals('Voltar'));
       expect(songView.scheduleSequence?.items, hasLength(3));
       expect(songView.scheduleSequence?.currentIndex, equals(2));
-      expect(find.text('Música 3 de 3'), findsOneWidget);
+      expect(find.text('3 de 3'), findsOneWidget);
 
       await tester.tap(
         find.byKey(const ValueKey('song_detail_sequence_prev_button')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Música 2 de 3'), findsOneWidget);
+      expect(find.text('2 de 3'), findsOneWidget);
       expect(
         find.descendant(
           of: find.byType(SongDetailView),
@@ -980,13 +980,13 @@ void main() {
       expect(songView.initialVersionId, equals('v2'));
       expect(songView.scheduleSequence?.items, hasLength(2));
       expect(songView.scheduleSequence?.currentIndex, equals(1));
-      expect(find.text('Música 2 de 2'), findsOneWidget);
+      expect(find.text('2 de 2'), findsOneWidget);
 
       await tester.tap(
         find.byKey(const ValueKey('song_detail_sequence_prev_button')),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Música 1 de 2'), findsOneWidget);
+      expect(find.text('1 de 2'), findsOneWidget);
       expect(
         find.descendant(
           of: find.byType(SongDetailView),

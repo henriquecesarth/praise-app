@@ -80,7 +80,7 @@ void main() {
       expect(context.items[2].key, equals('A'));
 
       expect(context.currentIndex, equals(2));
-      expect(context.positionLabel, equals('Música 3 de 3'));
+      expect(context.positionLabel, equals('3 de 3'));
       expect(context.hasPrevious, isTrue);
       expect(context.hasNext, isFalse);
       expect(context.moveNext(), isNull);
@@ -98,7 +98,7 @@ void main() {
       );
 
       expect(first.currentIndex, equals(0));
-      expect(first.positionLabel, equals('Música 1 de 3'));
+      expect(first.positionLabel, equals('1 de 3'));
       expect(first.hasPrevious, isFalse);
       expect(first.hasNext, isTrue);
       expect(first.previousItem, isNull);
@@ -109,7 +109,7 @@ void main() {
 
       final second = first.moveNext()!;
       expect(second.currentIndex, equals(1));
-      expect(second.positionLabel, equals('Música 2 de 3'));
+      expect(second.positionLabel, equals('2 de 3'));
       expect(second.hasPrevious, isTrue);
       expect(second.hasNext, isTrue);
       expect(second.previousItem?.songId, equals('s1'));
