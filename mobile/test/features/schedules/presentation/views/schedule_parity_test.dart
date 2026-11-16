@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/providers.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
+import 'package:louvaio_mobile/features/repertoire/data/repertoire_repository.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/paginated_songs.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/song_detail_view.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
@@ -29,6 +31,22 @@ class DelayedPostingRepo extends FakeDetailScheduleRepo {
   Future<ScheduleComment> postComment(String ministryId, String scheduleId, String content) => sent.future;
 }
 
+class _ParityEmptyRepertoireRepo implements RepertoireRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
+  @override
+  Future<PaginatedSongs> listSongs(
+    String ministryId, {
+    String? search,
+    String? classificationId,
+    String? cursor,
+    int? page,
+    int? limit,
+  }) async =>
+      const PaginatedSongs(songs: [], total: 0);
+}
+
 void main() {
   late FakeDetailScheduleRepo repo;
   late TestAuthNotifier auth;
@@ -41,6 +59,7 @@ void main() {
 
   Widget subject(Widget home, {double scale = 1, double keyboard = 0, NavigatorObserver? observer}) => ProviderScope(
     overrides: [scheduleRepositoryProvider.overrideWithValue(repo),
+      repertoireRepositoryProvider.overrideWithValue(_ParityEmptyRepertoireRepo()),
       authNotifierProvider.overrideWith((ref) => auth),
       ministryContextNotifierProvider.overrideWith((ref) => ministry)],
     child: MaterialApp(navigatorObservers: [if (observer != null) observer],
@@ -89,7 +108,8 @@ void main() {
     await tester.pumpWidget(subject(detail, observer: observer));
     await tester.pumpAndSettle();
     expect(repo.detail!.timeline.first.title, 'Música 1');
-    expect(find.text('Oceanos'), findsNWidgets(2));
+    await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_order')));
+    await tester.pumpAndSettle();
     final target = find.byKey(const ValueKey('timeline_item_slot'));
     await tester.ensureVisible(target);
     await tester.tap(target);
@@ -123,6 +143,8 @@ void main() {
     await tester.pumpWidget(subject(detail, observer: observer));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_songs')));
+    await tester.pumpAndSettle();
     expect(find.text('Versão: Acústico'), findsOneWidget);
     final songRow = find.byKey(const ValueKey('detail_song_row_1'));
     await tester.ensureVisible(songRow);

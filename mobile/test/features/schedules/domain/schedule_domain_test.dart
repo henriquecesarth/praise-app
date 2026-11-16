@@ -1,7 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:louvaio_mobile/core/utils/date_utils.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/classification.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/song_summary.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule.dart';
+import 'package:louvaio_mobile/features/schedules/domain/schedule_actions.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_participant.dart';
+import 'package:louvaio_mobile/features/schedules/presentation/widgets/detail/schedule_song_presentation.dart';
 
 void main() {
   group('ScheduleParticipant', () {
@@ -286,6 +292,120 @@ void main() {
       expect(fromSnake.id, equals('song-2'));
       expect(fromSnake.versionId, equals('ver-9'));
       expect(fromSnake.versionName, equals('Original'));
+    });
+  });
+
+  group('Schedule Detail Redesign Helpers', () {
+    test('AppDateUtils formats weekday, full date, relative days and timestamps', () {
+      final ref = DateTime(2026, 11, 16, 10, 0);
+      expect(AppDateUtils.formatWeekdayPtBR('2026-11-22'), equals('Domingo'));
+      expect(
+        AppDateUtils.formatFullDatePtBR('2026-11-22'),
+        equals('22 de novembro de 2026'),
+      );
+      expect(
+        AppDateUtils.formatRelativeDaysLabel('2026-11-16', ref),
+        equals('Hoje'),
+      );
+      expect(
+        AppDateUtils.formatRelativeDaysLabel('2026-11-17', ref),
+        equals('Amanhã'),
+      );
+      expect(
+        AppDateUtils.formatRelativeDaysLabel('2026-11-22', ref),
+        equals('daqui a 6 dias'),
+      );
+      expect(
+        AppDateUtils.formatRelativeDaysLabel('2026-11-15', ref),
+        equals('Ontem'),
+      );
+      expect(
+        AppDateUtils.formatTimestampPtBR('2026-11-16T12:30:00Z'),
+        matches(RegExp(r'^\d{2}/\d{2}/2026 às \d{2}:\d{2}$')),
+      );
+    });
+
+    test('buildGoogleCalendarEventUri and buildScheduleShareSummary format local schedule safely', () {
+      const detail = ScheduleDetail(
+        id: 'sch_1',
+        ministryId: 'min_1',
+        title: 'Culto de Adoração',
+        date: '2026-11-22',
+        time: '19:30',
+        durationMinutes: 90,
+        notes: 'Ensaio às 18h',
+        participants: [
+          ScheduleParticipant(id: 'p1', name: 'Ana', role: 'Vocal', confirmed: true),
+          ScheduleParticipant(id: 'p2', name: 'João', role: 'Violão'),
+        ],
+        songs: [
+          ScheduleSong(
+            id: 's1',
+            title: 'Bondade de Deus',
+            key: 'G',
+            versionName: 'Acústico',
+          ),
+        ],
+      );
+
+      final uri = buildGoogleCalendarEventUri(detail);
+      expect(uri, isNotNull);
+      expect(uri!.host, equals('calendar.google.com'));
+      expect(uri.queryParameters['action'], equals('TEMPLATE'));
+      expect(uri.queryParameters['text'], equals('Culto de Adoração'));
+      expect(
+        uri.queryParameters['dates'],
+        equals('20261122T193000/20261122T210000'),
+      );
+      expect(uri.queryParameters['details'], contains('Bondade de Deus'));
+
+      final share = buildScheduleShareSummary(detail);
+      expect(share, contains('Culto de Adoração'));
+      expect(share, contains('Domingo, 22 de novembro de 2026, às 19:30'));
+      expect(share, contains('1 de 2 confirmados'));
+      expect(share, contains('1ª Bondade de Deus • Acústico • Tom G'));
+      expect(share, contains('Ensaio às 18h'));
+    });
+
+    test('ScheduleSongPresentation resolves ordinal, classification and media indicators cleanly', () {
+      const song = ScheduleSong(
+        id: 'song-1',
+        title: 'Grande É o Senhor',
+        artist: 'Adhemar de Campos',
+        key: 'A',
+        versionId: 'v2',
+        rawJson: {'has_lyrics': true, 'smart_chords_count': 2},
+      );
+      const summary = SongSummary(
+        id: 'song-1',
+        ministryId: 'min_1',
+        title: 'Grande É o Senhor',
+        classification: SongClassificationRef(
+          id: 'c1',
+          name: 'Louvor',
+          color: '#7CC4A4',
+        ),
+        youtubeUrl: 'https://youtube.com/watch?v=abc123',
+        hasYoutube: true,
+        audioUrl: 'https://cdn.test/audio.mp3',
+        versions: [
+          SongVersion(id: 'v2', name: 'Congregacional', key: 'A'),
+        ],
+      );
+
+      final pres = ScheduleSongPresentation.fromScheduleSong(
+        index: 0,
+        song: song,
+        summary: summary,
+      );
+      expect(pres.ordinalLabel, equals('1ª'));
+      expect(pres.classificationName, equals('Louvor'));
+      expect(pres.versionName, equals('Congregacional'));
+      expect(pres.hasChord, isTrue);
+      expect(pres.hasLyrics, isTrue);
+      expect(pres.hasAudio, isTrue);
+      expect(pres.hasYoutube, isTrue);
+      expect(pres.youtubeUrl, equals('https://youtube.com/watch?v=abc123'));
     });
   });
 }

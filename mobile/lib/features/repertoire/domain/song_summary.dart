@@ -17,6 +17,8 @@ class SongSummary {
   final bool hasYoutube;
   final String? youtubeUrl;
   final String? audioUrl;
+  final String? chordSheetUrl;
+  final bool hasLyrics;
   final String? updatedAt;
   final String? createdAt;
   final List<SongVersion> versions;
@@ -33,6 +35,8 @@ class SongSummary {
     this.hasYoutube = false,
     this.youtubeUrl,
     this.audioUrl,
+    this.chordSheetUrl,
+    this.hasLyrics = false,
     this.updatedAt,
     this.createdAt,
     this.versions = const [],
@@ -90,6 +94,10 @@ class SongSummary {
     final youtubeUrl = json['youtube_url']?.toString();
     final hasYoutube = json['has_youtube'] == true ||
         (youtubeUrl != null && youtubeUrl.trim().isNotEmpty);
+    final chordSheetUrl = json['chord_sheet_url']?.toString();
+    final rawLyrics = json['lyrics']?.toString();
+    final hasLyrics = json['has_lyrics'] == true ||
+        (rawLyrics != null && rawLyrics.trim().isNotEmpty);
 
     return SongSummary(
       id: json['id']?.toString() ?? '',
@@ -103,6 +111,8 @@ class SongSummary {
       hasYoutube: hasYoutube,
       youtubeUrl: youtubeUrl,
       audioUrl: json['audio_url']?.toString(),
+      chordSheetUrl: chordSheetUrl,
+      hasLyrics: hasLyrics,
       updatedAt: json['updated_at']?.toString(),
       createdAt: json['created_at']?.toString(),
       versions: parsedVersions,

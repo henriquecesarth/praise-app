@@ -1,19 +1,24 @@
 import 'package:firebase_auth/firebase_auth.dart' as fb;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:louvaio_mobile/features/auth/data/auth_repository.dart';
 import 'package:louvaio_mobile/features/auth/domain/auth_user.dart';
 import 'package:louvaio_mobile/features/auth/presentation/controllers/auth_controller.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/app/environment/app_environment.dart';
 import 'package:louvaio_mobile/app/providers.dart';
+import 'package:louvaio_mobile/app/theme/app_theme.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'package:louvaio_mobile/features/repertoire/data/repertoire_repository.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/classification.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/paginated_songs.dart';
 import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/song_summary.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/controllers/song_detail_controller.dart';
 import 'package:louvaio_mobile/features/repertoire/presentation/views/song_detail_view.dart';
 import 'package:louvaio_mobile/features/schedules/data/schedule_repository.dart';
@@ -270,7 +275,13 @@ void main() {
     ];
   });
 
-  Widget createSubject({String role = 'member'}) {
+  Widget createSubject({
+    String role = 'member',
+    List<SongSummary> repertoireSongs = const [],
+    ThemeData? theme,
+    Key? appKey,
+  }) {
+    final repRepo = _FakeNavRepertoireRepo(const {}, listItems: repertoireSongs);
     return ProviderScope(
       overrides: [
         authNotifierProvider.overrideWith((ref) => TestAuthNotifier()),
@@ -282,6 +293,7 @@ void main() {
         ),
         preferencesStorageProvider.overrideWithValue(_FakePreferencesStorage()),
         ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
+        repertoireRepositoryProvider.overrideWithValue(repRepo),
         scheduleRepositoryProvider.overrideWithValue(fakeRepo),
         scheduleDetailNotifierProvider.overrideWith((ref) {
           return ScheduleDetailNotifier(repository: fakeRepo);
@@ -302,8 +314,10 @@ void main() {
           ),
         ),
       ],
-      child: const MaterialApp(
-        home: ScheduleDetailView(
+      child: MaterialApp(
+        key: appKey,
+        theme: theme ?? AppTheme.darkTheme,
+        home: const ScheduleDetailView(
           ministryId: 'min_1',
           scheduleId: 'sch_1',
         ),
@@ -312,7 +326,7 @@ void main() {
   }
 
   group('ScheduleDetailView Presentation', () {
-    testWidgets('renders all schedule detail sections correctly',
+    testWidgets('renders summary header and all 4 tabs with live counters cleanly',
         (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
@@ -321,55 +335,59 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
-      // Title & Date/time/duration
-      expect(find.text('Culto de Domingo Especial'), findsWidgets);
-      expect(find.text('01/10/2099'), findsOneWidget);
+      // App bar centered title & hero summary header
+      expect(find.text('Escala'), findsOneWidget);
+      expect(find.text('Culto de Domingo Especial'), findsOneWidget);
+      expect(find.textContaining('Quinta-feira, 1 de outubro de 2099'), findsOneWidget);
       expect(find.text('19:30'), findsWidgets);
-      expect(find.text('Duração: 2h'), findsOneWidget);
+      expect(find.text('2h'), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_detail_relative_badge')), findsOneWidget);
 
-      // Detalhes tab (default): notes, clothing & palette, comments
+      // 4 segmented tabs & counters
+      expect(find.byKey(const ValueKey('schedule_detail_hero')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_detail_accent_bar')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_detail_tab_bar')), findsOneWidget);
+      expect(find.text('Detalhes'), findsOneWidget);
+      expect(find.text('Músicas'), findsOneWidget);
+      expect(find.text('Participantes'), findsOneWidget);
+      expect(find.text('Roteiro'), findsWidgets);
+      expect(find.text('1/2'), findsOneWidget);
+
+      // Comments FAB shows real count
+      expect(find.byKey(const ValueKey('open_schedule_chat')), findsOneWidget);
+      expect(find.text('Comentários (1)'), findsOneWidget);
+
+      // Default tab (Detalhes): confirmation, confirmed summary, roteiro preview, clothing, notes, history
+      expect(find.text('1 de 2'), findsOneWidget);
       expect(find.text('Chegar com 30min de antecedência para aquecimento.'),
           findsOneWidget);
       expect(find.text('Camisa Preta e Calça Jeans Escura'), findsOneWidget);
       expect(find.text('Tons Terrosos'), findsOneWidget);
-      expect(find.text('Qual o tom da primeira música?'), findsNothing);
+      expect(find.byKey(const ValueKey('schedule_details_history_card')), findsOneWidget);
       expect(find.byType(TextField), findsNothing);
-      expect(find.text('Bondade de Deus'), findsOneWidget);
 
-      // Participantes tab
-      expect(find.text('Henrique Vocal'), findsOneWidget);
-      expect(find.text('Ana Teclado'), findsOneWidget);
-
-      // Músicas tab
+      // Switch to Músicas tab
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_songs')));
+      await tester.pumpAndSettle();
+      expect(find.text('1ª'), findsOneWidget);
+      expect(find.text('2ª'), findsOneWidget);
       expect(find.text('Bondade de Deus'), findsOneWidget);
       expect(find.text('A Casa É Sua'), findsOneWidget);
 
-      // Roteiro tab
+      // Switch to Participantes tab
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_participants')));
+      await tester.pumpAndSettle();
+      expect(find.text('Henrique Vocal'), findsOneWidget);
+      expect(find.text('Ana Teclado'), findsOneWidget);
+
+      // Switch to Roteiro tab
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_order')));
+      await tester.pumpAndSettle();
       expect(find.text('Abertura e Oração'), findsOneWidget);
       expect(find.text('Louvor Congregacional'), findsOneWidget);
     });
 
-    testWidgets('shows hero summary and scrolling sections without inline composer', (tester) async {
-      tester.view.physicalSize = const Size(1024, 2048);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-
-      await tester.pumpWidget(createSubject());
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const ValueKey('schedule_detail_hero')), findsOneWidget);
-      expect(find.byKey(const ValueKey('schedule_detail_accent_bar')), findsOneWidget);
-      expect(find.byKey(const ValueKey('schedule_detail_tab_bar')), findsNothing);
-      for (final k in ['participantes', 'musicas', 'roteiro', 'vestimenta']) {
-        expect(find.byKey(ValueKey('schedule_detail_stat_$k')), findsOneWidget);
-      }
-      // Tapping a summary stat switches to the matching tab.
-      expect(find.text('Bondade de Deus'), findsOneWidget);
-      // Composer is only pinned on the Detalhes tab.
-      expect(find.byTooltip('Enviar comentário'), findsNothing);
-    });
-
-    testWidgets('empty sections show an explicit empty state', (tester) async {
+    testWidgets('empty sections show explicit empty states across tabs', (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -379,12 +397,25 @@ void main() {
         title: 'Escala Vazia',
         date: '2099-10-01',
       );
+      fakeRepo.comments = const [];
 
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
-      expect(find.text('Músicas Escaladas (0)'), findsOneWidget);
-      expect(find.textContaining('Participantes'), findsWidgets);
+      expect(find.text('Comentários (0)'), findsOneWidget);
+      expect(find.text('0 de 0'), findsOneWidget);
+      expect(find.text('Nenhum momento no roteiro desta escala.'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_songs')));
+      await tester.pumpAndSettle();
+      expect(find.text('Nenhuma música escalada para esta escala.'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_participants')));
+      await tester.pumpAndSettle();
+      expect(find.text('Nenhum participante escalado nesta escala.'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_order')));
+      await tester.pumpAndSettle();
       expect(find.text('Nenhum momento no roteiro desta escala.'), findsOneWidget);
     });
 
@@ -550,6 +581,9 @@ void main() {
           }),
           ministryContextNotifierProvider
               .overrideWith((ref) => FakeMinistryContextNotifier()),
+          repertoireRepositoryProvider.overrideWithValue(
+            _FakeNavRepertoireRepo(const {}),
+          ),
         ],
         child: const MaterialApp(
           home: ScheduleDetailView(
@@ -631,6 +665,10 @@ void main() {
       await tester.pumpWidget(createSubject(role: 'member'));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_actions_menu')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('menu_share_schedule')), findsOneWidget);
       expect(find.byKey(const ValueKey('edit_schedule_button')), findsNothing);
       expect(find.byKey(const ValueKey('delete_schedule_button')), findsNothing);
     });
@@ -641,6 +679,8 @@ void main() {
       await tester.pumpWidget(createSubject(role: 'admin'));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_actions_menu')));
+      await tester.pumpAndSettle();
       final editBtn = find.byKey(const ValueKey('edit_schedule_button'));
       expect(editBtn, findsOneWidget);
 
@@ -657,6 +697,8 @@ void main() {
       await tester.pumpWidget(createSubject(role: 'admin'));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_actions_menu')));
+      await tester.pumpAndSettle();
       final deleteBtn = find.byKey(const ValueKey('delete_schedule_button'));
       expect(deleteBtn, findsOneWidget);
 
@@ -670,7 +712,7 @@ void main() {
       expect(fakeRepo.deleteCalls, equals(1));
     });
 
-    testWidgets('displays song key badge, timeline type labels, and stats summary row',
+    testWidgets('displays confirmed card, song key badge, and timeline type labels',
         (tester) async {
       tester.view.physicalSize = const Size(1024, 2048);
       tester.view.devicePixelRatio = 1.0;
@@ -679,43 +721,89 @@ void main() {
       await tester.pumpWidget(createSubject());
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('schedule_detail_stats_row')), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_details_confirmed_card')), findsOneWidget);
+      expect(find.text('1 de 2'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_songs')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('detail_song_key_s1')), findsOneWidget);
       expect(find.text('Tom: G'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_order')));
+      await tester.pumpAndSettle();
       expect(find.text('Oração'), findsOneWidget);
       expect(find.text('Louvor'), findsOneWidget);
     });
 
-    testWidgets('renders schedule detail without overflow at 320px, 360px, and 393px widths and 1.3x text scale',
+    testWidgets(
+        'renders schedule detail without overflow across 320dp, 360dp, 393dp, tablet portrait, dark theme and 1.3x text scale',
         (tester) async {
-      for (final width in [320.0, 360.0, 393.0]) {
-        tester.view.physicalSize = Size(width, 780);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final viewports = <({Size size, double scale, ThemeData theme})>[
+        (size: const Size(320, 680), scale: 1.3, theme: AppTheme.darkTheme),
+        (size: const Size(360, 740), scale: 1.0, theme: AppTheme.darkTheme),
+        (size: const Size(393, 851), scale: 1.0, theme: AppTheme.darkTheme),
+        (size: const Size(768, 1024), scale: 1.0, theme: AppTheme.lightTheme),
+      ];
+
+      for (final vp in viewports) {
+        tester.view.physicalSize = vp.size;
         tester.view.devicePixelRatio = 1.0;
 
         await tester.pumpWidget(
           MediaQuery(
             data: MediaQueryData(
-              size: Size(width, 780),
-              textScaler: width == 320.0
-                  ? const TextScaler.linear(1.3)
-                  : TextScaler.noScaling,
+              size: vp.size,
+              padding: const EdgeInsets.only(bottom: 24),
+              viewPadding: const EdgeInsets.only(bottom: 24),
+              textScaler: TextScaler.linear(vp.scale),
             ),
-            child: createSubject(role: 'admin'),
+            child: createSubject(
+              role: 'admin',
+              theme: vp.theme,
+              appKey: ValueKey('${vp.size}_${vp.scale}_${vp.theme.brightness}'),
+            ),
           ),
         );
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull,
-            reason: 'No overflow on ScheduleDetailView at ${width}px');
-        expect(MediaQuery.textScalerOf(tester.element(find.byType(ScheduleDetailView))).scale(10),
-          width == 320 ? 13 : 10);
-        for (final label in ['Roteiro do Culto', 'Vestimenta', 'Observações']) {
-          await tester.ensureVisible(find.text(label).last);
-          await tester.pumpAndSettle();
-          expect(tester.takeException(), isNull, reason: 'No overflow at $width for $label');
-        }
-      }
+            reason: 'No overflow on Detalhes at ${vp.size}');
+        expect(
+          tester
+              .getBottomRight(find.byKey(const ValueKey('open_schedule_chat')))
+              .dy,
+          lessThanOrEqualTo(vp.size.height - 24),
+        );
 
-      addTearDown(tester.view.resetPhysicalSize);
+        await tester.ensureVisible(find.text('Observações').last);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull,
+            reason: 'No overflow scrolling Detalhes at ${vp.size}');
+
+        for (final tabKey in const [
+          ValueKey('schedule_detail_tab_songs'),
+          ValueKey('schedule_detail_tab_participants'),
+          ValueKey('schedule_detail_tab_order'),
+        ]) {
+          await tester.tap(find.byKey(tabKey));
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull,
+              reason: 'No overflow on $tabKey at ${vp.size}');
+        }
+
+        // Test Participantes Membros <-> Funções internal toggle on every viewport
+        await tester.tap(
+            find.byKey(const ValueKey('schedule_detail_tab_participants')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('participants_toggle_roles')));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull,
+            reason: 'No overflow on Funções toggle at ${vp.size}');
+      }
     });
 
     testWidgets(
@@ -822,6 +910,9 @@ void main() {
           ),
         ),
       );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_songs')));
       await tester.pumpAndSettle();
 
       final thirdRow = find.byKey(const ValueKey('detail_song_row_3'));
@@ -967,6 +1058,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_order')));
+      await tester.pumpAndSettle();
+
       final timelineSong2 = find.byKey(const ValueKey('timeline_item_t_song_2'));
       await tester.ensureVisible(timelineSong2);
       await tester.pumpAndSettle();
@@ -995,15 +1089,199 @@ void main() {
         findsWidgets,
       );
     });
+
+    testWidgets(
+        'R3 Redesign: renders Detalhes cards (Share, Google Agenda, Confirmados, Roteiro summary, Histórico), Músicas media badges & ordinal positions, and Participantes Membros/Funções toggle',
+        (tester) async {
+      final inSixDays = DateTime.now().add(const Duration(days: 6));
+      final isoInSixDays =
+          '${inSixDays.year.toString().padLeft(4, '0')}-${inSixDays.month.toString().padLeft(2, '0')}-${inSixDays.day.toString().padLeft(2, '0')}';
+
+      fakeRepo.detail = ScheduleDetail(
+        id: 'sch_1',
+        ministryId: 'min_1',
+        title: 'Culto de adoração',
+        date: isoInSixDays,
+        time: '19:30',
+        durationMinutes: 120,
+        createdAt: '2026-11-10T14:00:00Z',
+        updatedAt: '2026-11-12T16:30:00Z',
+        participants: const [
+          ScheduleParticipant(
+            id: 'p1',
+            userId: 'user_1',
+            name: 'Lucas Silva',
+            role: 'Vocalista',
+            confirmed: true,
+          ),
+          ScheduleParticipant(
+            id: 'p2',
+            name: 'Marina Rocha',
+            role: 'Vocalista',
+            confirmed: true,
+          ),
+          ScheduleParticipant(
+            id: 'p3',
+            name: 'Rafael Lima',
+            role: 'Violão',
+            confirmed: null,
+          ),
+          ScheduleParticipant(
+            id: 'p4',
+            name: 'Pedro Alves',
+            role: 'Baixo',
+            confirmed: false,
+          ),
+        ],
+        songs: const [
+          ScheduleSong(
+            id: 's1',
+            title: 'Bondade de Deus',
+            artist: 'Isaías Saad',
+            key: 'G',
+            versionName: 'Principal',
+            rawJson: {
+              'has_lyrics': true,
+              'smart_chords_count': 1,
+            },
+          ),
+          ScheduleSong(
+            id: 's2',
+            title: 'A Casa É Sua',
+            artist: 'Casa Worship',
+            key: 'D',
+          ),
+        ],
+        timeline: const [
+          ScheduleTimelineItem(
+            id: 't1',
+            title: 'Bondade de Deus',
+            time: '19:35',
+            type: 'Música',
+          ),
+          ScheduleTimelineItem(
+            id: 't2',
+            title: 'Palavra',
+            time: '20:10',
+            type: 'word',
+          ),
+        ],
+      );
+
+      final enrichedSongs = <SongSummary>[
+        const SongSummary(
+          id: 's1',
+          ministryId: 'min_1',
+          title: 'Bondade de Deus',
+          classification: SongClassificationRef(
+            id: 'c1',
+            name: 'Louvor',
+            color: '#7CC4A4',
+          ),
+          youtubeUrl: 'https://youtube.com/watch?v=test1',
+          hasYoutube: true,
+          audioUrl: 'https://cdn.test/bondade.mp3',
+        ),
+      ];
+
+      await tester.pumpWidget(createSubject(repertoireSongs: enrichedSongs));
+      await tester.pumpAndSettle();
+
+      // Summary header relative badge & Detalhes cards
+      expect(find.text('daqui a 6 dias'), findsOneWidget);
+      expect(find.byKey(const ValueKey('schedule_share_button')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('schedule_google_calendar_button')),
+        findsOneWidget,
+      );
+      expect(find.text('2 de 4'), findsOneWidget);
+      expect(find.textContaining('Escala criada em'), findsOneWidget);
+      expect(find.textContaining('Última atualização em'), findsOneWidget);
+
+      // Share button triggers clipboard & SnackBar
+      String? copiedText;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText = (call.arguments as Map)['text'] as String?;
+        }
+        return null;
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null);
+      });
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('schedule_share_button')),
+      );
+      await tester.tap(find.byKey(const ValueKey('schedule_share_button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(copiedText, contains('Culto de adoração'));
+      expect(copiedText, contains('1ª Bondade de Deus'));
+      expect(
+        find.text('Resumo da escala copiado para compartilhar.'),
+        findsOneWidget,
+      );
+      await tester.pumpAndSettle();
+
+      // Músicas tab shows ordinals, classification & resource icons
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_songs')));
+      await tester.pumpAndSettle();
+      expect(find.text('1ª'), findsOneWidget);
+      expect(find.text('2ª'), findsOneWidget);
+      expect(find.text('Louvor'), findsOneWidget);
+      expect(find.text('Tom: G'), findsOneWidget);
+      expect(find.byKey(const ValueKey('detail_song_ind_chord_1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('detail_song_ind_lyrics_1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('detail_song_ind_audio_1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('detail_song_youtube_1')), findsOneWidget);
+
+      // Participantes tab & Membros / Funções internal switch
+      await tester.tap(
+        find.byKey(const ValueKey('schedule_detail_tab_participants')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('2/4'), findsOneWidget);
+      expect(find.text('LS'), findsOneWidget);
+      expect(find.text('Lucas Silva'), findsOneWidget);
+      expect(find.text('Recusado'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('participants_toggle_roles')));
+      await tester.pumpAndSettle();
+      expect(find.text('Vocalista'), findsOneWidget);
+      expect(find.text('Violão'), findsOneWidget);
+      expect(find.text('Baixo'), findsOneWidget);
+
+      // Roteiro tab shows Música 1 + Palavra + time
+      await tester.tap(find.byKey(const ValueKey('schedule_detail_tab_order')));
+      await tester.pumpAndSettle();
+      expect(find.text('Música 1'), findsOneWidget);
+      expect(find.text('Palavra'), findsWidgets);
+      expect(find.text('19:35'), findsOneWidget);
+    });
   });
 }
 
 class _FakeNavRepertoireRepo implements RepertoireRepository {
   final Map<String, SongDetail> songs;
-  _FakeNavRepertoireRepo(this.songs);
+  final List<SongSummary> listItems;
+  _FakeNavRepertoireRepo(this.songs, {this.listItems = const []});
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
+  @override
+  Future<PaginatedSongs> listSongs(
+    String ministryId, {
+    String? search,
+    String? classificationId,
+    String? cursor,
+    int? page,
+    int? limit,
+  }) async =>
+      PaginatedSongs(songs: listItems, total: listItems.length);
 
   @override
   Future<SongDetail> getSongDetail(String ministryId, String songId) async =>

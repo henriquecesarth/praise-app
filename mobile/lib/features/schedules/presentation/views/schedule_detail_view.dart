@@ -1,21 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../app/providers.dart';
 import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
+import '../../../repertoire/domain/song_summary.dart';
 import '../../../repertoire/presentation/views/song_detail_view.dart';
 import '../../domain/schedule.dart';
+import '../../domain/schedule_actions.dart';
 import '../../domain/schedule_song_sequence.dart';
-import '../../domain/song_timeline.dart';
+import '../widgets/detail/schedule_comments_fab.dart';
+import '../widgets/detail/schedule_detail_header.dart';
+import '../widgets/detail/schedule_detail_tabs.dart';
+import '../widgets/detail/schedule_details_tab_view.dart';
+import '../widgets/detail/schedule_order_tab_view.dart';
+import '../widgets/detail/schedule_participants_tab_view.dart';
+import '../widgets/detail/schedule_songs_tab_view.dart';
 import 'schedule_chat_view.dart';
-import '../../domain/schedule_participant.dart';
 import 'schedule_form_screen.dart';
 
-/// Full schedule detail screen.
+export '../widgets/detail/schedule_detail_header.dart' show parseScheduleColor;
+
+/// Full schedule detail panel organized into a summary header, 4 segmented tabs
+/// (Detalhes, Músicas, Participantes, Roteiro), and a floating comments action.
 ///
-/// State is keyed by [ministryId] + [scheduleId].
-/// Contains: title, date/time, duration, notes, participants,
-/// songs/timeline/clothing (when present), confirmation section, comments,
-/// and admin edit/delete controls.
+/// State is strictly keyed by [ministryId] + [scheduleId].
 class ScheduleDetailView extends ConsumerStatefulWidget {
   final String ministryId;
   final String scheduleId;
@@ -33,13 +42,32 @@ class ScheduleDetailView extends ConsumerStatefulWidget {
 }
 
 class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
+  ScheduleDetailSectionTab _selectedTab = ScheduleDetailSectionTab.details;
+  Map<String, SongSummary> _repertoireSummariesById = const {};
+  String? _enrichedContextKey;
+  bool _isEnrichingSongs = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _load();
+      if (mounted) _load();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant ScheduleDetailView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.ministryId != widget.ministryId ||
+        oldWidget.scheduleId != widget.scheduleId) {
+      _selectedTab = ScheduleDetailSectionTab.details;
+      _repertoireSummariesById = const {};
+      _enrichedContextKey = null;
+      _isEnrichingSongs = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _load();
+      });
+    }
   }
 
   void _load() {
@@ -51,9 +79,155 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
         .load(widget.ministryId, widget.scheduleId);
   }
 
-  Future<void> _confirmAndDeleteSchedule(
-    ScheduleDetail schedule,
-  ) async {
+  void _maybeEnrichSongMetadata(ScheduleDetail schedule) {
+    if (schedule.songs.isEmpty) return;
+    final ctxKey = '${widget.ministryId}:${widget.scheduleId}';
+    if (_enrichedContextKey == ctxKey || _isEnrichingSongs) return;
+
+    final repState = ref.read(repertoireListNotifierProvider);
+    if (repState.ministryId == widget.ministryId && repState.songs.isNotEmpty) {
+      _enrichedContextKey = ctxKey;
+      return;
+    }
+
+    _isEnrichingSongs = true;
+    _enrichedContextKey = ctxKey;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final page = await ref
+            .read(repertoireRepositoryProvider)
+            .listSongs(widget.ministryId, limit: 100);
+        if (!mounted ||
+            '${widget.ministryId}:${widget.scheduleId}' != ctxKey ||
+            ref.read(ministryContextNotifierProvider).selectedMinistry?.id !=
+                widget.ministryId) {
+          return;
+        }
+        if (page.songs.isNotEmpty) {
+          setState(() {
+            _repertoireSummariesById = {
+              for (final s in page.songs) s.id: s,
+            };
+          });
+        }
+      } catch (_) {
+        // Non-fatal fallback: schedule songs continue rendering from snapshot fields.
+      } finally {
+        _isEnrichingSongs = false;
+      }
+    });
+  }
+
+  void _openScheduleSongDetail(
+    ScheduleDetail schedule, {
+    required int scheduleSlotIndex,
+    required ScheduleSong song,
+  }) {
+    final sequence = ScheduleSongSequenceContext.fromScheduleSongs(
+      ministryId: widget.ministryId,
+      scheduleId: schedule.id,
+      songs: schedule.songs,
+      initialScheduleSlotIndex: scheduleSlotIndex,
+    );
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SongDetailView(
+          ministryId: widget.ministryId,
+          songId: song.id,
+          initialTitle: song.title,
+          initialVersionId: song.versionId,
+          backLabel: 'Voltar',
+          scheduleSequence: sequence.isEmpty ? null : sequence,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openComments() async {
+    final activeMinistryId =
+        ref.read(ministryContextNotifierProvider).selectedMinistry?.id;
+    if (activeMinistryId != widget.ministryId) return;
+    final userId = ref.read(authNotifierProvider).user?.id;
+    if (userId == null || userId.isEmpty) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ScheduleChatView(
+          ministryId: widget.ministryId,
+          scheduleId: widget.scheduleId,
+          userId: userId,
+        ),
+      ),
+    );
+    if (!mounted ||
+        ref.read(authNotifierProvider).user?.id != userId ||
+        ref.read(ministryContextNotifierProvider).selectedMinistry?.id !=
+            widget.ministryId) {
+      return;
+    }
+    ref
+        .read(commentsNotifierProvider.notifier)
+        .load(widget.ministryId, widget.scheduleId);
+  }
+
+  Future<void> _shareSchedule(ScheduleDetail schedule) async {
+    final summary = buildScheduleShareSummary(schedule);
+    try {
+      await Clipboard.setData(ClipboardData(text: summary));
+    } catch (_) {
+      // Non-fatal if platform clipboard is unavailable
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Resumo da escala copiado para compartilhar.'),
+      ),
+    );
+  }
+
+  Future<void> _openExternalHttpUrl(
+    Uri uri, {
+    required String errorMessage,
+  }) async {
+    if (uri.scheme != 'http' && uri.scheme != 'https') {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMessage)),
+      );
+      return;
+    }
+    var launched = false;
+    try {
+      launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      launched = false;
+    }
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMessage)),
+      );
+    }
+  }
+
+  Future<void> _openGoogleCalendar(ScheduleDetail schedule) async {
+    final uri = buildGoogleCalendarEventUri(schedule);
+    if (uri == null) return;
+    await _openExternalHttpUrl(
+      uri,
+      errorMessage: 'Não foi possível abrir o Google Agenda neste dispositivo.',
+    );
+  }
+
+  Future<void> _openYoutubeUrl(String rawUrl) async {
+    final uri = Uri.tryParse(rawUrl.trim());
+    if (uri == null) return;
+    await _openExternalHttpUrl(
+      uri,
+      errorMessage: 'Não foi possível abrir o vídeo no YouTube.',
+    );
+  }
+
+  Future<void> _confirmAndDeleteSchedule(ScheduleDetail schedule) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -121,8 +295,15 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
 
     final detailState = ref.watch(scheduleDetailNotifierProvider);
     final commentsState = ref.watch(commentsNotifierProvider);
+    final ministryContext = ref.watch(ministryContextNotifierProvider);
+    final authUser = ref.watch(authNotifierProvider.select((s) => s.user));
+    final repSongsForMinistry = ref.watch(
+      repertoireListNotifierProvider.select(
+        (s) => s.ministryId == widget.ministryId ? s.songs : const <SongSummary>[],
+      ),
+    );
 
-    // Trigger reload if the state doesn't belong to this screen's key
+    // Trigger reload if state belongs to another ministry/schedule
     final stateKey = '${detailState.ministryId}:${detailState.scheduleId}';
     final myKey = '${widget.ministryId}:${widget.scheduleId}';
     if (stateKey != myKey) {
@@ -133,993 +314,267 @@ class _ScheduleDetailViewState extends ConsumerState<ScheduleDetailView> {
 
     final isMatchingKey = detailState.ministryId == widget.ministryId &&
         detailState.scheduleId == widget.scheduleId;
-
-    Widget body;
-
-    if (!isMatchingKey ||
-        (detailState.isLoading && detailState.schedule == null)) {
-      body = const Center(child: CircularProgressIndicator());
-    } else if (detailState.error != null && detailState.schedule == null) {
-      body = _DetailError(
-        message: detailState.error!,
-        onRetry: () => ref
-            .read(scheduleDetailNotifierProvider.notifier)
-            .load(widget.ministryId, widget.scheduleId),
-        onBack: () => Navigator.of(context).maybePop(),
-      );
-    } else if (detailState.schedule != null && isMatchingKey) {
-      body = _DetailContent(
-        schedule: detailState.schedule!,
-        ministryId: widget.ministryId,
-        scheduleId: widget.scheduleId,
-        isConfirming: detailState.isConfirming,
-        confirmationError: detailState.confirmationError,
-      );
-    } else {
-      body = const Center(child: CircularProgressIndicator());
-    }
-
-    final ministryContext = ref.watch(ministryContextNotifierProvider);
     final activeMinistry = ministryContext.selectedMinistry;
     final isMatchingTenant =
         activeMinistry != null && activeMinistry.id == widget.ministryId;
     final isAdmin = isMatchingTenant && activeMinistry.isAdmin;
+    final schedule = isMatchingKey ? detailState.schedule : null;
+
+    if (schedule != null) {
+      _maybeEnrichSongMetadata(schedule);
+    }
+
+    final mergedSummaries = <String, SongSummary>{
+      ..._repertoireSummariesById,
+      for (final s in repSongsForMinistry) s.id: s,
+    };
+
+    final visibleCommentsCount =
+        commentsState.ministryId == widget.ministryId &&
+                commentsState.scheduleId == widget.scheduleId
+            ? commentsState.comments.length
+            : 0;
+
+    Widget body;
+    if (!isMatchingKey || (detailState.isLoading && schedule == null)) {
+      body = const Center(child: CircularProgressIndicator());
+    } else if (detailState.error != null && schedule == null) {
+      body = _DetailError(
+        message: detailState.error!,
+        onRetry: _load,
+        onBack: () => Navigator.of(context).maybePop(),
+      );
+    } else if (schedule != null) {
+      final Widget activeTabView;
+      switch (_selectedTab) {
+        case ScheduleDetailSectionTab.details:
+          activeTabView = ScheduleDetailsTabView(
+            key: const ValueKey('schedule_tab_view_details'),
+            schedule: schedule,
+            isConfirming: detailState.isConfirming,
+            confirmationError: detailState.confirmationError,
+            currentUserId: authUser?.id,
+            currentUserName: authUser?.name,
+            onConfirm: (confirmed) => ref
+                .read(scheduleDetailNotifierProvider.notifier)
+                .confirm(widget.ministryId, widget.scheduleId, confirmed),
+            onClearConfirmationError: () => ref
+                .read(scheduleDetailNotifierProvider.notifier)
+                .clearConfirmationError(),
+            onShare: () => _shareSchedule(schedule),
+            onOpenGoogleCalendar: buildGoogleCalendarEventUri(schedule) != null
+                ? () => _openGoogleCalendar(schedule)
+                : null,
+            onNavigateTab: (tab) => setState(() => _selectedTab = tab),
+          );
+        case ScheduleDetailSectionTab.songs:
+          activeTabView = ScheduleSongsTabView(
+            key: const ValueKey('schedule_tab_view_songs'),
+            songs: schedule.songs,
+            summariesById: mergedSummaries,
+            onOpenSong: (slotIdx, song) => _openScheduleSongDetail(
+              schedule,
+              scheduleSlotIndex: slotIdx,
+              song: song,
+            ),
+            onOpenYoutube: _openYoutubeUrl,
+          );
+        case ScheduleDetailSectionTab.participants:
+          activeTabView = ScheduleParticipantsTabView(
+            key: const ValueKey('schedule_tab_view_participants'),
+            participants: schedule.participants,
+          );
+        case ScheduleDetailSectionTab.order:
+          activeTabView = ScheduleOrderTabView(
+            key: const ValueKey('schedule_tab_view_order'),
+            items: schedule.timeline,
+            songs: schedule.songs,
+            onOpenSong: (slotIdx, song) => _openScheduleSongDetail(
+              schedule,
+              scheduleSlotIndex: slotIdx,
+              song: song,
+            ),
+          );
+      }
+
+      body = Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 780),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ScheduleDetailHeader(schedule: schedule),
+              ScheduleDetailTabBar(
+                selectedTab: _selectedTab,
+                onSelectTab: (tab) => setState(() => _selectedTab = tab),
+                songsCount: schedule.songs.length,
+                confirmedParticipants: schedule.confirmedCount,
+                totalParticipants: schedule.totalParticipants,
+                orderItemsCount: schedule.timeline.length,
+              ),
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  layoutBuilder: (currentChild, previousChildren) {
+                    return Stack(
+                      alignment: Alignment.topCenter,
+                      children: [
+                        ...previousChildren,
+                        if (currentChild != null) currentChild,
+                      ],
+                    );
+                  },
+                  child: activeTabView,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    } else {
+      body = const Center(child: CircularProgressIndicator());
+    }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          (isMatchingKey ? detailState.schedule?.title : null) ??
-              widget.initialTitle ??
-              'Detalhes da Escala',
-          overflow: TextOverflow.ellipsis,
-        ),
+        centerTitle: true,
+        title: const Text('Escala'),
         actions: [
-          IconButton(
-            key: const ValueKey('open_schedule_chat'),
-            tooltip: 'Chat da Escala',
-            icon: Badge(
-              isLabelVisible: commentsState.ministryId == widget.ministryId &&
-                  commentsState.scheduleId == widget.scheduleId && commentsState.comments.isNotEmpty,
-              label: Text('${commentsState.comments.length}'),
-              child: const Icon(Icons.chat_bubble_outline)),
-            onPressed: !isMatchingTenant ? null : () async {
-              final userId = ref.read(authNotifierProvider).user?.id;
-              if (userId == null || userId.isEmpty) return;
-              await Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => ScheduleChatView(ministryId: widget.ministryId,
-                  scheduleId: widget.scheduleId, userId: userId)));
-              if (!mounted || ref.read(authNotifierProvider).user?.id != userId ||
-                  ref.read(ministryContextNotifierProvider).selectedMinistry?.id != widget.ministryId) {
-                return;
-              }
-              ref.read(commentsNotifierProvider.notifier).load(widget.ministryId, widget.scheduleId);
-            },
-          ),
-          if (isAdmin && detailState.schedule != null) ...[
-            IconButton(
-              key: const ValueKey('edit_schedule_button'),
-              icon: const Icon(Icons.edit_outlined),
-              tooltip: 'Editar escala',
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ScheduleFormScreen(
-                      ministryId: widget.ministryId,
-                      initialSchedule: detailState.schedule,
-                    ),
-                  ),
-                );
+          if (schedule != null)
+            PopupMenuButton<String>(
+              key: const ValueKey('schedule_detail_actions_menu'),
+              tooltip: 'Mais ações',
+              icon: const Icon(Icons.more_vert_rounded),
+              onSelected: (value) async {
+                switch (value) {
+                  case 'share':
+                    await _shareSchedule(schedule);
+                  case 'calendar':
+                    await _openGoogleCalendar(schedule);
+                  case 'comments':
+                    await _openComments();
+                  case 'refresh':
+                    _load();
+                  case 'edit':
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ScheduleFormScreen(
+                          ministryId: widget.ministryId,
+                          initialSchedule: schedule,
+                        ),
+                      ),
+                    );
+                  case 'delete':
+                    if (!detailState.isDeleting) {
+                      await _confirmAndDeleteSchedule(schedule);
+                    }
+                }
               },
-            ),
-            IconButton(
-              key: const ValueKey('delete_schedule_button'),
-              icon: detailState.isDeleting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      Icons.delete_outline,
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-              tooltip: 'Excluir escala',
-              onPressed: detailState.isDeleting
-                  ? null
-                  : () => _confirmAndDeleteSchedule(
-                        detailState.schedule!,
-                      ),
-            ),
-          ],
-        ],
-      ),
-      body: SafeArea(bottom: false, child: body),
-    );
-  }
-}
-
-// ─── Detail Content ───────────────────────────────────────────────────────────
-
-class _DetailContent extends ConsumerWidget {
-  final ScheduleDetail schedule;
-  final String ministryId;
-  final String scheduleId;
-  final bool isConfirming;
-  final String? confirmationError;
-  const _DetailContent({required this.schedule, required this.ministryId,
-    required this.scheduleId, required this.isConfirming, this.confirmationError});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Center(child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 760),
-      child: SingleChildScrollView(
-        key: const ValueKey('schedule_detail_sections'),
-        padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _InfoSection(schedule: schedule),
-          const SizedBox(height: 16),
-          _SongsSection(
-            songs: schedule.songs,
-            ministryId: ministryId,
-            scheduleId: schedule.id,
-          ),
-          const SizedBox(height: 16),
-          _TimelineSection(
-            items: schedule.timeline,
-            songs: schedule.songs,
-            ministryId: ministryId,
-            scheduleId: schedule.id,
-          ),
-          const SizedBox(height: 16),
-          _ParticipantsSection(participants: schedule.participants),
-          const SizedBox(height: 16),
-          _ConfirmationSection(schedule: schedule, ministryId: ministryId,
-            scheduleId: scheduleId, isConfirming: isConfirming, error: confirmationError),
-          const SizedBox(height: 16),
-          _ClothingSection(pieces: schedule.clothingPieces, palette: schedule.colorPalette),
-          if (schedule.notes?.isNotEmpty == true) ...[
-            const SizedBox(height: 16), _NotesSection(notes: schedule.notes!),
-          ],
-        ]),
-      ),
-    ));
-  }
-}
-
-// ─── Section Card helper ──────────────────────────────────────────────────────
-
-class _SectionCard extends StatelessWidget {
-  final Widget child;
-  const _SectionCard({required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: BorderSide(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
-      ),
-      child: Padding(padding: const EdgeInsets.all(20), child: child),
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  final Color? color;
-  const _InfoRow({required this.icon, required this.text, this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    if (text.isEmpty) return const SizedBox.shrink();
-    final c = color ?? theme.colorScheme.onSurface.withValues(alpha: 0.75);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          Icon(icon, size: 15, color: c),
-          const SizedBox(width: 8),
-          Expanded(
-              child: Text(text,
-                  style: theme.textTheme.bodyMedium?.copyWith(color: c))),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Info Section ─────────────────────────────────────────────────────────────
-
-class _InfoSection extends StatelessWidget {
-  final ScheduleDetail schedule;
-  const _InfoSection({required this.schedule});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final dressCount = schedule.clothingPieces.length +
-        ((schedule.colorPalette != null &&
-                schedule.colorPalette!.trim().isNotEmpty &&
-                schedule.clothingPieces.isEmpty)
-            ? 1
-            : 0);
-
-    return Card(
-      key: const ValueKey('schedule_detail_hero'),
-      elevation: 0,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            key: const ValueKey('schedule_detail_accent_bar'),
-            height: 8,
-            color: parseScheduleColor(schedule.colorPalette) ?? theme.colorScheme.secondary,
-          ),
-          Padding(
-            padding: const EdgeInsets.all(22),
-            child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(schedule.title,
-              style: theme.textTheme.headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w800)),
-          if (!schedule.isVisible || schedule.requireConfirmation) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: [
-                if (!schedule.isVisible)
-                  Container(
-                    key: const ValueKey('schedule_private_badge'),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.secondaryContainer,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.visibility_off_outlined,
-                          size: 13,
-                          color: theme.colorScheme.onSecondaryContainer,
-                        ),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            'Privado (apenas admins)',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: theme.colorScheme.onSecondaryContainer,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
+              itemBuilder: (ctx) => [
+                const PopupMenuItem<String>(
+                  key: ValueKey('menu_share_schedule'),
+                  value: 'share',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.share_outlined),
+                    title: Text('Compartilhar escala'),
+                  ),
+                ),
+                if (buildGoogleCalendarEventUri(schedule) != null)
+                  const PopupMenuItem<String>(
+                    key: ValueKey('menu_calendar_schedule'),
+                    value: 'calendar',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.event_outlined),
+                      title: Text('Google Agenda'),
                     ),
                   ),
-                if (schedule.requireConfirmation)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primaryContainer
-                          .withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      'Confirmação solicitada',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.onPrimaryContainer,
-                        fontWeight: FontWeight.w600,
-                      ),
+                if (isMatchingTenant)
+                  PopupMenuItem<String>(
+                    key: const ValueKey('menu_comments_schedule'),
+                    value: 'comments',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.chat_bubble_outline_rounded),
+                      title: Text('Comentários ($visibleCommentsCount)'),
                     ),
                   ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 12),
-          _InfoRow(
-              icon: Icons.calendar_today_outlined,
-              text: schedule.formattedDate),
-          if (schedule.time.isNotEmpty)
-            _InfoRow(
-                icon: Icons.access_time_outlined, text: schedule.formattedTime),
-          if (schedule.formattedDuration.isNotEmpty)
-            _InfoRow(
-                icon: Icons.timer_outlined,
-                text: 'Duração: ${schedule.formattedDuration}'),
-          if (schedule.isUpcoming())
-            _InfoRow(
-              icon: Icons.event_available_outlined,
-              text: schedule.weeksUntil(),
-              color: theme.colorScheme.primary,
-            ),
-          const SizedBox(height: 12),
-          const Divider(height: 1),
-          const SizedBox(height: 10),
-          LayoutBuilder(builder: (context, constraints) {
-            final width = (constraints.maxWidth - 8) / 2;
-            return Wrap(key: const ValueKey('schedule_detail_stats_row'), spacing: 8, runSpacing: 8, children: [
-              for (final stat in [
-                ('participantes', Icons.people_outline, schedule.participants.length, 'Participantes'),
-                ('musicas', Icons.music_note_outlined, schedule.songs.length, 'Músicas'),
-                ('roteiro', Icons.view_timeline_outlined, schedule.timeline.length, 'Roteiro'),
-                ('vestimenta', Icons.checkroom_outlined, dressCount, 'Vestimenta'),
-              ]) SizedBox(width: width, child: _StatCell(
-                keyName: 'schedule_detail_stat_${stat.$1}', icon: stat.$2, count: stat.$3, label: stat.$4)),
-            ]);
-          }),
-        ],
-      ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatCell extends StatelessWidget {
-  final String keyName;
-  final IconData icon;
-  final int count;
-  final String label;
-
-  const _StatCell({
-    required this.keyName,
-    required this.icon,
-    required this.count,
-    required this.label,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      key: ValueKey(keyName),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12)),
-      child: Column(children: [
-        Icon(icon, size: 22, color: theme.colorScheme.primary),
-        const SizedBox(height: 6),
-        Text('$count', style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-        Text(label, textAlign: TextAlign.center, style: theme.textTheme.labelMedium),
-      ]),
-    );
-  }
-}
-
-// ─── Participants Section ─────────────────────────────────────────────────────
-
-class _ParticipantsSection extends StatelessWidget {
-  final List<ScheduleParticipant> participants;
-  const _ParticipantsSection({required this.participants});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final confirmed = participants.where((p) => p.confirmed == true).length;
-    final total = participants.length;
-    return _SectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.people_outline,
-                size: 18, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Participantes ($confirmed/$total confirmados)',
-                style: theme.textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 12),
-          ...participants.map((p) => _ParticipantRow(participant: p)),
-        ],
-      ),
-    );
-  }
-}
-
-class _ParticipantRow extends StatelessWidget {
-  final ScheduleParticipant participant;
-  const _ParticipantRow({required this.participant});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final confirmed = participant.confirmed;
-    final Color statusColor;
-    final IconData statusIcon;
-    if (confirmed == true) {
-      statusColor = Colors.green.shade600;
-      statusIcon = Icons.check_circle_outline;
-    } else if (confirmed == false) {
-      statusColor = theme.colorScheme.error;
-      statusIcon = Icons.cancel_outlined;
-    } else {
-      statusColor = theme.colorScheme.onSurface.withValues(alpha: 0.4);
-      statusIcon = Icons.radio_button_unchecked;
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(children: [
-        Icon(statusIcon, size: 16, color: statusColor),
-        const SizedBox(width: 8),
-        Expanded(
-            child: Text(participant.name, style: theme.textTheme.bodyMedium)),
-        if (participant.role.isNotEmpty) ...[
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              participant.role,
-              textAlign: TextAlign.end,
-              style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.55)),
-            ),
-          ),
-        ],
-      ]),
-    );
-  }
-}
-
-// ─── Confirmation Section ─────────────────────────────────────────────────────
-
-class _ConfirmationSection extends ConsumerWidget {
-  final ScheduleDetail schedule;
-  final String ministryId;
-  final String scheduleId;
-  final bool isConfirming;
-  final String? error;
-
-  const _ConfirmationSection({
-    required this.schedule,
-    required this.ministryId,
-    required this.scheduleId,
-    required this.isConfirming,
-    required this.error,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    if (!schedule.isUpcoming()) {
-      return _SectionCard(
-        child: Row(children: [
-          Icon(Icons.history_outlined,
-              size: 18,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.5)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'Escala encerrada — confirmação não disponível.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
-            ),
-          ),
-        ]),
-      );
-    }
-
-    final authUser = ref.watch(authNotifierProvider).user;
-    ScheduleParticipant? myParticipant;
-    if (authUser != null) {
-      for (final p in schedule.participants) {
-        if (p.userId == authUser.id ||
-            p.id == authUser.id ||
-            (p.userId == null &&
-                authUser.name.trim().isNotEmpty &&
-                p.name.trim().toLowerCase() ==
-                    authUser.name.trim().toLowerCase())) {
-          myParticipant = p;
-          break;
-        }
-      }
-    }
-
-    final isExplicitlyUnscheduledUser =
-        authUser != null && myParticipant == null;
-
-    return _SectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.how_to_reg_outlined,
-                      size: 18, color: theme.colorScheme.primary),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      'Confirmação de Presença',
-                      style: theme.textTheme.titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w600),
+                const PopupMenuItem<String>(
+                  key: ValueKey('menu_refresh_schedule'),
+                  value: 'refresh',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.refresh_rounded),
+                    title: Text('Atualizar'),
+                  ),
+                ),
+                if (isAdmin) ...[
+                  const PopupMenuDivider(),
+                  const PopupMenuItem<String>(
+                    key: ValueKey('edit_schedule_button'),
+                    value: 'edit',
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.edit_outlined),
+                      title: Text('Editar escala'),
+                    ),
+                  ),
+                  PopupMenuItem<String>(
+                    key: const ValueKey('delete_schedule_button'),
+                    value: 'delete',
+                    enabled: !detailState.isDeleting,
+                    child: ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        Icons.delete_outline,
+                        color: Theme.of(ctx).colorScheme.error,
+                      ),
+                      title: Text(
+                        detailState.isDeleting
+                            ? 'Excluindo...'
+                            : 'Excluir escala',
+                        style: TextStyle(
+                          color: Theme.of(ctx).colorScheme.error,
+                        ),
+                      ),
                     ),
                   ),
                 ],
-              ),
-              if (myParticipant != null)
-                Container(
-                  key: const ValueKey('my_confirmation_status_badge'),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: myParticipant.confirmed == true
-                        ? Colors.green.withValues(alpha: 0.15)
-                        : myParticipant.confirmed == false
-                            ? theme.colorScheme.errorContainer
-                            : theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    myParticipant.confirmed == true
-                        ? 'Confirmado'
-                        : myParticipant.confirmed == false
-                            ? 'Recusado'
-                            : 'Pendente',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: myParticipant.confirmed == true
-                          ? Colors.green.shade700
-                          : myParticipant.confirmed == false
-                              ? theme.colorScheme.onErrorContainer
-                              : theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (error != null) ...[
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.errorContainer.withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(children: [
-                Icon(Icons.warning_amber_outlined,
-                    size: 15, color: theme.colorScheme.error),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: Text(error!,
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: theme.colorScheme.error))),
-                GestureDetector(
-                  onTap: () => ref
-                      .read(scheduleDetailNotifierProvider.notifier)
-                      .clearConfirmationError(),
-                  child: Icon(Icons.close,
-                      size: 14, color: theme.colorScheme.error),
-                ),
-              ]),
+              ],
             ),
-            const SizedBox(height: 10),
-          ],
-          if (isExplicitlyUnscheduledUser)
-            Text(
-              'Você não está escalado nesta escala.',
-              key: const ValueKey('not_scheduled_participant_notice'),
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                fontStyle: FontStyle.italic,
-              ),
+        ],
+      ),
+      body: SafeArea(bottom: false, child: body),
+      floatingActionButton: schedule != null
+          ? ScheduleCommentsFab(
+              commentsCount: visibleCommentsCount,
+              onPressed: isMatchingTenant ? _openComments : null,
             )
-          else
-            Row(children: [
-              Expanded(
-                child: SizedBox(
-                  height: 44,
-                  child: OutlinedButton.icon(
-                    onPressed: isConfirming
-                        ? null
-                        : () => ref
-                            .read(scheduleDetailNotifierProvider.notifier)
-                            .confirm(ministryId, scheduleId, false),
-                    icon: const Icon(Icons.cancel_outlined, size: 17),
-                    label: const Text(
-                      'Não vou',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      foregroundColor: theme.colorScheme.error,
-                      side: BorderSide(
-                          color:
-                              theme.colorScheme.error.withValues(alpha: 0.5)),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: SizedBox(
-                  height: 44,
-                  child: FilledButton.icon(
-                    onPressed: isConfirming
-                        ? null
-                        : () => ref
-                            .read(scheduleDetailNotifierProvider.notifier)
-                            .confirm(ministryId, scheduleId, true),
-                    icon: isConfirming
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.check_circle_outline, size: 17),
-                    label: Text(
-                      isConfirming ? 'Confirmando...' : 'Confirmar',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                    ),
-                  ),
-                ),
-              ),
-            ]),
-        ],
-      ),
+          : null,
     );
   }
 }
-
-// ─── Songs Section ────────────────────────────────────────────────────────────
-
-void _openScheduleSongDetail(
-  BuildContext context, {
-  required String ministryId,
-  required String scheduleId,
-  required List<ScheduleSong> songs,
-  required int scheduleSlotIndex,
-  required ScheduleSong song,
-}) {
-  final sequence = ScheduleSongSequenceContext.fromScheduleSongs(
-    ministryId: ministryId,
-    scheduleId: scheduleId,
-    songs: songs,
-    initialScheduleSlotIndex: scheduleSlotIndex,
-  );
-  Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => SongDetailView(
-        ministryId: ministryId,
-        songId: song.id,
-        initialTitle: song.title,
-        initialVersionId: song.versionId,
-        backLabel: 'Voltar',
-        scheduleSequence: sequence.isEmpty ? null : sequence,
-      ),
-    ),
-  );
-}
-
-class _SongsSection extends StatelessWidget {
-  final List<ScheduleSong> songs;
-  final String ministryId;
-  final String scheduleId;
-
-  const _SongsSection({
-    required this.songs,
-    required this.ministryId,
-    required this.scheduleId,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return _SectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.queue_music_outlined,
-                size: 18, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Músicas Escaladas (${songs.length})',
-                style: theme.textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 10),
-          ...songs.asMap().entries.map((e) {
-            final idx = e.key + 1;
-            final song = e.value;
-            final canOpenDetail = song.id.trim().isNotEmpty;
-            return InkWell(
-              key: ValueKey('detail_song_row_$idx'),
-              onTap: canOpenDetail
-                  ? () => _openScheduleSongDetail(
-                        context,
-                        ministryId: ministryId,
-                        scheduleId: scheduleId,
-                        songs: songs,
-                        scheduleSlotIndex: e.key,
-                        song: song,
-                      )
-                  : null,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(vertical: 16, horizontal: 4),
-                child: Row(children: [
-                  Text('$idx.',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.5))),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(song.title ?? '—',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w500,
-                            )),
-                        if (song.versionName != null &&
-                            song.versionName!.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(
-                              'Versão: ${song.versionName!}',
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: theme.colorScheme.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        if (song.artist != null && song.artist!.isNotEmpty)
-                          Text(
-                            song.artist!,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurface
-                                    .withValues(alpha: 0.55)),
-                          ),
-                      ],
-                    ),
-                  ),
-                  if (song.key != null && song.key!.trim().isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      key: ValueKey('detail_song_key_${song.id}'),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                            color: theme.colorScheme.outlineVariant),
-                      ),
-                      child: Text(
-                        'Tom: ${song.key}',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                  if (canOpenDetail) ...[
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.chevron_right,
-                      size: 18,
-                      color:
-                          theme.colorScheme.onSurface.withValues(alpha: 0.45),
-                    ),
-                  ],
-                ]),
-              ),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Timeline Section ─────────────────────────────────────────────────────────
-
-class _TimelineSection extends StatelessWidget {
-  final List<ScheduleTimelineItem> items;
-  final List<ScheduleSong> songs;
-  final String ministryId;
-  final String scheduleId;
-  const _TimelineSection({
-    required this.items,
-    required this.songs,
-    required this.ministryId,
-    required this.scheduleId,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return _SectionCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('Roteiro do Culto', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-      const SizedBox(height: 20),
-      if (items.isEmpty) const Text('Nenhum momento no roteiro desta escala.'),
-      for (var index = 0; index < items.length; index++)
-        Builder(builder: (context) {
-          final item = items[index];
-          final songSlotIndex = isSongSlot(item)
-              ? items.take(index).where(isSongSlot).length
-              : -1;
-          final song = songSlotIndex >= 0
-              ? resolveTimelineSong(item, songSlotIndex, songs)
-              : null;
-          return IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            SizedBox(width: 36, child: Column(children: [
-              CircleAvatar(radius: 18, child: Text('${index + 1}')),
-              if (index < items.length - 1)
-                Expanded(child: Center(child: Container(width: 2, color: theme.colorScheme.outlineVariant))),
-            ])),
-            const SizedBox(width: 14),
-            Expanded(child: InkWell(
-              key: ValueKey('timeline_item_${item.id}'),
-              onTap: song == null
-                  ? null
-                  : () => _openScheduleSongDetail(
-                        context,
-                        ministryId: ministryId,
-                        scheduleId: scheduleId,
-                        songs: songs,
-                        scheduleSlotIndex: songSlotIndex,
-                        song: song,
-                      ),
-              child: Padding(padding: const EdgeInsets.only(bottom: 24, top: 4),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(song?.title ?? item.title,
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  Wrap(spacing: 8, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                    Chip(label: Text(const {
-                      'Música': 'Louvor', 'worship': 'Louvor', 'prayer': 'Oração',
-                      'word': 'Palavra', 'transition': 'Transição', 'other': 'Outro',
-                    }[item.type] ?? item.type),
-                      visualDensity: VisualDensity.compact),
-                    if (song?.versionName != null && song!.versionName!.isNotEmpty)
-                      Chip(
-                        label: Text(song.versionName!),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    if (item.time?.isNotEmpty == true) Text(item.time!),
-                    if (song != null) const Icon(Icons.chevron_right, size: 20),
-                  ]),
-                ])),
-            )),
-          ]));
-        }),
-    ]));
-  }
-}
-
-/// Existing stored hex values are rendered without changing persistence.
-Color? parseScheduleColor(String? value) {
-  final text = value?.trim() ?? '';
-  if (!RegExp(r'^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$').hasMatch(text)) return null;
-  var hex = text.replaceFirst('#', '');
-  if (hex.length == 3) hex = hex.split('').map((c) => '$c$c').join();
-  return Color(int.parse('FF$hex', radix: 16));
-}
-
-class _ColorSwatch extends StatelessWidget {
-  final Color color;
-  final Key? swatchKey;
-  const _ColorSwatch(this.color, {this.swatchKey});
-  @override
-  Widget build(BuildContext context) => Semantics(label: 'Cor da equipe',
-    child: Container(key: swatchKey, width: 48, height: 48,
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Theme.of(context).colorScheme.outline))));
-}
-
-class _ClothingSection extends StatelessWidget {
-  final List<ScheduleClothingPiece> pieces;
-  final String? palette;
-  const _ClothingSection({required this.pieces, this.palette});
-  @override
-  Widget build(BuildContext context) {
-    final color = parseScheduleColor(palette);
-    final legacyLabel = palette?.trim();
-    return _SectionCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('Vestimenta', style: Theme.of(context).textTheme.titleLarge),
-      const SizedBox(height: 16),
-      if (color != null)
-        Row(children: [
-          _ColorSwatch(color, swatchKey: const ValueKey('schedule_palette_swatch')),
-          const SizedBox(width: 12), const Expanded(child: Text('Cor da equipe')),
-        ])
-      else if (legacyLabel != null && legacyLabel.isNotEmpty && !legacyLabel.startsWith('#'))
-        Text(legacyLabel)
-      else
-        const Text('Cor da equipe não definida'),
-      for (final piece in pieces) ...[
-        const SizedBox(height: 16),
-        Text(piece.description.isEmpty ? piece.name : piece.description),
-        const SizedBox(height: 8),
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          for (final value in piece.colors.isNotEmpty ? piece.colors : [if (piece.colorHex != null) piece.colorHex!])
-            if (parseScheduleColor(value) case final Color parsed) _ColorSwatch(parsed),
-        ]),
-      ],
-    ]));
-  }
-}
-
-// ─── Notes Section ────────────────────────────────────────────────────────────
-
-class _NotesSection extends StatelessWidget {
-  final String notes;
-  const _NotesSection({required this.notes});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return _SectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.notes_outlined,
-                size: 18, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Observações',
-                style: theme.textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 8),
-          Text(notes, style: theme.textTheme.bodyMedium),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Detail error ────────────────────────────────────────────────────────────
 
 class _DetailError extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
   final VoidCallback onBack;
-  const _DetailError(
-      {required this.message, required this.onRetry, required this.onBack});
+
+  const _DetailError({
+    required this.message,
+    required this.onRetry,
+    required this.onBack,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1130,11 +585,17 @@ class _DetailError extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline_rounded,
-                size: 48, color: theme.colorScheme.error),
+            Icon(
+              Icons.error_outline_rounded,
+              size: 48,
+              color: theme.colorScheme.error,
+            ),
             const SizedBox(height: 16),
-            Text(message,
-                textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium,
+            ),
             const SizedBox(height: 20),
             FilledButton.icon(
               onPressed: onRetry,
@@ -1143,7 +604,9 @@ class _DetailError extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             OutlinedButton(
-                onPressed: onBack, child: const Text('Voltar à Lista')),
+              onPressed: onBack,
+              child: const Text('Voltar à Lista'),
+            ),
           ],
         ),
       ),
