@@ -4,6 +4,7 @@ import '../../../../app/providers.dart';
 import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
 import '../../../repertoire/presentation/views/song_detail_view.dart';
 import '../../domain/schedule.dart';
+import '../../domain/schedule_song_sequence.dart';
 import '../../domain/song_timeline.dart';
 import 'schedule_chat_view.dart';
 import '../../domain/schedule_participant.dart';
@@ -258,9 +259,18 @@ class _DetailContent extends ConsumerWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _InfoSection(schedule: schedule),
           const SizedBox(height: 16),
-          _SongsSection(songs: schedule.songs, ministryId: ministryId),
+          _SongsSection(
+            songs: schedule.songs,
+            ministryId: ministryId,
+            scheduleId: schedule.id,
+          ),
           const SizedBox(height: 16),
-          _TimelineSection(items: schedule.timeline, songs: schedule.songs, ministryId: ministryId),
+          _TimelineSection(
+            items: schedule.timeline,
+            songs: schedule.songs,
+            ministryId: ministryId,
+            scheduleId: schedule.id,
+          ),
           const SizedBox(height: 16),
           _ParticipantsSection(participants: schedule.participants),
           const SizedBox(height: 16),
@@ -786,13 +796,43 @@ class _ConfirmationSection extends ConsumerWidget {
 
 // ─── Songs Section ────────────────────────────────────────────────────────────
 
+void _openScheduleSongDetail(
+  BuildContext context, {
+  required String ministryId,
+  required String scheduleId,
+  required List<ScheduleSong> songs,
+  required int scheduleSlotIndex,
+  required ScheduleSong song,
+}) {
+  final sequence = ScheduleSongSequenceContext.fromScheduleSongs(
+    ministryId: ministryId,
+    scheduleId: scheduleId,
+    songs: songs,
+    initialScheduleSlotIndex: scheduleSlotIndex,
+  );
+  Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => SongDetailView(
+        ministryId: ministryId,
+        songId: song.id,
+        initialTitle: song.title,
+        initialVersionId: song.versionId,
+        backLabel: 'Voltar para Escala',
+        scheduleSequence: sequence.isEmpty ? null : sequence,
+      ),
+    ),
+  );
+}
+
 class _SongsSection extends StatelessWidget {
   final List<ScheduleSong> songs;
   final String ministryId;
+  final String scheduleId;
 
   const _SongsSection({
     required this.songs,
     required this.ministryId,
+    required this.scheduleId,
   });
 
   @override
@@ -822,19 +862,14 @@ class _SongsSection extends StatelessWidget {
             return InkWell(
               key: ValueKey('detail_song_row_$idx'),
               onTap: canOpenDetail
-                  ? () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => SongDetailView(
-                            ministryId: ministryId,
-                            songId: song.id,
-                            initialTitle: song.title,
-                            initialVersionId: song.versionId,
-                            backLabel: 'Voltar para Escala',
-                          ),
-                        ),
-                      );
-                    }
+                  ? () => _openScheduleSongDetail(
+                        context,
+                        ministryId: ministryId,
+                        scheduleId: scheduleId,
+                        songs: songs,
+                        scheduleSlotIndex: e.key,
+                        song: song,
+                      )
                   : null,
               borderRadius: BorderRadius.circular(8),
               child: Padding(
@@ -921,7 +956,13 @@ class _TimelineSection extends StatelessWidget {
   final List<ScheduleTimelineItem> items;
   final List<ScheduleSong> songs;
   final String ministryId;
-  const _TimelineSection({required this.items, required this.songs, required this.ministryId});
+  final String scheduleId;
+  const _TimelineSection({
+    required this.items,
+    required this.songs,
+    required this.ministryId,
+    required this.scheduleId,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -933,7 +974,12 @@ class _TimelineSection extends StatelessWidget {
       for (var index = 0; index < items.length; index++)
         Builder(builder: (context) {
           final item = items[index];
-          final song = isSongSlot(item) ? resolveTimelineSong(item, items.take(index).where(isSongSlot).length, songs) : null;
+          final songSlotIndex = isSongSlot(item)
+              ? items.take(index).where(isSongSlot).length
+              : -1;
+          final song = songSlotIndex >= 0
+              ? resolveTimelineSong(item, songSlotIndex, songs)
+              : null;
           return IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             SizedBox(width: 36, child: Column(children: [
               CircleAvatar(radius: 18, child: Text('${index + 1}')),
@@ -943,14 +989,16 @@ class _TimelineSection extends StatelessWidget {
             const SizedBox(width: 14),
             Expanded(child: InkWell(
               key: ValueKey('timeline_item_${item.id}'),
-              onTap: song == null ? null : () => Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => SongDetailView(
-                  ministryId: ministryId,
-                  songId: song.id,
-                  initialTitle: song.title,
-                  initialVersionId: song.versionId,
-                  backLabel: 'Voltar para Escala',
-                ))),
+              onTap: song == null
+                  ? null
+                  : () => _openScheduleSongDetail(
+                        context,
+                        ministryId: ministryId,
+                        scheduleId: scheduleId,
+                        songs: songs,
+                        scheduleSlotIndex: songSlotIndex,
+                        song: song,
+                      ),
               child: Padding(padding: const EdgeInsets.only(bottom: 24, top: 4),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(song?.title ?? item.title,

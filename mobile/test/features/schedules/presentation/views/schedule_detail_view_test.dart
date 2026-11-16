@@ -12,6 +12,10 @@ import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
 import 'package:louvaio_mobile/features/ministry_context/data/ministry_repository.dart';
 import 'package:louvaio_mobile/features/ministry_context/domain/ministry.dart';
 import 'package:louvaio_mobile/features/ministry_context/presentation/controllers/ministry_context_controller.dart';
+import 'package:louvaio_mobile/features/repertoire/data/repertoire_repository.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
+import 'package:louvaio_mobile/features/repertoire/presentation/controllers/song_detail_controller.dart';
+import 'package:louvaio_mobile/features/repertoire/presentation/views/song_detail_view.dart';
 import 'package:louvaio_mobile/features/schedules/data/schedule_repository.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_member.dart';
 import 'package:louvaio_mobile/features/schedules/domain/ministry_role.dart';
@@ -20,6 +24,11 @@ import 'package:louvaio_mobile/features/schedules/domain/schedule_comment.dart';
 import 'package:louvaio_mobile/features/schedules/domain/schedule_participant.dart';
 import 'package:louvaio_mobile/features/schedules/presentation/controllers/schedule_detail_controller.dart';
 import 'package:louvaio_mobile/features/schedules/presentation/views/schedule_detail_view.dart';
+import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repertoire_link_repository.dart';
+import 'package:louvaio_mobile/features/smart_chords/data/smart_chord_repository.dart';
+import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/smart_chord_repertoire_link_controller.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/controllers/song_smart_chords_controller.dart';
 
 class FakeDetailScheduleRepo
     implements ScheduleRepository, ScheduleDeletionCapable {
@@ -708,5 +717,314 @@ void main() {
 
       addTearDown(tester.view.resetPhysicalSize);
     });
+
+    testWidgets(
+        'tapping a song in _SongsSection preserves saved sequence, repeated songs and versions on SongDetailView',
+        (tester) async {
+      fakeRepo.detail = const ScheduleDetail(
+        id: 'sch_1',
+        ministryId: 'min_1',
+        title: 'Culto de Domingo Especial',
+        date: '2099-10-01',
+        time: '19:30',
+        songs: [
+          ScheduleSong(
+            id: 's1',
+            title: 'Bondade de Deus',
+            versionId: 'v1',
+            versionName: 'Original',
+            key: 'G',
+          ),
+          ScheduleSong(
+            id: 's2',
+            title: 'A Casa É Sua',
+            versionId: 'v_casa',
+            versionName: 'Original',
+            key: 'C',
+          ),
+          ScheduleSong(
+            id: 's1',
+            title: 'Bondade de Deus',
+            versionId: 'v2',
+            versionName: 'Acústica',
+            key: 'A',
+          ),
+        ],
+        timeline: [],
+        participants: [],
+      );
+
+      final repRepo = _FakeNavRepertoireRepo({
+        's1': const SongDetail(
+          id: 's1',
+          ministryId: 'min_1',
+          title: 'Bondade de Deus',
+          originalKey: 'G',
+          versions: [
+            SongVersion(id: 'v1', name: 'Original', key: 'G'),
+            SongVersion(id: 'v2', name: 'Acústica', key: 'A'),
+          ],
+        ),
+        's2': const SongDetail(
+          id: 's2',
+          ministryId: 'min_1',
+          title: 'A Casa É Sua',
+          originalKey: 'C',
+          versions: [SongVersion(id: 'v_casa', name: 'Original', key: 'C')],
+        ),
+      });
+      final linkRepo = _FakeNavLinkRepo();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authNotifierProvider.overrideWith((ref) => TestAuthNotifier()),
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(
+                env: AppEnv.development,
+                apiBaseUrl: 'http://localhost:3000/api/v1',
+              ),
+            ),
+            preferencesStorageProvider
+                .overrideWithValue(_FakePreferencesStorage()),
+            ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
+            scheduleRepositoryProvider.overrideWithValue(fakeRepo),
+            scheduleDetailNotifierProvider.overrideWith(
+              (ref) => ScheduleDetailNotifier(repository: fakeRepo),
+            ),
+            commentsNotifierProvider.overrideWith(
+              (ref) => CommentsNotifier(repository: fakeRepo),
+            ),
+            ministryContextNotifierProvider.overrideWith(
+              (ref) => FakeMinistryContextNotifier(),
+            ),
+            repertoireRepositoryProvider.overrideWithValue(repRepo),
+            songDetailNotifierProvider.overrideWith(
+              (ref) => SongDetailNotifier(repository: repRepo),
+            ),
+            smartChordRepertoireLinkRepositoryProvider
+                .overrideWithValue(linkRepo),
+            songSmartChordsNotifierProvider.overrideWith(
+              (ref) => SongSmartChordsNotifier(
+                repository: _NoopSmartChordRepo(),
+                linkRepository: linkRepo,
+              ),
+            ),
+            smartChordRepertoireLinkNotifierProvider.overrideWith(
+              (ref) => SmartChordRepertoireLinkNotifier(repository: linkRepo),
+            ),
+          ],
+          child: const MaterialApp(
+            home: ScheduleDetailView(
+              ministryId: 'min_1',
+              scheduleId: 'sch_1',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final thirdRow = find.byKey(const ValueKey('detail_song_row_2'));
+      await tester.ensureVisible(thirdRow);
+      await tester.pumpAndSettle();
+      await tester.tap(thirdRow);
+      await tester.pumpAndSettle();
+
+      final songView = tester.widget<SongDetailView>(
+        find.byType(SongDetailView),
+      );
+      expect(songView.songId, equals('s1'));
+      expect(songView.initialVersionId, equals('v2'));
+      expect(songView.backLabel, equals('Voltar para Escala'));
+      expect(songView.scheduleSequence?.items, hasLength(3));
+      expect(songView.scheduleSequence?.currentIndex, equals(2));
+      expect(find.text('Música 3 de 3'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('song_detail_sequence_prev_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Música 2 de 3'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(SongDetailView),
+          matching: find.text('A Casa É Sua'),
+        ),
+        findsWidgets,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('song_detail_context_back_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(ScheduleDetailView), findsOneWidget);
+    });
+
+    testWidgets(
+        'tapping a worship song item in _TimelineSection passes matching ScheduleSongSequenceContext',
+        (tester) async {
+      fakeRepo.detail = const ScheduleDetail(
+        id: 'sch_1',
+        ministryId: 'min_1',
+        title: 'Culto de Domingo Especial',
+        date: '2099-10-01',
+        time: '19:30',
+        songs: [
+          ScheduleSong(
+            id: 's1',
+            title: 'Bondade de Deus',
+            versionId: 'v1',
+            versionName: 'Original',
+            key: 'G',
+          ),
+          ScheduleSong(
+            id: 's2',
+            title: 'A Casa É Sua',
+            versionId: 'v2',
+            versionName: 'Acústica',
+            key: 'D',
+          ),
+        ],
+        timeline: [
+          ScheduleTimelineItem(
+            id: 't_song_1',
+            title: 'Bondade de Deus',
+            type: 'Música',
+          ),
+          ScheduleTimelineItem(
+            id: 't_song_2',
+            title: 'A Casa É Sua',
+            type: 'Música',
+          ),
+        ],
+        participants: [],
+      );
+
+      final repRepo = _FakeNavRepertoireRepo({
+        's1': const SongDetail(
+          id: 's1',
+          ministryId: 'min_1',
+          title: 'Bondade de Deus',
+          originalKey: 'G',
+          versions: [SongVersion(id: 'v1', name: 'Original', key: 'G')],
+        ),
+        's2': const SongDetail(
+          id: 's2',
+          ministryId: 'min_1',
+          title: 'A Casa É Sua',
+          originalKey: 'D',
+          versions: [SongVersion(id: 'v2', name: 'Acústica', key: 'D')],
+        ),
+      });
+      final linkRepo = _FakeNavLinkRepo();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authNotifierProvider.overrideWith((ref) => TestAuthNotifier()),
+            appEnvironmentProvider.overrideWithValue(
+              const AppEnvironment(
+                env: AppEnv.development,
+                apiBaseUrl: 'http://localhost:3000/api/v1',
+              ),
+            ),
+            preferencesStorageProvider
+                .overrideWithValue(_FakePreferencesStorage()),
+            ministryRepositoryProvider.overrideWithValue(_FakeMinistryRepo()),
+            scheduleRepositoryProvider.overrideWithValue(fakeRepo),
+            scheduleDetailNotifierProvider.overrideWith(
+              (ref) => ScheduleDetailNotifier(repository: fakeRepo),
+            ),
+            commentsNotifierProvider.overrideWith(
+              (ref) => CommentsNotifier(repository: fakeRepo),
+            ),
+            ministryContextNotifierProvider.overrideWith(
+              (ref) => FakeMinistryContextNotifier(),
+            ),
+            repertoireRepositoryProvider.overrideWithValue(repRepo),
+            songDetailNotifierProvider.overrideWith(
+              (ref) => SongDetailNotifier(repository: repRepo),
+            ),
+            smartChordRepertoireLinkRepositoryProvider
+                .overrideWithValue(linkRepo),
+            songSmartChordsNotifierProvider.overrideWith(
+              (ref) => SongSmartChordsNotifier(
+                repository: _NoopSmartChordRepo(),
+                linkRepository: linkRepo,
+              ),
+            ),
+            smartChordRepertoireLinkNotifierProvider.overrideWith(
+              (ref) => SmartChordRepertoireLinkNotifier(repository: linkRepo),
+            ),
+          ],
+          child: const MaterialApp(
+            home: ScheduleDetailView(
+              ministryId: 'min_1',
+              scheduleId: 'sch_1',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final timelineSong2 = find.byKey(const ValueKey('timeline_item_t_song_2'));
+      await tester.ensureVisible(timelineSong2);
+      await tester.pumpAndSettle();
+      await tester.tap(timelineSong2);
+      await tester.pumpAndSettle();
+
+      final songView = tester.widget<SongDetailView>(
+        find.byType(SongDetailView),
+      );
+      expect(songView.songId, equals('s2'));
+      expect(songView.initialVersionId, equals('v2'));
+      expect(songView.scheduleSequence?.items, hasLength(2));
+      expect(songView.scheduleSequence?.currentIndex, equals(1));
+      expect(find.text('Música 2 de 2'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('song_detail_sequence_prev_button')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Música 1 de 2'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(SongDetailView),
+          matching: find.text('Bondade de Deus'),
+        ),
+        findsWidgets,
+      );
+    });
   });
+}
+
+class _FakeNavRepertoireRepo implements RepertoireRepository {
+  final Map<String, SongDetail> songs;
+  _FakeNavRepertoireRepo(this.songs);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
+  @override
+  Future<SongDetail> getSongDetail(String ministryId, String songId) async =>
+      songs[songId]!;
+}
+
+class _NoopSmartChordRepo implements SmartChordRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeNavLinkRepo implements SmartChordRepertoireLinkRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
+  @override
+  Future<List<SmartChord>> getMySmartChordsForSong({
+    required String ministryId,
+    required String songId,
+    String? versionId,
+    String? linkStatus,
+  }) async =>
+      const [];
 }

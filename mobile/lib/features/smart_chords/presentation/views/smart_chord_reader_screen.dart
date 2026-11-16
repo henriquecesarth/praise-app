@@ -422,6 +422,17 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
         ref.watch(chordLineSpacingPreferenceProvider) ?? AuthUser.defaultChordLineSpacingPx;
     final fontConfig = ChordFontFamilyResolver.resolve(chordFont);
     final chord = detailState.chord ?? widget.initialChord;
+    final effectiveUserId = _boundUserId ?? ref.watch(authNotifierProvider).user?.id;
+    final trimmedOwnerId = chord?.userId.trim();
+    final trimmedEffectiveUserId = effectiveUserId?.trim();
+    final canModifyPersonalChord = chord != null &&
+        trimmedOwnerId != null &&
+        trimmedOwnerId.isNotEmpty &&
+        trimmedEffectiveUserId != null &&
+        trimmedEffectiveUserId.isNotEmpty &&
+        trimmedOwnerId == trimmedEffectiveUserId;
+    final canManageRepertoireLinks =
+        (activeMinistry?.isAdmin ?? false) && canModifyPersonalChord;
 
     ref.listen(ministryContextNotifierProvider, (previous, next) {
       final nextMinId = next.selectedMinistry?.id;
@@ -500,29 +511,31 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                           ],
                         )),
               ),
-            IconButton(
-              tooltip: 'Editar Cifra',
-              icon: const Icon(Icons.edit_outlined),
-              onPressed: () async {
-                final updated = await Navigator.of(context).push<SmartChord>(
-                  MaterialPageRoute(
-                    builder: (_) => SmartChordFormScreen(
-                      initialChord: chord,
+            if (canModifyPersonalChord) ...[
+              IconButton(
+                tooltip: 'Editar Cifra',
+                icon: const Icon(Icons.edit_outlined),
+                onPressed: () async {
+                  final updated = await Navigator.of(context).push<SmartChord>(
+                    MaterialPageRoute(
+                      builder: (_) => SmartChordFormScreen(
+                        initialChord: chord,
+                      ),
                     ),
-                  ),
-                );
+                  );
 
-                if (updated != null && mounted) {
-                  ref.read(smartChordDetailNotifierProvider.notifier).updateLocalChord(updated);
-                  ref.read(smartChordListNotifierProvider.notifier).upsertChord(updated);
-                }
-              },
-            ),
-            IconButton(
-              tooltip: 'Excluir Cifra',
-              icon: const Icon(Icons.delete_outline),
-              onPressed: () => _confirmDelete(chord),
-            ),
+                  if (updated != null && mounted) {
+                    ref.read(smartChordDetailNotifierProvider.notifier).updateLocalChord(updated);
+                    ref.read(smartChordListNotifierProvider.notifier).upsertChord(updated);
+                  }
+                },
+              ),
+              IconButton(
+                tooltip: 'Excluir Cifra',
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => _confirmDelete(chord),
+              ),
+            ],
           ],
         ],
       ),
@@ -605,6 +618,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                   linkState,
                   activeMinistry?.id,
                   chord,
+                  canManageRepertoireLinks: canManageRepertoireLinks,
                 ),
 
                 // Sticky Transposition & View Controls Toolbar
@@ -964,9 +978,14 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     ThemeData theme,
     SmartChordRepertoireLinkState linkState,
     String? ministryId,
-    SmartChord chord,
-  ) {
+    SmartChord chord, {
+    required bool canManageRepertoireLinks,
+  }) {
     if (ministryId == null || ministryId.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    if (!canManageRepertoireLinks && !linkState.isLinked) {
       return const SizedBox.shrink();
     }
 
@@ -1170,46 +1189,47 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                 ),
               ),
             ),
-            PopupMenuButton<String>(
-              tooltip: 'Opções de vínculo',
-              icon: const Icon(Icons.more_vert, size: 20),
-              onSelected: (val) async {
-                if (val == 'change') {
-                  await SongLinkPickerModal.show(
-                    context,
-                    ministryId: ministryId,
-                    chordId: chord.id,
-                    chordTitle: chord.title,
-                    currentLinkedSongId: songId,
-                    currentLinkedVersionId: versionId,
-                  );
-                } else if (val == 'unlink') {
-                  _confirmUnlink(ministryId, chord);
-                }
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(
-                  value: 'change',
-                  child: Row(
-                    children: [
-                      Icon(Icons.swap_horiz, size: 18),
-                      SizedBox(width: 8),
-                      Text('Alterar música'),
-                    ],
+            if (canManageRepertoireLinks)
+              PopupMenuButton<String>(
+                tooltip: 'Opções de vínculo',
+                icon: const Icon(Icons.more_vert, size: 20),
+                onSelected: (val) async {
+                  if (val == 'change') {
+                    await SongLinkPickerModal.show(
+                      context,
+                      ministryId: ministryId,
+                      chordId: chord.id,
+                      chordTitle: chord.title,
+                      currentLinkedSongId: songId,
+                      currentLinkedVersionId: versionId,
+                    );
+                  } else if (val == 'unlink') {
+                    _confirmUnlink(ministryId, chord);
+                  }
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'change',
+                    child: Row(
+                      children: [
+                        Icon(Icons.swap_horiz, size: 18),
+                        SizedBox(width: 8),
+                        Text('Alterar música'),
+                      ],
+                    ),
                   ),
-                ),
-                const PopupMenuItem(
-                  value: 'unlink',
-                  child: Row(
-                    children: [
-                      Icon(Icons.link_off, size: 18),
-                      SizedBox(width: 8),
-                      Text('Desvincular'),
-                    ],
+                  const PopupMenuItem(
+                    value: 'unlink',
+                    child: Row(
+                      children: [
+                        Icon(Icons.link_off, size: 18),
+                        SizedBox(width: 8),
+                        Text('Desvincular'),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
           ],
         ),
       );

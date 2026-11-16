@@ -1344,4 +1344,114 @@ void main() {
       expect(find.text('Versão: Ao Vivo'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'member RBAC hides Vincular, Classificar versão and Desvincular options while keeping personal reading/editing',
+    (tester) async {
+      repo.chord = sampleChord;
+
+      // 1. Unlinked personal chord for member -> hides Vincular banner, keeps Edit/Delete for owner
+      linkRepo.linkToReturn = const SmartChordRepertoireLink(link: null);
+      ministryNotifier.setMinistry(
+        const Ministry(id: 'min-alpha', name: 'Alpha', role: 'member'),
+      );
+
+      await tester.pumpWidget(
+        buildApp(chordId: sampleChord.id, initialChord: sampleChord),
+      );
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Vincular'), findsNothing);
+      expect(find.text('Não vinculada ao repertório ativo'), findsNothing);
+      expect(find.byTooltip('Editar Cifra'), findsOneWidget);
+      expect(find.byTooltip('Excluir Cifra'), findsOneWidget);
+
+      // 2. Linked chord opened with member role -> shows read-only link info without Opções de vínculo menu
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      linkRepo.linkToReturn = const SmartChordRepertoireLink(
+        link: SmartChordSongLink(
+          id: 'u_sc_min',
+          userId: 'user-a',
+          smartChordId: 'sc-1',
+          ministryId: 'min-alpha',
+          songId: 'song-1',
+          versionId: 'v2',
+          linkStatus: 'active',
+        ),
+        song: SmartChordSongSummary(
+          id: 'song-1',
+          ministryId: 'min-alpha',
+          title: 'Oceanos',
+          versions: [
+            SmartChordSongVersionSummary(id: 'v2', name: 'Ao Vivo'),
+          ],
+        ),
+      );
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Vinculada: Oceanos'), findsOneWidget);
+      expect(find.byTooltip('Opções de vínculo'), findsNothing);
+      expect(find.text('Desvincular'), findsNothing);
+
+      // 3. Pending classification for member -> hides banner and Classificar versão button
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      linkRepo.linkToReturn = const SmartChordRepertoireLink(
+        link: null,
+        pendingLink: SmartChordSongLink(
+          id: 'u_sc_min',
+          userId: 'user-a',
+          smartChordId: 'sc-1',
+          ministryId: 'min-alpha',
+          songId: 'song-1',
+          versionId: null,
+          linkStatus: 'pending_classification',
+          pendingReason: 'legacy_ambiguous',
+        ),
+        song: SmartChordSongSummary(
+          id: 'song-1',
+          ministryId: 'min-alpha',
+          title: 'Oceanos',
+          versions: [
+            SmartChordSongVersionSummary(id: 'v1', name: 'Original'),
+            SmartChordSongVersionSummary(id: 'v2', name: 'Ao Vivo'),
+          ],
+        ),
+        requiresVersionSelection: true,
+      );
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('smart_chord_pending_classification_banner')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('smart_chord_classify_version_button')),
+        findsNothing,
+      );
+
+      // 4. Fail-closed when owner userId on chord is missing/blank even for admin
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      ministryNotifier.setMinistry(
+        const Ministry(id: 'min-alpha', name: 'Alpha', role: 'admin'),
+      );
+      final missingOwnerChord = sampleChord.copyWith(userId: '');
+      repo.chord = missingOwnerChord;
+      linkRepo.linkToReturn = const SmartChordRepertoireLink(link: null);
+      await tester.pumpWidget(
+        buildApp(chordId: missingOwnerChord.id, initialChord: missingOwnerChord),
+      );
+      await tester.tap(find.text('Abrir Reader'));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Editar Cifra'), findsNothing);
+      expect(find.byTooltip('Excluir Cifra'), findsNothing);
+      expect(find.text('Vincular'), findsNothing);
+    },
+  );
 }
