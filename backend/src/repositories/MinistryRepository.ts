@@ -118,6 +118,34 @@ export class MinistryRepository {
     return { id: doc.id, ...doc.data() } as MinistryRecord;
   }
 
+  /**
+   * Resolves the set of active user IDs with admin/owner privileges in a ministry.
+   */
+  async getAdminUserIds(ministryId: string): Promise<Set<string>> {
+    const adminIds = new Set<string>();
+    const ministryDoc = await this.ministriesCol.doc(ministryId).get();
+    if (ministryDoc.exists) {
+      const ownerId = ministryDoc.data()?.owner_user_id;
+      if (typeof ownerId === 'string' && ownerId.trim()) {
+        adminIds.add(ownerId.trim());
+      }
+    }
+
+    const memberSnap = await this.membersCol
+      .where('ministry_id', '==', ministryId)
+      .where('role', '==', 'admin')
+      .get();
+
+    for (const doc of memberSnap?.docs || []) {
+      const data = doc.data();
+      if (data?.status !== 'removed' && typeof data?.user_id === 'string' && data.user_id.trim()) {
+        adminIds.add(data.user_id.trim());
+      }
+    }
+
+    return adminIds;
+  }
+
   async createMinistry(userId: string, name: string, slugInput?: string): Promise<MinistryRecord> {
     const baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'ministerio';
     const randomSuffix = Math.random().toString(36).substring(2, 7);

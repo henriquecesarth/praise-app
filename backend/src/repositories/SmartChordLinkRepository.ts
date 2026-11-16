@@ -191,6 +191,14 @@ export class SmartChordLinkRepository {
     return snap.docs.map((d) => this.toDomain(d.id, d.data()));
   }
 
+  async getLinksBySongIdForMinistry(ministryId: string, songId: string): Promise<SmartChordSongLink[]> {
+    const snap = await this.linksCol
+      .where('ministry_id', '==', ministryId)
+      .where('song_id', '==', songId)
+      .get();
+    return snap.docs.map((d) => this.toDomain(d.id, d.data()));
+  }
+
   async getLinksBySmartChordId(smartChordId: string): Promise<SmartChordSongLink[]> {
     const snap = await this.linksCol.where('smart_chord_id', '==', smartChordId).get();
     return snap.docs.map((d) => this.toDomain(d.id, d.data()));

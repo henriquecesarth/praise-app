@@ -246,7 +246,7 @@ describe('Smart Chords Feature Test Suite', () => {
       ).rejects.toThrow(expect.objectContaining({ statusCode: 403 }));
     });
 
-    it('permite criar cifra quando o usuário é integrante do ministério da música', async () => {
+    it('permite criar cifra vinculada quando o usuário é administrador do ministério da música', async () => {
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-valid',
         ministry_id: 'min-allowed',
@@ -256,6 +256,7 @@ describe('Smart Chords Feature Test Suite', () => {
       vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({
         id: 'min-allowed',
         name: 'Ministério Louvor',
+        role: 'admin',
       } as any);
 
       const createRepoSpy = vi.spyOn(smartChordRepo, 'createSmartChord').mockResolvedValue({
@@ -278,6 +279,32 @@ describe('Smart Chords Feature Test Suite', () => {
 
       expect(createRepoSpy).toHaveBeenCalled();
       expect(created.id).toBe('new-chord-id');
+    });
+
+    it('bloqueia com 403 quando membro comum tenta criar cifra vinculada ao repertório do ministério', async () => {
+      vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
+        id: 'song-valid',
+        ministry_id: 'min-allowed',
+        title: 'Música Permitida',
+      } as any);
+
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({
+        id: 'min-allowed',
+        name: 'Ministério Louvor',
+        role: 'member',
+      } as any);
+
+      const createRepoSpy = vi.spyOn(smartChordRepo, 'createSmartChord');
+
+      await expect(
+        service.createSmartChord('user-member', {
+          title: 'Cifra Indevida',
+          original_key: 'C',
+          content: '[C]',
+          song_id: 'song-valid',
+        })
+      ).rejects.toThrow(expect.objectContaining({ statusCode: 403 }));
+      expect(createRepoSpy).not.toHaveBeenCalled();
     });
 
     it('lança 404 se o artista vinculado não for encontrado', async () => {
@@ -476,6 +503,7 @@ describe('Smart Chords Feature Test Suite', () => {
       vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({
         id: 'min-alpha',
         name: 'Alpha',
+        role: 'admin',
       } as any);
 
       await expect(
@@ -511,6 +539,7 @@ describe('Smart Chords Feature Test Suite', () => {
       vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({
         id: 'min-alpha',
         name: 'Alpha',
+        role: 'admin',
       } as any);
 
       await expect(
@@ -553,6 +582,7 @@ describe('Smart Chords Feature Test Suite', () => {
       vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({
         id: 'min-alpha',
         name: 'Alpha',
+        role: 'admin',
       } as any);
 
       // Usuário altera apenas artist_id para um de outro ministério

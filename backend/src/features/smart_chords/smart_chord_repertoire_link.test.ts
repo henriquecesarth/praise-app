@@ -27,6 +27,12 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
     ministryRepo = new MinistryRepository();
     repertoireRepo = new RepertoireRepository();
 
+    vi.spyOn(ministryRepo, 'getAdminUserIds').mockResolvedValue(new Set(['usr-1']));
+    vi.spyOn(smartChordLinkRepo, 'getLinksBySongIdForMinistry').mockResolvedValue([]);
+    vi.spyOn(smartChordRepo, 'getSmartChordsBySongIdForMinistry').mockResolvedValue([]);
+    vi.spyOn(smartChordRepo, 'getSmartChordByIdForMinistryRead').mockImplementation(async (chordId, expectedOwnerUserId) =>
+      smartChordRepo.getSmartChordById(chordId, expectedOwnerUserId)
+    );
     vi.spyOn(smartChordLinkRepo, 'getLink').mockResolvedValue(null);
     vi.spyOn(smartChordLinkRepo, 'setLink').mockImplementation(
       async (userId, smartChordId, ministryId, songId, options) => ({
@@ -106,6 +112,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
       vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({
         id: 'min-alpha',
         name: 'Ministério Alfa',
+        role: 'admin',
       } as any);
 
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
@@ -137,7 +144,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         user_id: 'usr-1',
         title: 'Cifra Pessoal',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-1',
         ministry_id: 'min-alpha',
@@ -154,7 +161,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         id: 'chord-1',
         user_id: 'usr-1',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-2',
         ministry_id: 'min-alpha',
@@ -181,7 +188,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         id: 'chord-1',
         user_id: 'usr-1',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-foreign',
         ministry_id: 'min-beta', // DIVERGENT TENANT
@@ -198,7 +205,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         id: 'chord-1',
         user_id: 'usr-1',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue(null);
 
       await expect(
@@ -213,7 +220,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         id: 'chord-1',
         user_id: 'usr-1',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(smartChordLinkRepo, 'getLink').mockResolvedValue({
         id: 'usr-1_chord-1_min-alpha',
         user_id: 'usr-1',
@@ -240,7 +247,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         user_id: 'usr-1',
         song_id: 'song-legacy',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(smartChordLinkRepo, 'getLink').mockResolvedValue(null); // No canonical link
       const setLinkSpy = vi.spyOn(smartChordLinkRepo, 'setLink');
 
@@ -264,7 +271,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         user_id: 'usr-1',
         song_id: 'song-old-legacy',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(smartChordLinkRepo, 'getLink').mockResolvedValue({
         id: 'usr-1_chord-1_min-alpha',
         user_id: 'usr-1',
@@ -291,7 +298,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         user_id: 'usr-1',
         song_id: null,
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(smartChordLinkRepo, 'getLink').mockResolvedValue(null);
 
       const result = await service.getRepertoireLink('usr-1', 'chord-unlinked', 'min-alpha');
@@ -304,7 +311,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         user_id: 'usr-1',
         song_id: 'song-in-beta',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(smartChordLinkRepo, 'getLink').mockResolvedValue(null);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-in-beta',
@@ -324,7 +331,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         user_id: 'usr-1',
         song_id: 'song-alpha-legacy',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-alpha-legacy',
         ministry_id: 'min-alpha',
@@ -346,7 +353,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         user_id: 'usr-1',
         song_id: 'song-beta-legacy',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-beta-legacy',
         ministry_id: 'min-beta', // DIFFERENT MINISTRY
@@ -365,14 +372,14 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
 
   describe('5. getMySmartChordsForSong (Union & User Isolation)', () => {
     it('returns union of canonical and legacy links for authenticated user', async () => {
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-target',
         ministry_id: 'min-alpha',
       } as any);
 
-      // Canonical links for this user
-      vi.spyOn(smartChordLinkRepo, 'getLinksBySongId').mockResolvedValue([
+      // Canonical links for this song (shared ministry read filtered to admins)
+      vi.spyOn(smartChordLinkRepo, 'getLinksBySongIdForMinistry').mockResolvedValue([
         {
           id: 'usr-1_chord-canon_min-alpha',
           user_id: 'usr-1',
@@ -382,7 +389,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
           created_at: '2026-10-16T10:00:00Z',
           updated_at: '2026-10-16T10:00:00Z',
         },
-        // Another user's link to the same song
+        // Non-admin user's link to the same song must NOT leak into shared reading
         {
           id: 'usr-2_chord-other_min-alpha',
           user_id: 'usr-2',
@@ -394,8 +401,8 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         },
       ]);
 
-      // Legacy chords owned by usr-1
-      vi.spyOn(smartChordRepo, 'getSmartChordsBySongId').mockResolvedValue([
+      // Legacy chords owned by admin usr-1
+      vi.spyOn(smartChordRepo, 'getSmartChordsBySongIdForMinistry').mockResolvedValue([
         { id: 'chord-legacy', user_id: 'usr-1', title: 'Cifra Legada', original_key: 'E', content: '[E]' } as any,
       ]);
 
@@ -414,13 +421,13 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
     });
 
     it('deduplicates when chord has both canonical link and legacy song_id', async () => {
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-target',
         ministry_id: 'min-alpha',
       } as any);
 
-      vi.spyOn(smartChordLinkRepo, 'getLinksBySongId').mockResolvedValue([
+      vi.spyOn(smartChordLinkRepo, 'getLinksBySongIdForMinistry').mockResolvedValue([
         {
           id: 'usr-1_chord-dup_min-alpha',
           user_id: 'usr-1',
@@ -432,7 +439,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         },
       ]);
 
-      vi.spyOn(smartChordRepo, 'getSmartChordsBySongId').mockResolvedValue([
+      vi.spyOn(smartChordRepo, 'getSmartChordsBySongIdForMinistry').mockResolvedValue([
         { id: 'chord-dup', user_id: 'usr-1', title: 'Cifra Dupla', original_key: 'C', content: '[C]' } as any,
       ]);
 
@@ -457,7 +464,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         user_id: 'usr-1',
       } as any);
 
-      vi.spyOn(ministryRepo, 'getMinistryById').mockImplementation(async (minId) => ({ id: minId } as any));
+      vi.spyOn(ministryRepo, 'getMinistryById').mockImplementation(async (minId) => ({ id: minId, role: 'admin' } as any));
 
       vi.spyOn(repertoireRepo, 'findSongById').mockImplementation(async (songId) => {
         if (songId === 'song-alpha') return { id: 'song-alpha', ministry_id: 'min-alpha', title: 'Song Alpha' } as any;
@@ -730,7 +737,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         id: 'chord-1',
         user_id: 'usr-1',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-single',
         ministry_id: 'min-alpha',
@@ -746,7 +753,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
 
     it('accepts legacy alias version_id="v1" ONLY when song has no explicit versions, rejecting on multi-version songs', async () => {
       vi.spyOn(smartChordRepo, 'getSmartChordById').mockResolvedValue({ id: 'chord-1', user_id: 'usr-1' } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-no-versions',
         ministry_id: 'min-alpha',
@@ -773,7 +780,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
 
     it('rejects setRepertoireLink with 409 VERSION_SELECTION_REQUIRED when song has multiple versions and version_id is omitted', async () => {
       vi.spyOn(smartChordRepo, 'getSmartChordById').mockResolvedValue({ id: 'chord-1', user_id: 'usr-1' } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-multi',
         ministry_id: 'min-alpha',
@@ -801,7 +808,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         user_id: 'usr-1',
         song_id: 'song-multi',
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       const setLinkSpy = vi.spyOn(smartChordLinkRepo, 'setLink');
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-multi',
@@ -848,7 +855,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
     });
 
     it('getMySmartChordsForSong isolates chords strictly per version_id and prevents legacy song_id leak across versions or moved canonical links', async () => {
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-multi',
         ministry_id: 'min-alpha',
@@ -859,7 +866,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
         ],
       } as any);
 
-      vi.spyOn(smartChordLinkRepo, 'getLinksBySongId').mockResolvedValue([
+      const mockLinks = [
         {
           id: 'l1',
           user_id: 'usr-1',
@@ -896,14 +903,18 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
           created_at: '2026-10-16T09:00:00Z',
           updated_at: '2026-10-16T09:00:00Z',
         },
-      ]);
+      ];
+      vi.spyOn(smartChordLinkRepo, 'getLinksBySongIdForMinistry').mockResolvedValue(mockLinks as any);
+      vi.spyOn(smartChordLinkRepo, 'getLinksBySongId').mockResolvedValue(mockLinks as any);
 
       // Legacy chords: chord-v2 has legacy song_id=song-multi, chord-moved was moved via canonical link to another song, chord-legacy-ambig has no canonical doc
-      vi.spyOn(smartChordRepo, 'getSmartChordsBySongId').mockResolvedValue([
+      const mockLegacyChords = [
         { id: 'chord-v2', user_id: 'usr-1', song_id: 'song-multi', title: 'Acústica G', created_at: '2026-10-16T11:00:00Z', updated_at: '2026-10-16T11:00:00Z' } as any,
         { id: 'chord-moved', user_id: 'usr-1', song_id: 'song-multi', title: 'Movida', created_at: '2026-10-16T08:00:00Z', updated_at: '2026-10-16T08:00:00Z' } as any,
         { id: 'chord-legacy-ambig', user_id: 'usr-1', song_id: 'song-multi', title: 'Legada Ambígua', created_at: '2026-10-16T07:00:00Z', updated_at: '2026-10-16T07:00:00Z' } as any,
-      ]);
+      ];
+      vi.spyOn(smartChordRepo, 'getSmartChordsBySongIdForMinistry').mockResolvedValue(mockLegacyChords);
+      vi.spyOn(smartChordRepo, 'getSmartChordsBySongId').mockResolvedValue(mockLegacyChords);
 
       vi.spyOn(smartChordLinkRepo, 'getLink').mockImplementation(async (_u, chordId) => {
         if (chordId === 'chord-moved') {
@@ -1145,7 +1156,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
           { id: 'ver-2', name: 'Acústica', key: 'A' },
         ],
       } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(smartChordRepo, 'createSmartChord').mockResolvedValue({
         id: 'chord-created-1',
         user_id: 'usr-1',
@@ -1307,7 +1318,7 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
           ministry_id: 'min-alpha',
           versions: [{ id: 'ver-other', name: 'Outra', key: 'C' }],
         } as any);
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(smartChordRepo, 'createSmartChord').mockResolvedValue({
         id: 'chord-race-1',
         user_id: 'usr-1',
@@ -1414,14 +1425,14 @@ describe('Smart Chord Repertoire Linking (M19)', () => {
     });
 
     it('getMySmartChordsForSong propagates canonical getLink lookup failures instead of reviving moved legacy links', async () => {
-      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha' } as any);
+      vi.spyOn(ministryRepo, 'getMinistryById').mockResolvedValue({ id: 'min-alpha', role: 'admin' } as any);
       vi.spyOn(repertoireRepo, 'findSongById').mockResolvedValue({
         id: 'song-legacy',
         ministry_id: 'min-alpha',
         original_key: 'G',
       } as any);
-      vi.spyOn(smartChordLinkRepo, 'getLinksBySongId').mockResolvedValue([]);
-      vi.spyOn(smartChordRepo, 'getSmartChordsBySongId').mockResolvedValue([
+      vi.spyOn(smartChordLinkRepo, 'getLinksBySongIdForMinistry').mockResolvedValue([]);
+      vi.spyOn(smartChordRepo, 'getSmartChordsBySongIdForMinistry').mockResolvedValue([
         { id: 'chord-1', user_id: 'usr-1', song_id: 'song-legacy', title: 'Cifra' } as any,
       ]);
       vi.spyOn(smartChordLinkRepo, 'getLink').mockRejectedValue(new Error('transient canonical lookup error'));

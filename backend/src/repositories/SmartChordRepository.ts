@@ -45,6 +45,18 @@ export class SmartChordRepository {
     return list.sort((a, b) => (b.updated_at || b.created_at || '').localeCompare(a.updated_at || a.created_at || ''));
   }
 
+  /**
+   * Lists legacy song-linked chords within a song scope; callers must verify
+   * ministry membership and admin authorship before surfacing to members.
+   */
+  async getSmartChordsBySongIdForMinistry(songId: string) {
+    const snap = await this.smartChordsCol
+      .where('song_id', '==', songId)
+      .get();
+    const list = snap.docs.map((d) => this.toDomain(d.id, d.data()));
+    return list.sort((a, b) => (b.updated_at || b.created_at || '').localeCompare(a.updated_at || a.created_at || ''));
+  }
+
   async getSmartChordById(id: string, userId: string) {
     const doc = await this.smartChordsCol.doc(id).get();
     if (!doc.exists) {
@@ -55,6 +67,14 @@ export class SmartChordRepository {
       throw new AppError(404, 'Cifra inteligente não encontrada.');
     }
     return this.toDomain(doc.id, raw);
+  }
+
+  /**
+   * Reads a linked chord exclusively after the caller validated ministry membership,
+   * active canonical link ownership, and admin publication status.
+   */
+  async getSmartChordByIdForMinistryRead(id: string, expectedOwnerUserId: string) {
+    return this.getSmartChordById(id, expectedOwnerUserId);
   }
 
   async createSmartChord(userId: string, data: any) {
