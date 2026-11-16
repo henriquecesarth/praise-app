@@ -658,3 +658,216 @@
   border-color: #B45309;
   color: #FCD34D;
 }
+
+/* ==========================================================================
+   T4: Seletor Piano / Violão e Diagrama de Violão (ChordGuitarDiagram)
+   ========================================================================== */
+.chord-diagram-instrument-switcher {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chord-piano-ctrl-btn.is-active {
+  background: var(--action-primary-bg, #AE5235);
+  border-color: var(--action-primary-bg, #AE5235);
+  color: #FFFFFF;
+}
+
+.chord-piano-ctrl-btn.is-active:hover,
+.chord-piano-ctrl-btn.is-active:focus-visible {
+  background: var(--chord-text, #9E4427);
+  border-color: var(--chord-text, #9E4427);
+  color: #FFFFFF;
+}
+
+.chord-guitar-diagram {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chord-guitar-highlights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.chord-guitar-svg-wrap {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle, #DCD3C6);
+  background: var(--bg-surface-subtle, #EFE8DC);
+  padding: 12px;
+  box-sizing: border-box;
+  overflow-x: auto;
+}
+
+.guitar-nut-line {
+  stroke: var(--text-primary, #18221D);
+  stroke-width: 5px;
+  stroke-linecap: round;
+}
+
+.guitar-fret-line {
+  stroke: var(--border-strong, #B8AEA0);
+  stroke-width: 1.5px;
+}
+
+.guitar-string-line {
+  stroke: var(--text-secondary, #46544E);
+  stroke-width: 1.6px;
+}
+
+.guitar-string-line.is-muted {
+  stroke-dasharray: 4 3;
+  opacity: 0.55;
+}
+
+.guitar-fret-label,
+.guitar-tuning-label {
+  fill: var(--text-secondary, #46544E);
+  font-family: inherit;
+  user-select: none;
+}
+
+.guitar-muted-marker {
+  fill: var(--status-warning-text, #944D10);
+  font-family: inherit;
+  user-select: none;
+}
+
+.guitar-open-circle {
+  fill: none;
+  stroke: var(--structural-accent, #0F2A1F);
+  stroke-width: 2.2px;
+}
+
+.guitar-open-circle.root,
+.guitar-open-circle.root-bass {
+  stroke: var(--action-primary-bg, #AE5235);
+}
+
+.guitar-fretted-dot {
+  fill: var(--structural-accent, #0F2A1F);
+}
+
+.guitar-fretted-dot.root,
+.guitar-fretted-dot.root-bass {
+  fill: var(--action-primary-bg, #AE5235);
+}
+
+.guitar-fretted-dot.bass {
+  fill: #944D10;
+}
+
+.guitar-barre-pill {
+  fill: var(--action-primary-bg, #AE5235);
+  opacity: 0.92;
+}
+
+.guitar-barre-text,
+.guitar-finger-text {
+  fill: #FFFFFF;
+  font-family: inherit;
+  user-select: none;
+}
+
+.guitar-note-label {
+  fill: var(--text-primary, #18221D);
+  font-family: inherit;
+  user-select: none;
+}
+
+.guitar-note-label.muted {
+  fill: var(--text-secondary, #46544E);
+}
+
+.chord-guitar-legend-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-surface-subtle, #EFE8DC);
+  border: 1px solid var(--border-subtle, #DCD3C6);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.chord-guitar-legend-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 4px 12px;
+  font-size: 0.8rem;
+  color: var(--text-primary, #18221D);
+  line-height: 1.4;
+}
+
+.chord-guitar-unavailable {
+  border-radius: 10px;
+  border: 1px solid var(--status-warning-border, #F3C88B);
+  background: var(--status-warning-bg, #FEF3E2);
+  color: var(--status-warning-text, #944D10);
+  padding: 16px;
+}
+
+.chord-guitar-unavailable-title {
+  margin: 0 0 6px;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.chord-guitar-unavailable-desc {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.dark .chord-guitar-svg-wrap,
+.dark .chord-guitar-legend-block {
+  background: #08140F;
+  border-color: var(--border-subtle, #1E3D2F);
+}
+
+.dark .guitar-nut-line {
+  stroke: #F5EFE6;
+}
+
+.dark .guitar-fret-line {
+  stroke: #2D5945;
+}
+
+.dark .guitar-string-line {
+  stroke: #A0AFA7;
+}
+
+.dark .guitar-fret-label,
+.dark .guitar-tuning-label,
+.dark .guitar-note-label.muted {
+  fill: #A0AFA7;
+}
+
+.dark .guitar-note-label,
+.dark .chord-guitar-legend-list {
+  color: #F5EFE6;
+}
+
+.dark .guitar-open-circle.chord-tone {
+  stroke: #7CC4A4;
+}
+
+.dark .guitar-fretted-dot.chord-tone {
+  fill: #7CC4A4;
+}
+
+.dark .guitar-fretted-dot.chord-tone + .guitar-finger-text {
+  fill: #0F2A1F;
+}
+
+.dark .chord-guitar-unavailable {
+  background: rgba(180, 83, 9, 0.2);
+  border-color: #B45309;
+  color: #FCD34D;
+}

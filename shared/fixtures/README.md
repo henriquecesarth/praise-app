@@ -53,3 +53,11 @@ Referência experimental consultada apenas por leitura via GitHub: [TS P2](https
 Web: wrapper `web/src/utils/fixtures/smart_chord_reference_cases.ts` importa apenas legacyNotation; teste `music_theory_contract.test.ts` lê o JSON e verifica cada vetor, gramática de intervalos, notas/qualidades, projeções, slash bass, transposição e sentinelas brasileiras. Dart: `mobile/test/support/music_theory_corpus.dart` lê o mesmo arquivo da raiz ou diretório mobile; ambos os testes consomem o loader. Não é asset de aplicativo e não altera pubspec.
 
 Testes dirigidos reais e revisão independente são registrados no [roadmap](../../docs/exec-plans/active/2026-11-16-v3-musical-phase-1-proposal.md). Nenhum backend, API, player, schema ou dependência é necessário nesta tarefa. Antes de T2, exigir aprovação do gate T1/G2; a aprovação de arquitetura não autoriza automaticamente as tarefas seguintes.
+
+## Guitar voicings v1 — catálogo curado de violão (T4)
+
+Fonte única: [guitar-voicings-v1.json](guitar-voicings-v1.json). `format = louvaio.guitar-voicings`, `version = 1`, `instrument = guitar`, afinação padrão `E2 A2 D3 G3 B3 E4` (MIDI `40, 45, 50, 55, 59, 64` da 6ª para a 1ª corda).
+
+- Proveniência: curadoria própria LouvAIO V3 (sem cópia de catálogos externos e sem geração combinatória automática), uso livre offline e online nos clientes Web e Flutter.
+- Conjunto inicial curado (10 posições): `C`, `Am`, `G`, `D`, `Em`, `F`, `Am7`, `C7M` (`Cmaj7`), `G/B` (1ª inversão) e `F#m7(b5)` (`F#m7b5`).
+- Invariantes verificados contra o motor T2: nota exata produzida por cada corda (`openMidi + fret`), cobertura dos tons do acorde sem notas indesejadas, nota mais grave efetivamente tocada coerente com fundamental/inversão/baixo externo, coerência física de pestanas e alcance máximo de 4 casas. Acordes sem posição verificada retornam estado explícito `"Diagrama indisponível"`.

@@ -66,9 +66,9 @@ Aceite: notas coerentes com contrato, nenhum parse novo na UI nem escrita de cif
 
 Consome T2/T3; arquivos propostos `shared/fixtures/guitar-voicings-v1.json` e renderizadores dedicados nas mesmas áreas.
 
-- [ ] Fixar conjunto inicial, afinação padrão e licença/proveniência de cada forma.
-- [ ] Testar cordas/trastes/notas, pestanas e baixo; revisão por músico de ergonomia.
-- [ ] Renderizar aberto/abafado/texto acessível; sem diagrama arbitrário para acorde não coberto.
+- [x] Fixar conjunto inicial, afinação padrão e licença/proveniência de cada forma.
+- [x] Testar cordas/trastes/notas, pestanas e baixo; revisão por músico de ergonomia.
+- [x] Renderizar aberto/abafado/texto acessível; sem diagrama arbitrário para acorde não coberto.
 
 Aceite: todas as formas verificadas, sem geração combinatória ou ampliação de catálogo sem revisão.
 
@@ -245,3 +245,15 @@ Re-revisão independente final /root/t2_review: **PASS**, todos os achados corri
 Checks finais: corpus SHA-256 preservado `5bd27986e83ea9631763f42bcbddaf7b8082f5eca54b1617f5b498cf45e4c594`, dependências e fontes legadas sem diff, JSON/links/whitespace validados, índice vazio e HEAD ainda na base. As 185 entradas da pasta principal mantêm o mesmo hash de status anterior. Nenhuma tela Dart foi alterada ou importa o núcleo nesta etapa; hot reload não integra a comprovação destes módulos puros, que foram compilados e executados pelos testes.
 
 **Gate T2: PASS local, pronto para revisão/checkpoint posteriormente autorizado.** Nenhum commit/push, publicação, alteração de backend/API, UI, M21, faturamento ou dado persistido foi realizado. O build de publicação permanece sujeito ao guard e não foi homologado; o build local de teste passou. T3 não foi iniciada.
+
+## Execução incremental — T4 (2026-11-16)
+
+Base/HEAD preservado: `f77d6ce87e1b3c03cba6013abb0b0b3ac4ae4f5c` (T3 publicada), branch `fix/louvaio-audit-remediation-20261113`, worktree `.worktrees/louvaio-audit-remediation`. Nenhum commit, push, merge, deploy ou alteração fora do escopo T4 foi realizado; T5 e posteriores não foram iniciadas.
+
+- **Catálogo curado v1**: [guitar-voicings-v1.json](../../../shared/fixtures/guitar-voicings-v1.json) e [documentação de fixtures](../../../shared/fixtures/README.md). Afinação padrão `E2 A2 D3 G3 B3 E4` (MIDI `40, 45, 50, 55, 59, 64`). 10 acordes/posições verificadas: `C`, `Am`, `G`, `D`, `Em`, `F` (pestana na 1ª casa), `Am7`, `C7M` (`Cmaj7`), `G/B` (1ª inversão, 6ª corda abafada, baixo `B2`) e `F#m7(b5)` (`F#m7b5`, 2ª casa com baixo `F#2`). Proveniência: curadoria própria LouvAIO V3 (sem cópia externa e sem geração combinatória).
+- **Validadores e lookup T4**: [guitarVoicings.ts](../../../web/src/music/guitarVoicings.ts) / [guitarVoicings.test.ts](../../../web/src/music/guitarVoicings.test.ts) e [guitar_voicings.dart](../../../mobile/lib/core/music/guitar_voicings.dart) / [guitar_voicings_test.dart](../../../mobile/test/core/music/guitar_voicings_test.dart) consumindo os núcleos T2 e o mesmo catálogo compartilhado via [guitar_voicings_corpus.dart](../../../mobile/test/support/guitar_voicings_corpus.dart).
+- **Interfaces Web e Flutter**: alternância `Piano` / `Violão` integrada ao painel existente em [ChordPianoDiagram.tsx](../../../web/src/components/smart-chords/ChordPianoDiagram.tsx), [ChordGuitarDiagram.tsx](../../../web/src/components/smart-chords/ChordGuitarDiagram.tsx), [workspace.css](../../../web/src/components/smart-chords/workspace.css) e [chord_piano_diagram_sheet.dart](../../../mobile/lib/features/smart_chords/presentation/widgets/chord_piano_diagram_sheet.dart), preservando acorde selecionado, transposição visual, foco/`Escape`/rolagem, edição inline do `SmartChordReader`, `SongDetail`, `ChordLyricLine`, `MusicalProgressionLine`, `SmartChordReaderScreen` e `SongDetailView`. Acordes sem posição verificada exibem `"Diagrama indisponível"`.
+- **Validação final executada**:
+  - Web: 7 suítes direcionadas (331 testes PASS, incluindo 15 de `guitarVoicings.test.ts` e 20 de `ChordPianoDiagram.test.tsx`), `npx tsc --noEmit` (PASS), `npm run build -- --mode test` (PASS).
+  - Flutter: 8 suítes direcionadas (408 testes PASS, incluindo 7 de `guitar_voicings_test.dart` e 61 de `chord_piano_diagram_sheet_test.dart` com layout fluido em 320/360/393/840dp a 1.3x), `dart analyze` nos arquivos T4 (No issues found).
+  - Revisão independente read-only (`feature-reviewer`): **PASS** (0 findings BLOCKER/HIGH/MEDIUM/LOW).

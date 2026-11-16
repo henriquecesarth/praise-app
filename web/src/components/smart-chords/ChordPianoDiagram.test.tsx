@@ -344,3 +344,191 @@ describe('ChordPianoDiagram & ChordPianoDiagramPanel (T3 Piano Diagram)', () => 
     });
   });
 });
+
+describe('T4 Guitar Diagram integration in ChordPianoDiagramPanel', () => {
+  it('switches between Piano and Violão while keeping the selected chord "C"', () => {
+    render(<ChordPianoDiagramPanel chordSymbol="C" onClose={vi.fn()} />);
+
+    const pianoBtn = screen.getByTestId('diagram-instrument-piano');
+    const guitarBtn = screen.getByTestId('diagram-instrument-guitar');
+    expect(pianoBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(guitarBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('chord-piano-didactic-legend')).toBeInTheDocument();
+
+    // Switch to Violão
+    fireEvent.click(guitarBtn);
+    expect(pianoBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(guitarBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByTestId('chord-piano-didactic-legend')).not.toBeInTheDocument();
+
+    expect(screen.getByTestId('chord-guitar-diagram')).toBeInTheDocument();
+    expect(screen.getByTestId('chord-guitar-position-name')).toHaveTextContent('Aberta (1ª posição)');
+    expect(screen.getByTestId('chord-guitar-tuning')).toHaveTextContent('Afinação: E2 A2 D3 G3 B3 E4');
+    expect(screen.getByTestId('chord-guitar-lowest-note')).toHaveTextContent('Baixo efetivo: C3 (5ª corda)');
+
+    // 6 strings rendered with accurate open/muted/fretted states
+    const svg = screen.getByTestId('chord-guitar-svg');
+    const stringGroups = svg.querySelectorAll('[data-string-number]');
+    expect(stringGroups).toHaveLength(6);
+
+    expect(svg.querySelector('[data-string-number="6"]')).toHaveAttribute('data-string-status', 'muted');
+    expect(svg.querySelector('[data-string-number="5"]')).toHaveAttribute('data-string-fret', '3');
+    expect(svg.querySelector('[data-string-number="5"]')).toHaveAttribute('data-string-finger', '3');
+    expect(svg.querySelector('[data-string-number="5"]')).toHaveAttribute('data-string-note', 'C3');
+    expect(svg.querySelector('[data-string-number="3"]')).toHaveAttribute('data-string-status', 'open');
+    expect(svg.querySelector('[data-string-number="2"]')).toHaveAttribute('data-string-fret', '1');
+    expect(svg.querySelector('[data-string-number="1"]')).toHaveAttribute('data-string-status', 'open');
+
+    // Accessible legend per string
+    expect(screen.getByTestId('guitar-legend-string-6')).toHaveTextContent('6ª corda (E2): Abafada (X)');
+    expect(screen.getByTestId('guitar-legend-string-5')).toHaveTextContent('5ª corda (A2): 3ª casa, dedo 3 — C3');
+    expect(screen.getByTestId('guitar-legend-string-3')).toHaveTextContent('3ª corda (G3): Solta (O) — G3');
+
+    // Switch back to Piano keeping chord C
+    fireEvent.click(pianoBtn);
+    expect(screen.getByTestId('chord-piano-didactic-legend')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'C' })).toBeInTheDocument();
+  });
+
+  it('renders barre (pestana) for "F", 1st inversion for "G/B", and curated positions for "C7M" and "F#m7(b5)"', () => {
+    const { rerender } = render(
+      <ChordPianoDiagramPanel chordSymbol="F" onClose={vi.fn()} initialInstrument="guitar" />,
+    );
+
+    expect(screen.getByTestId('chord-guitar-position-name')).toHaveTextContent('Pestana na 1ª casa (forma de E)');
+    expect(screen.getByTestId('chord-guitar-barre-info')).toHaveTextContent(
+      'Pestana: 1ª casa (cordas 6 a 1, dedo 1)',
+    );
+    const barreEl = screen.getByTestId('chord-guitar-barre-1');
+    expect(barreEl).toHaveAttribute('data-barre-from', '6');
+    expect(barreEl).toHaveAttribute('data-barre-to', '1');
+    expect(barreEl).toHaveAttribute('data-barre-finger', '1');
+    expect(screen.getByTestId('chord-guitar-lowest-note')).toHaveTextContent('Baixo efetivo: F2 (6ª corda)');
+
+    // G/B inversion
+    rerender(<ChordPianoDiagramPanel chordSymbol="G/B" onClose={vi.fn()} initialInstrument="guitar" />);
+    expect(screen.getByTestId('chord-guitar-position-name')).toHaveTextContent('Aberta com baixo em B (1ª inversão)');
+    expect(screen.getByTestId('chord-guitar-lowest-note')).toHaveTextContent('Baixo efetivo: B2 (5ª corda)');
+    expect(screen.getByTestId('chord-guitar-svg').querySelector('[data-string-number="6"]')).toHaveAttribute(
+      'data-string-status',
+      'muted',
+    );
+    expect(screen.getByTestId('chord-bass-pill')).toHaveTextContent('Baixo: B — nota do acorde, 1ª inversão');
+
+    // C7M
+    rerender(<ChordPianoDiagramPanel chordSymbol="C7M" onClose={vi.fn()} initialInstrument="guitar" />);
+    expect(screen.getByTestId('chord-canonical-symbol')).toHaveTextContent('Canônico: Cmaj7');
+    expect(screen.getByTestId('chord-guitar-svg').querySelector('[data-string-number="2"]')).toHaveAttribute(
+      'data-string-note',
+      'B3',
+    );
+
+    // F#m7(b5)
+    rerender(<ChordPianoDiagramPanel chordSymbol="F#m7(b5)" onClose={vi.fn()} initialInstrument="guitar" />);
+    expect(screen.getByTestId('chord-guitar-position-name')).toHaveTextContent('2ª casa (baixo na 6ª corda)');
+    expect(screen.getByTestId('chord-guitar-lowest-note')).toHaveTextContent('Baixo efetivo: F#2 (6ª corda)');
+    expect(screen.getByTestId('chord-guitar-svg').querySelector('[data-string-number="5"]')).toHaveAttribute(
+      'data-string-status',
+      'muted',
+    );
+    expect(screen.getByTestId('chord-guitar-svg').querySelector('[data-string-number="1"]')).toHaveAttribute(
+      'data-string-status',
+      'muted',
+    );
+  });
+
+  it('shows "Diagrama indisponível" on Violão for uncatalogued chords (C/F#, B13) without breaking Piano or metadata', () => {
+    render(<ChordPianoDiagramPanel chordSymbol="C/F#" onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('diagram-instrument-guitar'));
+    expect(screen.getByTestId('chord-guitar-unavailable')).toHaveTextContent(
+      'Diagrama indisponível para C/F# no violão',
+    );
+    expect(screen.getByTestId('chord-piano-live-region')).toHaveTextContent(
+      'Diagrama indisponível para C/F# no violão',
+    );
+    expect(screen.getByTestId('chord-bass-pill')).toHaveTextContent('Baixo: F# — baixo externo / slash bass');
+
+    // Return to Piano smoothly
+    fireEvent.click(screen.getByTestId('diagram-instrument-piano'));
+    expect(screen.getByTestId('chord-piano-didactic-legend')).toBeInTheDocument();
+  });
+
+  it('preserves active Violão instrument across visual transposition updates (C -> D -> C#)', () => {
+    const { rerender } = render(<ChordPianoDiagramPanel chordSymbol="C" onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('diagram-instrument-guitar'));
+    expect(screen.getByTestId('chord-guitar-lowest-note')).toHaveTextContent('C3');
+
+    // Transpose +2 semitones to D while Violão stays active
+    rerender(<ChordPianoDiagramPanel chordSymbol="D" onClose={vi.fn()} />);
+    expect(screen.getByTestId('diagram-instrument-guitar')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('chord-guitar-lowest-note')).toHaveTextContent('Baixo efetivo: D3 (4ª corda)');
+    expect(screen.getByTestId('chord-guitar-svg').querySelector('[data-string-number="1"]')).toHaveAttribute(
+      'data-string-note',
+      'F#4',
+    );
+
+    // Transpose to C# (not in curated catalog)
+    rerender(<ChordPianoDiagramPanel chordSymbol="C#" onClose={vi.fn()} />);
+    expect(screen.getByTestId('chord-guitar-unavailable')).toHaveTextContent(
+      'Diagrama indisponível para C# no violão',
+    );
+  });
+
+  it('preserves aria-live, Tab focus trap, Escape dismissal, and focus restoration while in Violão mode', async () => {
+    const onClose = vi.fn();
+
+    function GuitarTestHost() {
+      const triggerRef = useRef<HTMLButtonElement | null>(null);
+      const [open, setOpen] = React.useState(false);
+      return (
+        <div>
+          <button ref={triggerRef} type="button" data-testid="guitar-open-btn" onClick={() => setOpen(true)}>
+            Abrir
+          </button>
+          {open && (
+            <ChordPianoDiagramPanel
+              chordSymbol="Am"
+              onClose={() => {
+                setOpen(false);
+                onClose();
+              }}
+              triggerRef={triggerRef}
+            />
+          )}
+        </div>
+      );
+    }
+
+    render(<GuitarTestHost />);
+    const openBtn = screen.getByTestId('guitar-open-btn');
+    openBtn.focus();
+    fireEvent.click(openBtn);
+
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByTestId('diagram-instrument-guitar'));
+
+    expect(within(dialog).getByTestId('chord-piano-live-region')).toHaveTextContent(
+      'Violão para Am. Posição: Aberta (1ª posição). Afinação padrão E2 A2 D3 G3 B3 E4.',
+    );
+
+    const dialogButtons = within(dialog).getAllByRole('button');
+    const firstBtn = dialogButtons[0];
+    const lastBtn = dialogButtons[dialogButtons.length - 1];
+
+    lastBtn.focus();
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(document.activeElement).toBe(firstBtn);
+
+    firstBtn.focus();
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(lastBtn);
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(openBtn);
+    });
+  });
+});

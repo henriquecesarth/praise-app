@@ -486,4 +486,192 @@ void main() {
       }
     }
   });
+
+  group('T4 Guitar Diagram presentation & Piano/Guitar switcher', () {
+    testWidgets('switches between Piano and Violão while keeping chord C and shows 6 strings, markers, notes, and accessible legend', (tester) async {
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(chordSymbol: 'C'),
+        ),
+      ));
+
+      expect(find.byKey(const Key('diagram_instrument_piano')), findsOneWidget);
+      expect(find.byKey(const Key('diagram_instrument_guitar')), findsOneWidget);
+      expect(find.byType(PianoKeyboardView), findsOneWidget);
+      expect(find.byType(GuitarFretboardView), findsNothing);
+
+      // Switch to Violão
+      await tester.tap(find.byKey(const Key('diagram_instrument_guitar')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PianoKeyboardView), findsNothing);
+      expect(find.byType(GuitarFretboardView), findsOneWidget);
+      expect(find.byKey(const Key('chord_guitar_diagram')), findsOneWidget);
+      expect(find.text('Posição: Aberta (1ª posição)'), findsOneWidget);
+      expect(find.text('Afinação: E2 A2 D3 G3 B3 E4'), findsOneWidget);
+      expect(find.text('Baixo efetivo: C3 (5ª corda)'), findsOneWidget);
+
+      // Open/muted markers and produced notes (open strings G3 and E4 appear in both tuning header and bottom notes)
+      expect(find.text('X'), findsOneWidget);
+      expect(find.text('O'), findsNWidgets(2));
+      expect(find.text('C3'), findsOneWidget);
+      expect(find.text('E3'), findsOneWidget);
+      expect(find.text('G3'), findsNWidgets(2));
+      expect(find.text('C4'), findsOneWidget);
+      expect(find.text('E4'), findsNWidgets(2));
+
+      // Accessible per-string legend
+      expect(find.byKey(const Key('chord_guitar_accessible_legend')), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'6ª corda \(E2\): Abafada \(X\)')), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'5ª corda \(A2\): 3ª casa, dedo 3 — C3')), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'3ª corda \(G3\): Solta \(O\) — G3')), findsOneWidget);
+
+      // Switch back to Piano keeping chord C
+      await tester.tap(find.byKey(const Key('diagram_instrument_piano')));
+      await tester.pumpAndSettle();
+      expect(find.byType(PianoKeyboardView), findsOneWidget);
+      expect(find.byType(GuitarFretboardView), findsNothing);
+      expect(find.text('C'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('renders barre (pestana) for F, 1st inversion for G/B, and curated shapes for C7M and F#m7(b5)', (tester) async {
+      // F with barre
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(
+            chordSymbol: 'F',
+            initialInstrument: ChordDiagramInstrument.guitar,
+          ),
+        ),
+      ));
+      expect(find.text('Posição: Pestana na 1ª casa (forma de E)'), findsOneWidget);
+      expect(find.text('Pestana: 1ª casa (cordas 6 a 1, dedo 1)'), findsOneWidget);
+      expect(find.text('Pestana • 1'), findsOneWidget);
+      expect(find.text('Baixo efetivo: F2 (6ª corda)'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      // G/B 1st inversion
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(
+            chordSymbol: 'G/B',
+            initialInstrument: ChordDiagramInstrument.guitar,
+          ),
+        ),
+      ));
+      expect(find.text('Posição: Aberta com baixo em B (1ª inversão)'), findsOneWidget);
+      expect(find.text('Baixo efetivo: B2 (5ª corda)'), findsOneWidget);
+      expect(find.textContaining('Baixo: B — nota do acorde • 1ª inversão'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      // C7M
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(
+            chordSymbol: 'C7M',
+            initialInstrument: ChordDiagramInstrument.guitar,
+          ),
+        ),
+      ));
+      expect(find.text('Canônico: Cmaj7'), findsOneWidget);
+      expect(find.text('B3'), findsWidgets);
+      expect(tester.takeException(), isNull);
+
+      // F#m7(b5)
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(
+            chordSymbol: 'F#m7(b5)',
+            initialInstrument: ChordDiagramInstrument.guitar,
+          ),
+        ),
+      ));
+      expect(find.text('Posição: 2ª casa (baixo na 6ª corda)'), findsOneWidget);
+      expect(find.text('Baixo efetivo: F#2 (6ª corda)'), findsOneWidget);
+      expect(find.text('X'), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('displays Diagrama indisponível on Violão for uncatalogued chords C/F# and B13 while keeping metadata', (tester) async {
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(chordSymbol: 'C/F#'),
+        ),
+      ));
+
+      await tester.tap(find.byKey(const Key('diagram_instrument_guitar')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('chord_guitar_unavailable')), findsOneWidget);
+      expect(find.text('Diagrama indisponível para C/F# no violão'), findsOneWidget);
+      expect(find.textContaining('Baixo: F# — baixo externo / slash bass'), findsOneWidget);
+
+      // Switch back to Piano works smoothly
+      await tester.tap(find.byKey(const Key('diagram_instrument_piano')));
+      await tester.pumpAndSettle();
+      expect(find.byType(PianoKeyboardView), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('preserves Violão mode across visual transposition updates (C -> D -> C#)', (tester) async {
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(chordSymbol: 'C'),
+        ),
+      ));
+
+      await tester.tap(find.byKey(const Key('diagram_instrument_guitar')));
+      await tester.pumpAndSettle();
+      expect(find.text('Baixo efetivo: C3 (5ª corda)'), findsOneWidget);
+
+      // Transpose +2 semitones to D while keeping Violão selected
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(chordSymbol: 'D'),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byType(GuitarFretboardView), findsOneWidget);
+      expect(find.text('Baixo efetivo: D3 (4ª corda)'), findsOneWidget);
+      expect(find.text('F#4'), findsOneWidget);
+
+      // Transpose to C# (not in curated catalog)
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(chordSymbol: 'C#'),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('chord_guitar_unavailable')), findsOneWidget);
+      expect(find.text('Diagrama indisponível para C# no violão'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    for (final width in [320.0, 360.0, 393.0, 840.0]) {
+      for (final symbol in ['C', 'F', 'G/B', 'F#m7(b5)', 'C/F#']) {
+        testWidgets('fluid guitar layout without RenderFlex overflow for $symbol on width $width at textScale 1.3', (tester) async {
+          tester.view.physicalSize = Size(width, 800);
+          tester.view.devicePixelRatio = 1.0;
+
+          await tester.pumpWidget(MaterialApp(
+            home: MediaQuery(
+              data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+              child: Scaffold(
+                body: ChordPianoDiagramSheet(
+                  chordSymbol: symbol,
+                  initialInstrument: ChordDiagramInstrument.guitar,
+                ),
+              ),
+            ),
+          ));
+
+          expect(tester.takeException(), isNull);
+
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+      }
+    }
+  });
 }

@@ -6,6 +6,11 @@ import {
   Interval,
   Parsed,
 } from '../../music/theory';
+import { lookupGuitarVoicing } from '../../music/guitarVoicings';
+import {
+  ChordGuitarDiagram,
+  describeGuitarAriaSummary,
+} from './ChordGuitarDiagram';
 
 export interface ActiveKeyInfo {
   pos: number;
@@ -449,19 +454,30 @@ export function ChordPianoDiagram({ parsed, className }: ChordPianoDiagramProps)
   );
 }
 
+export type DiagramInstrument = 'piano' | 'guitar';
+
 export interface ChordPianoDiagramPanelProps {
   chordSymbol: string | null;
   onClose: () => void;
   triggerRef?: React.RefObject<HTMLElement | null>;
+  initialInstrument?: DiagramInstrument;
 }
 
 export function ChordPianoDiagramPanel({
   chordSymbol,
   onClose,
   triggerRef,
+  initialInstrument = 'piano',
 }: ChordPianoDiagramPanelProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const [instrument, setInstrument] = useState<DiagramInstrument>(initialInstrument);
+
+  useEffect(() => {
+    if (!chordSymbol) {
+      setInstrument(initialInstrument);
+    }
+  }, [chordSymbol, initialInstrument]);
 
   useEffect(() => {
     if (chordSymbol) {
@@ -485,6 +501,15 @@ export function ChordPianoDiagramPanel({
   }
 
   const result: Result<ChordNormalized> = chordTones(chordSymbol.trim());
+  const guitarLookup = result.status === 'parsed'
+    ? lookupGuitarVoicing(result.originalText)
+    : null;
+
+  const liveSummary = result.status === 'unsupported'
+    ? `Diagrama indisponível para ${result.preservedText || chordSymbol}. ${translateUnsupportedReason(result.reason, result.preservedText || chordSymbol)}`
+    : instrument === 'guitar' && guitarLookup
+      ? describeGuitarAriaSummary(result.originalText, guitarLookup)
+      : `Acorde ${result.originalText}. Qualidade: ${translateQuality(result.normalized.quality, result.normalized.seventh)}.${result.normalized.bass ? ` Baixo: ${result.normalized.bass.spelling}.` : ''} Notas: ${result.notes.map(n => n.spelling).join(', ')}.`;
 
   const handleClose = () => {
     onClose();
@@ -545,9 +570,7 @@ export function ChordPianoDiagramPanel({
         onKeyDown={handleKeyDown}
       >
         <div aria-live="polite" className="sr-only" data-testid="chord-piano-live-region">
-          {result.status === 'parsed'
-            ? `Acorde ${result.originalText}. Qualidade: ${translateQuality(result.normalized.quality, result.normalized.seventh)}.${result.normalized.bass ? ` Baixo: ${result.normalized.bass.spelling}.` : ''} Notas: ${result.notes.map(n => n.spelling).join(', ')}.`
-            : `Diagrama indisponível para ${result.preservedText || chordSymbol}. ${translateUnsupportedReason(result.reason, result.preservedText || chordSymbol)}`}
+          {liveSummary}
         </div>
 
         {result.status === 'unsupported' ? (
@@ -613,7 +636,41 @@ export function ChordPianoDiagramPanel({
               </button>
             </div>
 
-            <ChordPianoDiagram parsed={result} />
+            <div
+              className="chord-diagram-instrument-switcher"
+              role="group"
+              aria-label="Selecionar instrumento do diagrama"
+              data-testid="diagram-instrument-switcher"
+            >
+              <button
+                type="button"
+                data-testid="diagram-instrument-piano"
+                aria-pressed={instrument === 'piano'}
+                className={`chord-piano-ctrl-btn ${instrument === 'piano' ? 'is-active' : ''}`}
+                onClick={() => setInstrument('piano')}
+              >
+                Piano
+              </button>
+              <button
+                type="button"
+                data-testid="diagram-instrument-guitar"
+                aria-pressed={instrument === 'guitar'}
+                className={`chord-piano-ctrl-btn ${instrument === 'guitar' ? 'is-active' : ''}`}
+                onClick={() => setInstrument('guitar')}
+              >
+                Violão
+              </button>
+            </div>
+
+            {instrument === 'piano' ? (
+              <ChordPianoDiagram parsed={result} />
+            ) : (
+              <ChordGuitarDiagram
+                chordSymbol={result.originalText}
+                parsed={result}
+                lookup={guitarLookup ?? undefined}
+              />
+            )}
 
             <div className="chord-piano-metadata" data-testid="chord-piano-metadata">
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>

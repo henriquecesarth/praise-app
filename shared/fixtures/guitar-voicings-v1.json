@@ -1,0 +1,276 @@
+{
+  "format": "louvaio.guitar-voicings",
+  "version": 1,
+  "instrument": "guitar",
+  "tuning": {
+    "id": "standard-eadgbe",
+    "name": "Padrão (E2 A2 D3 G3 B3 E4)",
+    "strings": [
+      { "stringNumber": 6, "note": "E2", "spelling": "E", "octave": 2, "midi": 40, "pitchClass": 4 },
+      { "stringNumber": 5, "note": "A2", "spelling": "A", "octave": 2, "midi": 45, "pitchClass": 9 },
+      { "stringNumber": 4, "note": "D3", "spelling": "D", "octave": 3, "midi": 50, "pitchClass": 2 },
+      { "stringNumber": 3, "note": "G3", "spelling": "G", "octave": 3, "midi": 55, "pitchClass": 7 },
+      { "stringNumber": 2, "note": "B3", "spelling": "B", "octave": 3, "midi": 59, "pitchClass": 11 },
+      { "stringNumber": 1, "note": "E4", "spelling": "E", "octave": 4, "midi": 64, "pitchClass": 4 }
+    ]
+  },
+  "provenance": {
+    "source": "LouvAIO V3 Musical — curadoria própria verificada pelo motor simbólico T2",
+    "license": "First-Party Curated — curadoria própria LouvAIO V3; classificação interna de proveniência, não uma licença formal; sem declaração de domínio público; sem cópia de catálogos externos.",
+    "usageConditions": "Uso livre offline e online nos clientes LouvAIO Web e Flutter; cada posição deve ser validada contra o motor T2 e revisada quanto à ergonomia física, sem geração combinatória automática."
+  },
+  "voicings": [
+    {
+      "id": "guitar-v1-C-open-1",
+      "chordSymbol": "C",
+      "canonicalSymbol": "C",
+      "aliases": ["C"],
+      "positionName": "Aberta (1ª posição)",
+      "tuningId": "standard-eadgbe",
+      "baseFret": 1,
+      "barres": [],
+      "strings": [
+        { "stringNumber": 6, "status": "muted", "fret": null, "finger": null, "note": null, "spelling": null, "midi": null },
+        { "stringNumber": 5, "status": "fretted", "fret": 3, "finger": 3, "note": "C3", "spelling": "C", "midi": 48 },
+        { "stringNumber": 4, "status": "fretted", "fret": 2, "finger": 2, "note": "E3", "spelling": "E", "midi": 52 },
+        { "stringNumber": 3, "status": "open", "fret": 0, "finger": null, "note": "G3", "spelling": "G", "midi": 55 },
+        { "stringNumber": 2, "status": "fretted", "fret": 1, "finger": 1, "note": "C4", "spelling": "C", "midi": 60 },
+        { "stringNumber": 1, "status": "open", "fret": 0, "finger": null, "note": "E4", "spelling": "E", "midi": 64 }
+      ],
+      "lowestNote": { "stringNumber": 5, "note": "C3", "spelling": "C", "midi": 48 },
+      "soundingNotes": ["C3", "E3", "G3", "C4", "E4"],
+      "provenance": {
+        "origin": "Curadoria própria LouvAIO V3",
+        "verifiedBy": "Motor T2 + revisão ergonômica v1",
+        "license": "First-Party Curated"
+      }
+    },
+    {
+      "id": "guitar-v1-Am-open-1",
+      "chordSymbol": "Am",
+      "canonicalSymbol": "Am",
+      "aliases": ["Am", "Amin"],
+      "positionName": "Aberta (1ª posição)",
+      "tuningId": "standard-eadgbe",
+      "baseFret": 1,
+      "barres": [],
+      "strings": [
+        { "stringNumber": 6, "status": "muted", "fret": null, "finger": null, "note": null, "spelling": null, "midi": null },
+        { "stringNumber": 5, "status": "open", "fret": 0, "finger": null, "note": "A2", "spelling": "A", "midi": 45 },
+        { "stringNumber": 4, "status": "fretted", "fret": 2, "finger": 2, "note": "E3", "spelling": "E", "midi": 52 },
+        { "stringNumber": 3, "status": "fretted", "fret": 2, "finger": 3, "note": "A3", "spelling": "A", "midi": 57 },
+        { "stringNumber": 2, "status": "fretted", "fret": 1, "finger": 1, "note": "C4", "spelling": "C", "midi": 60 },
+        { "stringNumber": 1, "status": "open", "fret": 0, "finger": null, "note": "E4", "spelling": "E", "midi": 64 }
+      ],
+      "lowestNote": { "stringNumber": 5, "note": "A2", "spelling": "A", "midi": 45 },
+      "soundingNotes": ["A2", "E3", "A3", "C4", "E4"],
+      "provenance": {
+        "origin": "Curadoria própria LouvAIO V3",
+        "verifiedBy": "Motor T2 + revisão ergonômica v1",
+        "license": "First-Party Curated"
+      }
+    },
+    {
+      "id": "guitar-v1-G-open-1",
+      "chordSymbol": "G",
+      "canonicalSymbol": "G",
+      "aliases": ["G"],
+      "positionName": "Aberta (1ª posição)",
+      "tuningId": "standard-eadgbe",
+      "baseFret": 1,
+      "barres": [],
+      "strings": [
+        { "stringNumber": 6, "status": "fretted", "fret": 3, "finger": 2, "note": "G2", "spelling": "G", "midi": 43 },
+        { "stringNumber": 5, "status": "fretted", "fret": 2, "finger": 1, "note": "B2", "spelling": "B", "midi": 47 },
+        { "stringNumber": 4, "status": "open", "fret": 0, "finger": null, "note": "D3", "spelling": "D", "midi": 50 },
+        { "stringNumber": 3, "status": "open", "fret": 0, "finger": null, "note": "G3", "spelling": "G", "midi": 55 },
+        { "stringNumber": 2, "status": "open", "fret": 0, "finger": null, "note": "B3", "spelling": "B", "midi": 59 },
+        { "stringNumber": 1, "status": "fretted", "fret": 3, "finger": 3, "note": "G4", "spelling": "G", "midi": 67 }
+      ],
+      "lowestNote": { "stringNumber": 6, "note": "G2", "spelling": "G", "midi": 43 },
+      "soundingNotes": ["G2", "B2", "D3", "G3", "B3", "G4"],
+      "provenance": {
+        "origin": "Curadoria própria LouvAIO V3",
+        "verifiedBy": "Motor T2 + revisão ergonômica v1",
+        "license": "First-Party Curated"
+      }
+    },
+    {
+      "id": "guitar-v1-D-open-1",
+      "chordSymbol": "D",
+      "canonicalSymbol": "D",
+      "aliases": ["D"],
+      "positionName": "Aberta (1ª posição)",
+      "tuningId": "standard-eadgbe",
+      "baseFret": 1,
+      "barres": [],
+      "strings": [
+        { "stringNumber": 6, "status": "muted", "fret": null, "finger": null, "note": null, "spelling": null, "midi": null },
+        { "stringNumber": 5, "status": "muted", "fret": null, "finger": null, "note": null, "spelling": null, "midi": null },
+        { "stringNumber": 4, "status": "open", "fret": 0, "finger": null, "note": "D3", "spelling": "D", "midi": 50 },
+        { "stringNumber": 3, "status": "fretted", "fret": 2, "finger": 1, "note": "A3", "spelling": "A", "midi": 57 },
+        { "stringNumber": 2, "status": "fretted", "fret": 3, "finger": 3, "note": "D4", "spelling": "D", "midi": 62 },
+        { "stringNumber": 1, "status": "fretted", "fret": 2, "finger": 2, "note": "F#4", "spelling": "F#", "midi": 66 }
+      ],
+      "lowestNote": { "stringNumber": 4, "note": "D3", "spelling": "D", "midi": 50 },
+      "soundingNotes": ["D3", "A3", "D4", "F#4"],
+      "provenance": {
+        "origin": "Curadoria própria LouvAIO V3",
+        "verifiedBy": "Motor T2 + revisão ergonômica v1",
+        "license": "First-Party Curated"
+      }
+    },
+    {
+      "id": "guitar-v1-Em-open-1",
+      "chordSymbol": "Em",
+      "canonicalSymbol": "Em",
+      "aliases": ["Em", "Emin"],
+      "positionName": "Aberta (1ª posição)",
+      "tuningId": "standard-eadgbe",
+      "baseFret": 1,
+      "barres": [],
+      "strings": [
+        { "stringNumber": 6, "status": "open", "fret": 0, "finger": null, "note": "E2", "spelling": "E", "midi": 40 },
+        { "stringNumber": 5, "status": "fretted", "fret": 2, "finger": 2, "note": "B2", "spelling": "B", "midi": 47 },
+        { "stringNumber": 4, "status": "fretted", "fret": 2, "finger": 3, "note": "E3", "spelling": "E", "midi": 52 },
+        { "stringNumber": 3, "status": "open", "fret": 0, "finger": null, "note": "G3", "spelling": "G", "midi": 55 },
+        { "stringNumber": 2, "status": "open", "fret": 0, "finger": null, "note": "B3", "spelling": "B", "midi": 59 },
+        { "stringNumber": 1, "status": "open", "fret": 0, "finger": null, "note": "E4", "spelling": "E", "midi": 64 }
+      ],
+      "lowestNote": { "stringNumber": 6, "note": "E2", "spelling": "E", "midi": 40 },
+      "soundingNotes": ["E2", "B2", "E3", "G3", "B3", "E4"],
+      "provenance": {
+        "origin": "Curadoria própria LouvAIO V3",
+        "verifiedBy": "Motor T2 + revisão ergonômica v1",
+        "license": "First-Party Curated"
+      }
+    },
+    {
+      "id": "guitar-v1-F-barre-1",
+      "chordSymbol": "F",
+      "canonicalSymbol": "F",
+      "aliases": ["F"],
+      "positionName": "Pestana na 1ª casa (forma de E)",
+      "tuningId": "standard-eadgbe",
+      "baseFret": 1,
+      "barres": [
+        { "fret": 1, "fromString": 6, "toString": 1, "finger": 1 }
+      ],
+      "strings": [
+        { "stringNumber": 6, "status": "fretted", "fret": 1, "finger": 1, "note": "F2", "spelling": "F", "midi": 41 },
+        { "stringNumber": 5, "status": "fretted", "fret": 3, "finger": 3, "note": "C3", "spelling": "C", "midi": 48 },
+        { "stringNumber": 4, "status": "fretted", "fret": 3, "finger": 4, "note": "F3", "spelling": "F", "midi": 53 },
+        { "stringNumber": 3, "status": "fretted", "fret": 2, "finger": 2, "note": "A3", "spelling": "A", "midi": 57 },
+        { "stringNumber": 2, "status": "fretted", "fret": 1, "finger": 1, "note": "C4", "spelling": "C", "midi": 60 },
+        { "stringNumber": 1, "status": "fretted", "fret": 1, "finger": 1, "note": "F4", "spelling": "F", "midi": 65 }
+      ],
+      "lowestNote": { "stringNumber": 6, "note": "F2", "spelling": "F", "midi": 41 },
+      "soundingNotes": ["F2", "C3", "F3", "A3", "C4", "F4"],
+      "provenance": {
+        "origin": "Curadoria própria LouvAIO V3",
+        "verifiedBy": "Motor T2 + revisão ergonômica v1",
+        "license": "First-Party Curated"
+      }
+    },
+    {
+      "id": "guitar-v1-Am7-open-1",
+      "chordSymbol": "Am7",
+      "canonicalSymbol": "Am7",
+      "aliases": ["Am7", "Amin7"],
+      "positionName": "Aberta (1ª posição)",
+      "tuningId": "standard-eadgbe",
+      "baseFret": 1,
+      "barres": [],
+      "strings": [
+        { "stringNumber": 6, "status": "muted", "fret": null, "finger": null, "note": null, "spelling": null, "midi": null },
+        { "stringNumber": 5, "status": "open", "fret": 0, "finger": null, "note": "A2", "spelling": "A", "midi": 45 },
+        { "stringNumber": 4, "status": "fretted", "fret": 2, "finger": 2, "note": "E3", "spelling": "E", "midi": 52 },
+        { "stringNumber": 3, "status": "open", "fret": 0, "finger": null, "note": "G3", "spelling": "G", "midi": 55 },
+        { "stringNumber": 2, "status": "fretted", "fret": 1, "finger": 1, "note": "C4", "spelling": "C", "midi": 60 },
+        { "stringNumber": 1, "status": "open", "fret": 0, "finger": null, "note": "E4", "spelling": "E", "midi": 64 }
+      ],
+      "lowestNote": { "stringNumber": 5, "note": "A2", "spelling": "A", "midi": 45 },
+      "soundingNotes": ["A2", "E3", "G3", "C4", "E4"],
+      "provenance": {
+        "origin": "Curadoria própria LouvAIO V3",
+        "verifiedBy": "Motor T2 + revisão ergonômica v1",
+        "license": "First-Party Curated"
+      }
+    },
+    {
+      "id": "guitar-v1-Cmaj7-open-1",
+      "chordSymbol": "C7M",
+      "canonicalSymbol": "Cmaj7",
+      "aliases": ["C7M", "Cmaj7", "C(maj7)"],
+      "positionName": "Aberta (1ª posição)",
+      "tuningId": "standard-eadgbe",
+      "baseFret": 1,
+      "barres": [],
+      "strings": [
+        { "stringNumber": 6, "status": "muted", "fret": null, "finger": null, "note": null, "spelling": null, "midi": null },
+        { "stringNumber": 5, "status": "fretted", "fret": 3, "finger": 3, "note": "C3", "spelling": "C", "midi": 48 },
+        { "stringNumber": 4, "status": "fretted", "fret": 2, "finger": 2, "note": "E3", "spelling": "E", "midi": 52 },
+        { "stringNumber": 3, "status": "open", "fret": 0, "finger": null, "note": "G3", "spelling": "G", "midi": 55 },
+        { "stringNumber": 2, "status": "open", "fret": 0, "finger": null, "note": "B3", "spelling": "B", "midi": 59 },
+        { "stringNumber": 1, "status": "open", "fret": 0, "finger": null, "note": "E4", "spelling": "E", "midi": 64 }
+      ],
+      "lowestNote": { "stringNumber": 5, "note": "C3", "spelling": "C", "midi": 48 },
+      "soundingNotes": ["C3", "E3", "G3", "B3", "E4"],
+      "provenance": {
+        "origin": "Curadoria própria LouvAIO V3",
+        "verifiedBy": "Motor T2 + revisão ergonômica v1",
+        "license": "First-Party Curated"
+      }
+    },
+    {
+      "id": "guitar-v1-G-slash-B-open-1",
+      "chordSymbol": "G/B",
+      "canonicalSymbol": "G/B",
+      "aliases": ["G/B"],
+      "positionName": "Aberta com baixo em B (1ª inversão)",
+      "tuningId": "standard-eadgbe",
+      "baseFret": 1,
+      "barres": [],
+      "strings": [
+        { "stringNumber": 6, "status": "muted", "fret": null, "finger": null, "note": null, "spelling": null, "midi": null },
+        { "stringNumber": 5, "status": "fretted", "fret": 2, "finger": 1, "note": "B2", "spelling": "B", "midi": 47 },
+        { "stringNumber": 4, "status": "open", "fret": 0, "finger": null, "note": "D3", "spelling": "D", "midi": 50 },
+        { "stringNumber": 3, "status": "open", "fret": 0, "finger": null, "note": "G3", "spelling": "G", "midi": 55 },
+        { "stringNumber": 2, "status": "fretted", "fret": 3, "finger": 3, "note": "D4", "spelling": "D", "midi": 62 },
+        { "stringNumber": 1, "status": "fretted", "fret": 3, "finger": 4, "note": "G4", "spelling": "G", "midi": 67 }
+      ],
+      "lowestNote": { "stringNumber": 5, "note": "B2", "spelling": "B", "midi": 47 },
+      "soundingNotes": ["B2", "D3", "G3", "D4", "G4"],
+      "provenance": {
+        "origin": "Curadoria própria LouvAIO V3",
+        "verifiedBy": "Motor T2 + revisão ergonômica v1",
+        "license": "First-Party Curated"
+      }
+    },
+    {
+      "id": "guitar-v1-F#m7b5-pos-2",
+      "chordSymbol": "F#m7(b5)",
+      "canonicalSymbol": "F#m7b5",
+      "aliases": ["F#m7(b5)", "F#m7b5", "F#min7b5", "F#ø7"],
+      "positionName": "2ª casa (baixo na 6ª corda)",
+      "tuningId": "standard-eadgbe",
+      "baseFret": 1,
+      "barres": [],
+      "strings": [
+        { "stringNumber": 6, "status": "fretted", "fret": 2, "finger": 2, "note": "F#2", "spelling": "F#", "midi": 42 },
+        { "stringNumber": 5, "status": "muted", "fret": null, "finger": null, "note": null, "spelling": null, "midi": null },
+        { "stringNumber": 4, "status": "fretted", "fret": 2, "finger": 3, "note": "E3", "spelling": "E", "midi": 52 },
+        { "stringNumber": 3, "status": "fretted", "fret": 2, "finger": 4, "note": "A3", "spelling": "A", "midi": 57 },
+        { "stringNumber": 2, "status": "fretted", "fret": 1, "finger": 1, "note": "C4", "spelling": "C", "midi": 60 },
+        { "stringNumber": 1, "status": "muted", "fret": null, "finger": null, "note": null, "spelling": null, "midi": null }
+      ],
+      "lowestNote": { "stringNumber": 6, "note": "F#2", "spelling": "F#", "midi": 42 },
+      "soundingNotes": ["F#2", "E3", "A3", "C4"],
+      "provenance": {
+        "origin": "Curadoria própria LouvAIO V3",
+        "verifiedBy": "Motor T2 + revisão ergonômica v1",
+        "license": "First-Party Curated"
+      }
+    }
+  ]
+}
