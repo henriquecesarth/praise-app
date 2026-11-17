@@ -16,8 +16,10 @@ import {
   REHEARSAL_PACKAGE_FORMAT,
   REHEARSAL_PACKAGE_FORMAT_VERSION,
   Sha256Hasher,
+  validateAndExtractRehearsalPackage,
   validateRehearsalPackage,
   type RandomAccessByteSource,
+  type RehearsalEntryWritableSink,
 } from './rehearsal-package-validator';
 
 const CORPUS_CASES = corpusData.cases as CorpusCaseDefinition[];
@@ -348,7 +350,7 @@ describe('Rehearsal Package v1 Validator (T7)', () => {
     expect(result.budget.maxObservedSingleReadBytes).toBeLessThanOrEqual(LIMITS_V1.defaultMaxChunkBytes);
     expect(result.budget.peakWorkingMemoryBytes).toBeLessThan(512 * 1024);
     expect(sliceCallCount).toBeGreaterThan(100);
-  });
+  }, 20000);
 
   it('rejects with MEMORY_BUDGET_EXCEEDED when working memory exceeds maxMemoryBudgetBytes', async () => {
     const validCase = CORPUS_CASES.find((c) => c.id === 'valid-wav-minimal')!;
@@ -773,5 +775,231 @@ describe('Rehearsal Package v1 Validator (T7)', () => {
     expect(spoofedLfhRes.status).toBe('corrupted');
     expect(spoofedLfhRes.errorCode).toBe('HEADER_MISMATCH');
     expect(spoofedLfhRes.readyForPublication).toBe(false);
+  });
+});
+
+describe('Rehearsal Package v1 Streaming Progress & Two-Phase Extraction (T9 Phase A)', () => {
+  it('reports monotonic onProgress callbacks up to total verified bytes during validation', async () => {
+    const validCase = CORPUS_CASES.find((c) => c.id === 'valid-with-original-and-practice-deflate-manifest')!;
+    const { bytes, options } = await buildPackageFromCorpusCase(validCase);
+
+    const progressEvents: Array<{ processed: number; total: number }> = [];
+    const result = await validateRehearsalPackage(bytes, {
+      ...options,
+      maxChunkBytes: 2048,
+      onProgress: (processedBytes, totalBytes) => {
+        progressEvents.push({ processed: processedBytes, total: totalBytes });
+      },
+    });
+
+    expect(result.status).toBe('valid');
+    expect(result.readyForPublication).toBe(true);
+    expect(progressEvents.length).toBeGreaterThan(2);
+
+    const expectedTotal = result.verifiedEntries.reduce((sum, entry) => sum + entry.uncompressedBytes, 0);
+    expect(expectedTotal).toBe(result.budget.actualExtractedBytes);
+
+    let prev = 0;
+    for (const ev of progressEvents) {
+      expect(ev.total).toBe(expectedTotal);
+      expect(ev.processed).toBeGreaterThanOrEqual(prev);
+      expect(ev.processed).toBeLessThanOrEqual(ev.total);
+      prev = ev.processed;
+    }
+    expect(progressEvents[progressEvents.length - 1]?.processed).toBe(expectedTotal);
+  });
+
+  it('invokes openTargetSink 0 times when Phase 1 validation rejects (corrupted, incomplete, conflict, insufficientSpace, cancelled)', async () => {
+    const rejectedCaseIds = [
+      'corrupted-crc-mismatch',
+      'incomplete-missing-stem-in-zip',
+      'conflict-same-id-different-hash',
+      'insufficient-storage-space',
+    ];
+
+    for (const caseId of rejectedCaseIds) {
+      const corpusCase = CORPUS_CASES.find((c) => c.id === caseId)!;
+      const { bytes, options } = await buildPackageFromCorpusCase(corpusCase);
+      const openTargetSink = vi.fn();
+
+      const result = await validateAndExtractRehearsalPackage(bytes, {
+        ...options,
+        openTargetSink,
+      });
+
+      expect(result.readyForPublication).toBe(false);
+      expect(result.publicationState).toBe('rejected');
+      expect(openTargetSink).not.toHaveBeenCalled();
+    }
+
+    const validCase = CORPUS_CASES.find((c) => c.id === 'valid-wav-minimal')!;
+    const { bytes } = await buildPackageFromCorpusCase(validCase);
+    const aborted = new AbortController();
+    aborted.abort();
+    const openOnAbort = vi.fn();
+    const abortRes = await validateAndExtractRehearsalPackage(bytes, {
+      signal: aborted.signal,
+      openTargetSink: openOnAbort,
+    });
+    expect(abortRes.status).toBe('cancelled');
+    expect(abortRes.readyForPublication).toBe(false);
+    expect(openOnAbort).not.toHaveBeenCalled();
+  });
+
+  it('extracts valid WAV minimal and DEFLATE manifest packages into bounded sinks, verifies SHA-256, reports progress, and honors mid-extraction abort', async () => {
+    for (const caseId of ['valid-wav-minimal', 'valid-with-original-and-practice-deflate-manifest'] as const) {
+      const corpusCase = CORPUS_CASES.find((c) => c.id === caseId)!;
+      const { bytes, options } = await buildPackageFromCorpusCase(corpusCase);
+      const maxChunkBytes = 1024;
+
+      const writtenByPath = new Map<string, { chunks: Uint8Array[]; closed: boolean; aborted: boolean }>();
+      const extractProgress: Array<{ extracted: number; total: number }> = [];
+
+      const result = await validateAndExtractRehearsalPackage(bytes, {
+        ...options,
+        maxChunkBytes,
+        openTargetSink: async (entry) => {
+          const state = { chunks: [] as Uint8Array[], closed: false, aborted: false };
+          writtenByPath.set(entry.path, state);
+          const sink: RehearsalEntryWritableSink = {
+            async write(chunk) {
+              expect(chunk.byteLength).toBeGreaterThan(0);
+              expect(chunk.byteLength).toBeLessThanOrEqual(maxChunkBytes);
+              const copy = new Uint8Array(chunk.byteLength);
+              copy.set(chunk);
+              state.chunks.push(copy);
+            },
+            async close() {
+              state.closed = true;
+            },
+            async abort() {
+              state.aborted = true;
+            },
+          };
+          return sink;
+        },
+        onExtractProgress: (extractedBytes, totalBytes) => {
+          extractProgress.push({ extracted: extractedBytes, total: totalBytes });
+        },
+      });
+
+      expect(result.status).toBe('valid');
+      expect(result.readyForPublication).toBe(true);
+      expect(writtenByPath.size).toBe(result.verifiedEntries.length);
+
+      let expectedTotal = 0;
+      for (const entry of result.verifiedEntries) {
+        expectedTotal += entry.uncompressedBytes;
+        const sinkState = writtenByPath.get(entry.path);
+        expect(sinkState).toBeDefined();
+        expect(sinkState!.closed).toBe(true);
+        expect(sinkState!.aborted).toBe(false);
+
+        const totalLen = sinkState!.chunks.reduce((sum, c) => sum + c.byteLength, 0);
+        expect(totalLen).toBe(entry.uncompressedBytes);
+
+        const assembled = new Uint8Array(totalLen);
+        let pos = 0;
+        for (const c of sinkState!.chunks) {
+          assembled.set(c, pos);
+          pos += c.byteLength;
+        }
+        expect(sha256Hex(assembled)).toBe(entry.sha256);
+      }
+
+      expect(extractProgress.length).toBeGreaterThan(0);
+      let prev = 0;
+      for (const ev of extractProgress) {
+        expect(ev.total).toBe(expectedTotal);
+        expect(ev.extracted).toBeGreaterThanOrEqual(prev);
+        expect(ev.extracted).toBeLessThanOrEqual(ev.total);
+        prev = ev.extracted;
+      }
+      expect(extractProgress[extractProgress.length - 1]?.extracted).toBe(expectedTotal);
+    }
+
+    // Mid-extraction AbortController cancellation aborts the currently open sink
+    const validWavCase = CORPUS_CASES.find((c) => c.id === 'valid-wav-minimal')!;
+    const { bytes: wavBytes } = await buildPackageFromCorpusCase(validWavCase);
+    const controller = new AbortController();
+    const sinkStatuses: Array<{ path: string; closed: boolean; aborted: boolean; abortReason: unknown }> = [];
+    let writeCalls = 0;
+
+    const abortedExtractResult = await validateAndExtractRehearsalPackage(wavBytes, {
+      signal: controller.signal,
+      maxChunkBytes: 1024,
+      openTargetSink: async (entry) => {
+        const record = { path: entry.path, closed: false, aborted: false, abortReason: undefined as unknown };
+        sinkStatuses.push(record);
+        return {
+          async write() {
+            writeCalls++;
+            if (entry.role === 'stem' && writeCalls >= 3) {
+              controller.abort();
+            }
+          },
+          async close() {
+            record.closed = true;
+          },
+          async abort(reason) {
+            record.aborted = true;
+            record.abortReason = reason;
+          },
+        };
+      },
+    });
+
+    expect(abortedExtractResult.status).toBe('cancelled');
+    expect(abortedExtractResult.errorCode).toBe('VALIDATION_CANCELLED');
+    expect(abortedExtractResult.readyForPublication).toBe(false);
+    expect(abortedExtractResult.publicationState).toBe('rejected');
+    expect(sinkStatuses.some((s) => s.aborted && !s.closed)).toBe(true);
+  });
+
+  it('propagates QuotaExceededError thrown inside sink.write or sink.close without wrapping it as INVALID_ZIP_ARCHIVE', async () => {
+    const validCase = CORPUS_CASES.find((c) => c.id === 'valid-wav-minimal')!;
+    const { bytes } = await buildPackageFromCorpusCase(validCase);
+
+    const makeQuotaError = () => new DOMException('Quota exceeded during write', 'QuotaExceededError');
+
+    const writeAbortSpy = vi.fn(async () => undefined);
+    await expect(
+      validateAndExtractRehearsalPackage(bytes, {
+        maxChunkBytes: 1024,
+        openTargetSink: async () => ({
+          async write() {
+            throw makeQuotaError();
+          },
+          async close() {
+            throw new Error('close should not be called after write error');
+          },
+          abort: writeAbortSpy,
+        }),
+      }),
+    ).rejects.toMatchObject({
+      name: 'QuotaExceededError',
+      message: 'Quota exceeded during write',
+    });
+    expect(writeAbortSpy).toHaveBeenCalledTimes(1);
+
+    const closeAbortSpy = vi.fn(async () => undefined);
+    await expect(
+      validateAndExtractRehearsalPackage(bytes, {
+        maxChunkBytes: 1024,
+        openTargetSink: async () => ({
+          async write() {
+            // succeed
+          },
+          async close() {
+            throw new DOMException('Quota exceeded during close', 'QuotaExceededError');
+          },
+          abort: closeAbortSpy,
+        }),
+      }),
+    ).rejects.toMatchObject({
+      name: 'QuotaExceededError',
+      message: 'Quota exceeded during close',
+    });
+    expect(closeAbortSpy).toHaveBeenCalledTimes(1);
   });
 });

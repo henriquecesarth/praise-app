@@ -33,6 +33,11 @@ describe('application routes', () => {
       isKnown: true,
     });
     expect(parseAppRoute('/exercicios-vocais')).toMatchObject({ module: 'vocal', isKnown: true });
+    expect(parseAppRoute('/pacotes-ensaio')).toEqual({
+      module: 'dashboard',
+      isRehearsalPackages: true,
+      isKnown: true,
+    });
     expect(pathForSong('song 1')).toBe('/repertorio/song%201');
     expect(pathForSong('song 1', { versionId: 'ver-2', fromScheduleId: 'sch-9' })).toBe(
       '/repertorio/song%201?version=ver-2&fromSchedule=sch-9'

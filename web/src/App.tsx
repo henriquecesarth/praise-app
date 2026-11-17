@@ -24,6 +24,8 @@ import { ScheduleDetailView } from './components/ScheduleDetailView';
 import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleModal';
 import { MinistryView } from './components/MinistryView';
 import { VocalExercisePlayer } from './components/VocalExercisePlayer';
+import { RehearsalPackageLibraryView } from './components/RehearsalPackageLibraryView';
+import { invalidateActiveRehearsalLibrarySession } from './audio/rehearsal-package-library';
 import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
 import { PrivacyPolicyView } from './components/PrivacyPolicyView';
 import { AccountDeletionView } from './components/AccountDeletionView';
@@ -35,7 +37,7 @@ import { MobileAccountMenu } from './components/MobileAccountMenu';
 import { ConfirmDialog } from './components/ui/ConfirmDialog';
 import { useRepertoireDialog } from './components/useRepertoireDialog';
 import { louvaioTheme } from './theme/louvaioTheme';
-import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon } from 'lucide-react';
+import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, HardDrive, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon } from 'lucide-react';
 
 interface Toast {
   id: string;
@@ -182,6 +184,8 @@ export default function App() {
   const foldersRequestRef = useRef<number>(0);
   const artistsRequestRef = useRef<number>(0);
   const subscriptionRequestRef = useRef<number>(0);
+  const isLocalOnlyRouteRef = useRef<boolean>(false);
+  isLocalOnlyRouteRef.current = Boolean(routeState.isRehearsalPackages || routeState.module === 'vocal');
   const searchTimeoutRef = useRef<number | null>(null);
 
   const clearDetailSelection = () => {
@@ -255,7 +259,7 @@ export default function App() {
 
   // Carregar dados específicos de módulo/aba sob demanda ao navegar
   useEffect(() => {
-    if (!activeGroup) return;
+    if (!activeGroup || routeState.isRehearsalPackages) return;
     if (mainModule === 'dashboard' || mainModule === 'schedules') {
       loadSchedules();
     } else if (mainModule === 'repertoire') {
@@ -263,7 +267,7 @@ export default function App() {
       else if (activeTab === 'folders') loadFolders();
       else if (activeTab === 'artists') loadArtists();
     }
-  }, [mainModule, activeTab, activeGroup]);
+  }, [mainModule, activeTab, activeGroup, routeState.isRehearsalPackages]);
 
   const loadSubscription = async (minId: string) => {
     const reqId = ++subscriptionRequestRef.current;
@@ -274,8 +278,10 @@ export default function App() {
 
       const isSuspended = summary.subscription.accessMode === 'suspended' || summary.subscription.administrativelySuspended;
       if (!isSuspended) {
-        loadCounts(minId);
-        loadClassifications(minId);
+        if (!isLocalOnlyRouteRef.current) {
+          loadCounts(minId);
+          loadClassifications(minId);
+        }
       } else {
         ++songRequestRef.current;
         ++schedulesRequestRef.current;
@@ -295,8 +301,10 @@ export default function App() {
     } catch (err) {
       console.warn('Erro ao consultar assinatura do ministério:', err);
       if (activeGroupIdRef.current !== minId || subscriptionRequestRef.current !== reqId) return;
-      loadCounts(minId);
-      loadClassifications(minId);
+      if (!isLocalOnlyRouteRef.current) {
+        loadCounts(minId);
+        loadClassifications(minId);
+      }
     }
   };
 
@@ -339,6 +347,7 @@ export default function App() {
   }, [search, filters]);
 
   const clearClientSession = () => {
+    invalidateActiveRehearsalLibrarySession();
     ++authGenerationRef.current;
     ++groupsRequestRef.current;
     ++songRequestRef.current;
@@ -1002,6 +1011,19 @@ export default function App() {
     );
   }
 
+  if (routeState.isRehearsalPackages) {
+    return (
+      <>
+        <RehearsalPackageLibraryView
+          currentUser={currentUser}
+          onNavigateBack={() => navigate('/')}
+          showToast={showToast}
+        />
+        {toastContainer}
+      </>
+    );
+  }
+
   return (
     <div className="app-shell" style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-color)' }}>
       {/* Sidebar */}
@@ -1253,6 +1275,24 @@ export default function App() {
           >
             <Music size={20} />
             {sidebarOpen && <span>Exercícios vocais</span>}
+          </button>
+
+          <button
+            type="button"
+            data-testid="sidebar-rehearsal-packages-btn"
+            onClick={() => navigate('/pacotes-ensaio')}
+            title={sidebarOpen ? undefined : 'Pacotes de ensaio locais'}
+            aria-current={routeState.isRehearsalPackages ? 'page' : undefined}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: sidebarOpen ? 'flex-start' : 'center',
+              gap: '12px', padding: sidebarOpen ? '10px 14px' : '10px 0', borderRadius: '8px', border: 'none',
+              minHeight: '44px',
+              backgroundColor: routeState.isRehearsalPackages ? 'var(--primary-color)' : 'transparent',
+              color: routeState.isRehearsalPackages ? '#FFFFFF' : 'var(--surface-sidebar-text)', cursor: 'pointer', fontWeight: 600, textAlign: 'left',
+            }}
+          >
+            <HardDrive size={20} />
+            {sidebarOpen && <span>Pacotes de ensaio</span>}
           </button>
 
           <button

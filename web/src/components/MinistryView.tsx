@@ -18,7 +18,7 @@ import { useRepertoireDialog } from './useRepertoireDialog';
 import {
   Edit2, Check, X, UserPlus, Users, Info, Link, Shield, Tag,
   Layers, Trash2, LogOut, ChevronRight, MoreVertical, Plus, User,
-  CalendarDays, AtSign, Copy, CheckCircle, Sparkles, MessageSquare, Music,
+  CalendarDays, AtSign, Copy, CheckCircle, Sparkles, MessageSquare, Music, HardDrive,
 } from 'lucide-react';
 
 interface MinistryMemberItem {
@@ -756,6 +756,25 @@ export function MinistryView({
                 <div>
                   <div className="ministry-action-title">Exercícios vocais</div>
                   <div className="ministry-action-desc">Aquecimento vocal e treino guiado com piano</div>
+                </div>
+              </div>
+              <ChevronRight size={16} className="ministry-chevron" />
+            </button>
+            {/* Pacotes de ensaio locais — ACTIVE */}
+            <button
+              type="button"
+              className="ministry-action-row-btn"
+              data-testid="navigate-rehearsal-packages-btn"
+              onClick={() => navigate('/pacotes-ensaio')}
+              aria-label="Abrir pacotes de ensaio locais"
+            >
+              <div className="ministry-action-row-left">
+                <div className="ministry-action-icon primary">
+                  <HardDrive size={18} aria-hidden="true" />
+                </div>
+                <div>
+                  <div className="ministry-action-title">Pacotes de ensaio locais</div>
+                  <div className="ministry-action-desc">Importar e gerenciar pacotes .louvaio-rehearsal.zip offline</div>
                 </div>
               </div>
               <ChevronRight size={16} className="ministry-chevron" />

@@ -139,6 +139,18 @@ export interface ValidateRehearsalPackageOptions {
   maxChunkBytes?: number;
   maxMemoryBudgetBytes?: number;
   existingPackages?: readonly ExistingPackageRecord[];
+  onProgress?: (processedBytes: number, totalBytes: number) => void;
+}
+
+export interface RehearsalEntryWritableSink {
+  write(chunk: Uint8Array): Promise<void>;
+  close(): Promise<void>;
+  abort?(reason?: unknown): Promise<void>;
+}
+
+export interface ExtractValidatedRehearsalPackageOptions extends ValidateRehearsalPackageOptions {
+  openTargetSink: (entry: VerifiedRehearsalEntry) => Promise<RehearsalEntryWritableSink>;
+  onExtractProgress?: (extractedBytes: number, totalBytes: number) => void;
 }
 
 export interface RehearsalPackageIdentity {
@@ -1226,10 +1238,106 @@ async function parseAndValidateCentralDirectory(
   }
 }
 
+class SinkIoError extends Error {
+  readonly originalError: unknown;
+
+  constructor(originalError: unknown) {
+    super(originalError instanceof Error ? originalError.message : String(originalError));
+    this.originalError = originalError;
+  }
+}
+
+async function runSinkIo<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (err) {
+    throw new SinkIoError(err);
+  }
+}
+
+async function streamDeflateEntry(
+  source: BudgetedByteSource,
+  entry: ParsedZipCdEntry,
+  maxChunkBytes: number,
+  onOutputChunk: (chunk: Uint8Array) => void | Promise<void>,
+): Promise<void> {
+  if (typeof DecompressionStream !== 'function') {
+    throw new ValidationFailure(
+      'unsupported',
+      'UNSUPPORTED_COMPRESSION_METHOD',
+      'Web DecompressionStream is unavailable in this environment.',
+    );
+  }
+  const ds = new DecompressionStream('deflate-raw');
+  const writer = ds.writable.getWriter();
+  const reader = ds.readable.getReader();
+
+  let failure: unknown = null;
+  let aborted = false;
+
+  const readerPromise = (async () => {
+    try {
+      while (!aborted) {
+        source.checkAborted();
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          await onOutputChunk(value);
+        }
+      }
+    } catch (err) {
+      if (!aborted) {
+        failure = err;
+        aborted = true;
+        await reader.cancel().catch(() => undefined);
+        await writer.abort().catch(() => undefined);
+      }
+    }
+  })();
+
+  const writerPromise = (async () => {
+    try {
+      let pos = 0;
+      const sliceSize = Math.min(DEFLATE_SLICE_BYTES, maxChunkBytes);
+      while (pos < entry.compressedSize && !aborted) {
+        source.checkAborted();
+        const len = Math.min(sliceSize, entry.compressedSize - pos);
+        const slice = await source.readSingleBounded(entry.dataOffset + pos, len);
+        if (aborted) break;
+        await writer.write(slice as unknown as BufferSource);
+        pos += slice.byteLength;
+      }
+      if (!aborted) {
+        await writer.close();
+      }
+    } catch (err) {
+      if (!aborted) {
+        failure = err;
+        aborted = true;
+        await reader.cancel().catch(() => undefined);
+        await writer.abort().catch(() => undefined);
+      }
+    }
+  })();
+
+  await Promise.all([writerPromise, readerPromise]);
+  if (failure) {
+    if (failure instanceof SinkIoError || failure instanceof ValidationFailure) {
+      throw failure;
+    }
+    throw new ValidationFailure(
+      'corrupted',
+      'INVALID_ZIP_ARCHIVE',
+      `Corrupted DEFLATE stream in ${entry.rawPath}: ${failure instanceof Error ? failure.message : String(failure)}`,
+    );
+  }
+}
+
 async function streamAndVerifyManifest(
   source: BudgetedByteSource,
   entry: ParsedZipCdEntry,
   maxChunkBytes: number,
+  onChunkBytes?: (delta: number) => void,
 ): Promise<{ bytes: Uint8Array; sha256: string; actualUncompressedBytes: number }> {
   const crc32 = new Crc32Hasher();
   const sha256 = new Sha256Hasher();
@@ -1288,6 +1396,7 @@ async function streamAndVerifyManifest(
     chunks.push(copy);
     crc32.update(copy);
     sha256.update(copy);
+    onChunkBytes?.(copy.byteLength);
   };
 
   try {
@@ -1301,76 +1410,7 @@ async function streamAndVerifyManifest(
         pos += chunk.byteLength;
       }
     } else {
-      if (typeof DecompressionStream !== 'function') {
-        throw new ValidationFailure(
-          'unsupported',
-          'UNSUPPORTED_COMPRESSION_METHOD',
-          'Web DecompressionStream is unavailable in this environment.',
-        );
-      }
-      const ds = new DecompressionStream('deflate-raw');
-      const writer = ds.writable.getWriter();
-      const reader = ds.readable.getReader();
-
-      let failure: unknown = null;
-      let aborted = false;
-
-      const readerPromise = (async () => {
-        try {
-          while (!aborted) {
-            source.checkAborted();
-            const { value, done } = await reader.read();
-            if (done) break;
-            if (value) {
-              appendOutputChunk(value);
-            }
-          }
-        } catch (err) {
-          if (!aborted) {
-            failure = err;
-            aborted = true;
-            await reader.cancel().catch(() => undefined);
-            await writer.abort().catch(() => undefined);
-          }
-        }
-      })();
-
-      const writerPromise = (async () => {
-        try {
-          let pos = 0;
-          const sliceSize = Math.min(DEFLATE_SLICE_BYTES, maxChunkBytes);
-          while (pos < entry.compressedSize && !aborted) {
-            source.checkAborted();
-            const len = Math.min(sliceSize, entry.compressedSize - pos);
-            const slice = await source.readSingleBounded(entry.dataOffset + pos, len);
-            if (aborted) break;
-            await writer.write(slice as unknown as BufferSource);
-            pos += slice.byteLength;
-          }
-          if (!aborted) {
-            await writer.close();
-          }
-        } catch (err) {
-          if (!aborted) {
-            failure = err;
-            aborted = true;
-            await reader.cancel().catch(() => undefined);
-            await writer.abort().catch(() => undefined);
-          }
-        }
-      })();
-
-      await Promise.all([writerPromise, readerPromise]);
-      if (failure) {
-        if (failure instanceof ValidationFailure) {
-          throw failure;
-        }
-        throw new ValidationFailure(
-          'corrupted',
-          'INVALID_ZIP_ARCHIVE',
-          `Corrupted DEFLATE stream in manifest.json: ${failure instanceof Error ? failure.message : String(failure)}`,
-        );
-      }
+      await streamDeflateEntry(source, entry, maxChunkBytes, appendOutputChunk);
     }
 
     if (actualUncompressedBytes !== entry.uncompressedSize) {
@@ -2613,10 +2653,10 @@ function computeCompositeSha256(
   return hasher.digestHex();
 }
 
-export async function validateRehearsalPackage(
-  input: RehearsalPackageInput,
-  options: ValidateRehearsalPackageOptions = {},
-): Promise<RehearsalPackageValidationResult> {
+function resolveBudgetOptions(options: ValidateRehearsalPackageOptions): {
+  maxChunkBytes: number;
+  maxMemoryBudgetBytes: number;
+} {
   const requestedChunkBytes =
     typeof options.maxChunkBytes === 'number' && Number.isFinite(options.maxChunkBytes)
       ? Math.floor(options.maxChunkBytes)
@@ -2629,6 +2669,14 @@ export async function validateRehearsalPackage(
     typeof options.maxMemoryBudgetBytes === 'number' && Number.isFinite(options.maxMemoryBudgetBytes)
       ? Math.floor(options.maxMemoryBudgetBytes)
       : LIMITS_V1.defaultMaxMemoryBudgetBytes;
+  return { maxChunkBytes, maxMemoryBudgetBytes };
+}
+
+export async function validateRehearsalPackage(
+  input: RehearsalPackageInput,
+  options: ValidateRehearsalPackageOptions = {},
+): Promise<RehearsalPackageValidationResult> {
+  const { maxChunkBytes, maxMemoryBudgetBytes } = resolveBudgetOptions(options);
   const includeSourceCopy = options.includeSourceCopy ?? false;
   const availableStorageBytes =
     options.availableStorageBytes !== undefined ? options.availableStorageBytes : null;
@@ -2744,10 +2792,18 @@ export async function validateRehearsalPackage(
     }
 
     const manifestZipEntry = entryByPath.get('manifest.json')!;
+    let manifestStreamedBytes = 0;
     const manifestStreamResult = await streamAndVerifyManifest(
       budgetedSource,
       manifestZipEntry,
       maxChunkBytes,
+      (delta) => {
+        manifestStreamedBytes += delta;
+        options.onProgress?.(
+          Math.min(manifestStreamedBytes, declaredExtractedBytes),
+          declaredExtractedBytes,
+        );
+      },
     );
 
     actualExtractedBytes += manifestStreamResult.actualUncompressedBytes;
@@ -2847,6 +2903,10 @@ export async function validateRehearsalPackage(
         () => actualExtractedBytes,
         (delta) => {
           actualExtractedBytes += delta;
+          options.onProgress?.(
+            Math.min(actualExtractedBytes, declaredExtractedBytes),
+            declaredExtractedBytes,
+          );
         },
       );
       verifiedEntries.push(verified);
@@ -2885,5 +2945,251 @@ export async function validateRehearsalPackage(
     }
     const message = err instanceof Error ? err.message : String(err);
     return buildResult('corrupted', 'INVALID_ZIP_ARCHIVE', message, 'not_applicable');
+  }
+}
+
+export async function validateAndExtractRehearsalPackage(
+  input: RehearsalPackageInput,
+  options: ExtractValidatedRehearsalPackageOptions,
+): Promise<RehearsalPackageValidationResult> {
+  const validation = await validateRehearsalPackage(input, options);
+  if (!validation.readyForPublication) {
+    return validation;
+  }
+
+  const { maxChunkBytes, maxMemoryBudgetBytes } = resolveBudgetOptions(options);
+  let budgetedSource: BudgetedByteSource | null = null;
+
+  const buildRejectedResult = (
+    status: Exclude<RehearsalPackageStatus, 'valid'>,
+    errorCode: RehearsalPackageErrorCode,
+    errorMessage: string,
+  ): RehearsalPackageValidationResult => ({
+    ...validation,
+    status,
+    errorCode,
+    errorMessage,
+    readyForPublication: false,
+    publicationState: 'rejected',
+    songVersionBindingAuthorized: false,
+    idempotencyDisposition: 'not_applicable',
+    budget: {
+      ...validation.budget,
+      peakWorkingMemoryBytes: Math.max(
+        validation.budget.peakWorkingMemoryBytes,
+        budgetedSource?.peakWorkingMemoryBytes ?? 0,
+      ),
+      maxObservedSingleReadBytes: Math.max(
+        validation.budget.maxObservedSingleReadBytes,
+        budgetedSource?.maxObservedSingleReadBytes ?? 0,
+      ),
+    },
+    verifiedEntries: [],
+  });
+
+  try {
+    if (options.signal?.aborted) {
+      throw new ValidationFailure('cancelled', 'VALIDATION_CANCELLED', 'Extraction cancelled before Phase 2.');
+    }
+
+    const rawSource = toRandomAccessByteSource(input);
+    budgetedSource = new BudgetedByteSource(
+      rawSource,
+      maxChunkBytes,
+      maxMemoryBudgetBytes,
+      options.signal,
+    );
+    budgetedSource.allocateWorkingMemory(maxChunkBytes);
+    budgetedSource.releaseWorkingMemory(maxChunkBytes);
+
+    const eocd = await locateEocdAndCd(budgetedSource, maxChunkBytes);
+    const cd = await parseAndValidateCentralDirectory(budgetedSource, eocd);
+
+    const entryByPath = new Map<string, ParsedZipCdEntry>();
+    for (const entry of cd.entries) {
+      entryByPath.set(entry.rawPath, entry);
+    }
+
+    const totalExtractBytes = validation.verifiedEntries.reduce(
+      (sum, entry) => sum + entry.uncompressedBytes,
+      0,
+    );
+    let extractedBytes = 0;
+
+    for (const entry of validation.verifiedEntries) {
+      budgetedSource.checkAborted();
+      const zipEntry = entryByPath.get(entry.path);
+      if (
+        !zipEntry ||
+        zipEntry.compressionMethod !== entry.compressionMethod ||
+        zipEntry.crc32 !== entry.crc32 ||
+        zipEntry.compressedSize !== entry.compressedBytes ||
+        zipEntry.uncompressedSize !== entry.uncompressedBytes
+      ) {
+        throw new ValidationFailure(
+          'corrupted',
+          'HEADER_MISMATCH',
+          `ZIP entry metadata changed before extraction for ${entry.path}.`,
+        );
+      }
+
+      if (entry.role !== 'manifest' && zipEntry.compressionMethod !== ZIP_METHOD_STORE) {
+        throw new ValidationFailure(
+          'unsupported',
+          'UNSUPPORTED_COMPRESSION_METHOD',
+          `Media entry ${entry.path} must use STORE (0), got ${zipEntry.compressionMethod}.`,
+        );
+      }
+
+      const sink = await runSinkIo(() => options.openTargetSink(entry));
+      let closed = false;
+      let closeAttempted = false;
+      let lastErr: unknown = null;
+
+      try {
+        const crc32 = new Crc32Hasher();
+        const sha256 = new Sha256Hasher();
+        let entryWritten = 0;
+
+        if (zipEntry.compressionMethod === ZIP_METHOD_STORE) {
+          let pos = 0;
+          while (pos < zipEntry.compressedSize) {
+            budgetedSource.checkAborted();
+            const sliceLen = Math.min(maxChunkBytes, zipEntry.compressedSize - pos);
+            const chunk = await budgetedSource.readSingleBounded(zipEntry.dataOffset + pos, sliceLen);
+            crc32.update(chunk);
+            sha256.update(chunk);
+            await runSinkIo(() => sink.write(chunk));
+            entryWritten += chunk.byteLength;
+            pos += chunk.byteLength;
+            extractedBytes += chunk.byteLength;
+            options.onExtractProgress?.(
+              Math.min(extractedBytes, totalExtractBytes),
+              totalExtractBytes,
+            );
+          }
+        } else if (entry.role === 'manifest' && zipEntry.compressionMethod === ZIP_METHOD_DEFLATE) {
+          await streamDeflateEntry(
+            budgetedSource,
+            zipEntry,
+            maxChunkBytes,
+            async (decompressedChunk) => {
+              if (decompressedChunk.byteLength === 0) return;
+              if (entryWritten + decompressedChunk.byteLength > zipEntry.compressedSize * LIMITS_V1.maxCompressionRatio) {
+                throw new ValidationFailure(
+                  'corrupted',
+                  'ZIP_BOMB_RATIO_EXCEEDED',
+                  `DEFLATE manifest stream exceeded 100:1 ratio (${entryWritten + decompressedChunk.byteLength} > ${zipEntry.compressedSize * LIMITS_V1.maxCompressionRatio}).`,
+                );
+              }
+              if (entryWritten + decompressedChunk.byteLength > LIMITS_V1.maxManifestBytes) {
+                throw new ValidationFailure(
+                  'corrupted',
+                  'MANIFEST_SIZE_LIMIT_EXCEEDED',
+                  `manifest.json exceeded ${LIMITS_V1.maxManifestBytes} bytes.`,
+                );
+              }
+
+              for (let off = 0; off < decompressedChunk.byteLength; off += maxChunkBytes) {
+                budgetedSource!.checkAborted();
+                const piece = decompressedChunk.subarray(
+                  off,
+                  Math.min(decompressedChunk.byteLength, off + maxChunkBytes),
+                );
+                crc32.update(piece);
+                sha256.update(piece);
+                await runSinkIo(() => sink.write(piece));
+                entryWritten += piece.byteLength;
+                extractedBytes += piece.byteLength;
+                options.onExtractProgress?.(
+                  Math.min(extractedBytes, totalExtractBytes),
+                  totalExtractBytes,
+                );
+              }
+            },
+          );
+        } else {
+          throw new ValidationFailure(
+            'unsupported',
+            'UNSUPPORTED_COMPRESSION_METHOD',
+            `Unsupported compression method ${zipEntry.compressionMethod} for ${entry.path}.`,
+          );
+        }
+
+        budgetedSource.checkAborted();
+
+        if (entryWritten !== entry.uncompressedBytes) {
+          throw new ValidationFailure(
+            'corrupted',
+            'HEADER_MISMATCH',
+            `Extracted byte count ${entryWritten} differs from verified ${entry.uncompressedBytes} for ${entry.path}.`,
+          );
+        }
+        if (crc32.digest() !== entry.crc32) {
+          throw new ValidationFailure(
+            'corrupted',
+            'CRC_MISMATCH',
+            `CRC-32 mismatch during extraction for ${entry.path}.`,
+          );
+        }
+        if (sha256.digestHex() !== entry.sha256) {
+          throw new ValidationFailure(
+            'incomplete',
+            'SHA256_MISMATCH',
+            `SHA-256 mismatch during extraction for ${entry.path}.`,
+          );
+        }
+
+        await runSinkIo(() => {
+          closeAttempted = true;
+          return sink.close();
+        });
+        closed = true;
+      } catch (sinkOrVerifyErr) {
+        lastErr = sinkOrVerifyErr;
+        throw sinkOrVerifyErr;
+      } finally {
+        if (!closed) {
+          const abortReason = lastErr instanceof SinkIoError ? lastErr.originalError : lastErr;
+          if (sink.abort) {
+            try {
+              await sink.abort(abortReason);
+            } catch {
+              // Preserve primary error
+            }
+          } else if (!closeAttempted) {
+            try {
+              await sink.close();
+            } catch {
+              // Preserve primary error
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      ...validation,
+      budget: {
+        ...validation.budget,
+        peakWorkingMemoryBytes: Math.max(
+          validation.budget.peakWorkingMemoryBytes,
+          budgetedSource.peakWorkingMemoryBytes,
+        ),
+        maxObservedSingleReadBytes: Math.max(
+          validation.budget.maxObservedSingleReadBytes,
+          budgetedSource.maxObservedSingleReadBytes,
+        ),
+      },
+    };
+  } catch (err) {
+    if (err instanceof SinkIoError) {
+      throw err.originalError;
+    }
+    if (err instanceof ValidationFailure) {
+      return buildRejectedResult(err.status, err.errorCode, err.message);
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return buildRejectedResult('corrupted', 'INVALID_ZIP_ARCHIVE', message);
   }
 }
