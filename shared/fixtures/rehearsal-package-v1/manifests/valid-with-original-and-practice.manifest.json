@@ -1,0 +1,131 @@
+{
+  "format": "louvaio-rehearsal",
+  "formatVersion": 1,
+  "requiredFeatures": [
+    "stems-4",
+    "timeline-v1",
+    "alignment-v1",
+    "practice-v1",
+    "original-optional"
+  ],
+  "packageId": "22222222-2222-4222-8222-222222222222",
+  "revision": 2,
+  "createdAt": "2026-11-17T12:30:00Z",
+  "displayName": "Ensaio Completo com Pratica",
+  "source": {
+    "sha256": "971ed825290b69b2a6cb791899921a9c075e1f00a46886a0ea3592d1f698d733",
+    "sanitizedFileName": "ensaio-completo-origem.wav",
+    "durationFrames": 4410,
+    "usageRightEvidence": "Audio sintetico autorizado localmente pelo proprietario"
+  },
+  "provenance": {
+    "toolName": "louvaio-synthetic-fixture",
+    "toolVersion": "1.0.0",
+    "modelName": "deterministic-pcm-v1",
+    "checkpointId": "fixture-with-practice",
+    "checkpointSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "parameters": {
+      "sampleRate": 44100,
+      "channels": 2,
+      "trimApplied": false
+    },
+    "seed": 10,
+    "licenseReferences": [
+      "LouvAIO internal synthetic test fixture"
+    ]
+  },
+  "timeline": {
+    "sampleRate": 44100,
+    "totalFrames": 4410,
+    "channels": 2,
+    "timeOriginFrame": 0
+  },
+  "original": {
+    "included": true,
+    "path": "audio/original.wav",
+    "container": "wav",
+    "codec": "pcm_s16le",
+    "bitsPerSample": 16,
+    "byteLength": 17684,
+    "sha256": "971ed825290b69b2a6cb791899921a9c075e1f00a46886a0ea3592d1f698d733",
+    "sampleRate": 44100,
+    "channels": 2,
+    "decodedFrames": 4410
+  },
+  "stems": [
+    {
+      "id": "vocals",
+      "path": "audio/stems/vocals.wav",
+      "container": "wav",
+      "codec": "pcm_s16le",
+      "bitsPerSample": 16,
+      "byteLength": 17684,
+      "sha256": "f7d53c6893308c0b209e755b4151c83477fcd15df333ef35a30c77c14a1c4d7e",
+      "sampleRate": 44100,
+      "channels": 2,
+      "decodedFrames": 4410
+    },
+    {
+      "id": "drums",
+      "path": "audio/stems/drums.wav",
+      "container": "wav",
+      "codec": "pcm_s16le",
+      "bitsPerSample": 16,
+      "byteLength": 17684,
+      "sha256": "80d6ca02868220bdc36b7035d1c39c7f196817729f13639c6a00c1fbca9600cc",
+      "sampleRate": 44100,
+      "channels": 2,
+      "decodedFrames": 4410
+    },
+    {
+      "id": "bass",
+      "path": "audio/stems/bass.wav",
+      "container": "wav",
+      "codec": "pcm_s16le",
+      "bitsPerSample": 16,
+      "byteLength": 17684,
+      "sha256": "055a75c33b046955347ca2e20c86b75ccc99d45c98ad869019a79dbc6381b137",
+      "sampleRate": 44100,
+      "channels": 2,
+      "decodedFrames": 4410
+    },
+    {
+      "id": "other",
+      "path": "audio/stems/other.wav",
+      "container": "wav",
+      "codec": "pcm_s16le",
+      "bitsPerSample": 16,
+      "byteLength": 17684,
+      "sha256": "334305a04e4dd28f3fc320f96e3bed4a194cb9adde4f9e98d8248469fe735776",
+      "sampleRate": 44100,
+      "channels": 2,
+      "decodedFrames": 4410
+    }
+  ],
+  "alignment": {
+    "timeOriginFrame": 0,
+    "method": "explicit-trim",
+    "initialTrimFrames": 0,
+    "trailingTrimFrames": 0
+  },
+  "practice": {
+    "bpm": 120,
+    "timeSignature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "firstBeatOffsetFrames": 0,
+    "loopAFrame": 0,
+    "loopBFrame": 4410
+  },
+  "rights": {
+    "declaration": "Registro informativo local de direitos de uso para ensaio.",
+    "scope": "rehearsal-local",
+    "exportAllowed": true,
+    "attributions": [
+      "LouvAIO Synthetic Fixture"
+    ],
+    "isLegalProof": false,
+    "isDrm": false
+  }
+}

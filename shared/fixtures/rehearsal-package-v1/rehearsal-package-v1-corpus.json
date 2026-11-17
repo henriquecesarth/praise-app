@@ -1,0 +1,930 @@
+{
+  "format": "louvaio.rehearsal-package-corpus",
+  "version": 1,
+  "limits": {
+    "maxCompressedBytes": 2147483648,
+    "maxExtractedBytes": 4294967296,
+    "maxEntries": 32,
+    "maxManifestBytes": 262144,
+    "maxPathDepth": 3,
+    "maxCompressionRatio": 100,
+    "maxDurationSeconds": 1800,
+    "maxDurationFrames": 79380000,
+    "minFreeSpaceReserveBytes": 268435456,
+    "minFreeSpaceReserveRatio": 0.1,
+    "defaultMaxChunkBytes": 65536,
+    "defaultMaxMemoryBudgetBytes": 67108864
+  },
+  "cases": [
+    {
+      "id": "valid-wav-minimal",
+      "description": "Minimal valid 4-stem WAV PCM16 package without original",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {}
+      },
+      "expected": {
+        "status": "valid",
+        "errorCode": null,
+        "readyForPublication": true,
+        "publicationState": "staged_validated",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "new_package",
+        "verifiedEntryCount": 5
+      }
+    },
+    {
+      "id": "valid-with-original-and-practice-deflate-manifest",
+      "description": "Valid package with original WAV, practice metadata, and DEFLATE-compressed manifest.json",
+      "recipe": {
+        "base": "complete_wav",
+        "manifestCompression": "deflate",
+        "mutations": {}
+      },
+      "expected": {
+        "status": "valid",
+        "errorCode": null,
+        "readyForPublication": true,
+        "publicationState": "staged_validated",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "new_package",
+        "verifiedEntryCount": 6
+      }
+    },
+    {
+      "id": "valid-flac-4stems-with-trim",
+      "description": "Valid 4-stem FLAC 24-bit package with explicit frame trim alignment",
+      "recipe": {
+        "base": "flac_4stems_trimmed",
+        "manifestCompression": "store",
+        "mutations": {}
+      },
+      "expected": {
+        "status": "valid",
+        "errorCode": null,
+        "readyForPublication": true,
+        "publicationState": "staged_validated",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "new_package",
+        "verifiedEntryCount": 5
+      }
+    },
+    {
+      "id": "valid-opus-4stems",
+      "description": "Valid 4-stem Ogg Opus package",
+      "recipe": {
+        "base": "opus_4stems",
+        "manifestCompression": "store",
+        "mutations": {}
+      },
+      "expected": {
+        "status": "valid",
+        "errorCode": null,
+        "readyForPublication": true,
+        "publicationState": "staged_validated",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "new_package",
+        "verifiedEntryCount": 5
+      }
+    },
+    {
+      "id": "valid-m4a-4stems-with-mp3-original",
+      "description": "Valid 4-stem M4A AAC-LC package with MP3 original input",
+      "recipe": {
+        "base": "m4a_4stems_mp3_original",
+        "manifestCompression": "store",
+        "mutations": {}
+      },
+      "expected": {
+        "status": "valid",
+        "errorCode": null,
+        "readyForPublication": true,
+        "publicationState": "staged_validated",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "new_package",
+        "verifiedEntryCount": 6
+      }
+    },
+    {
+      "id": "valid-idempotent-noop",
+      "description": "Re-validating identical packageId and compositeSha256 yields idempotent_noop",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "existingPackageSeed": "same_identity_same_hash"
+        }
+      },
+      "expected": {
+        "status": "valid",
+        "errorCode": null,
+        "readyForPublication": true,
+        "publicationState": "staged_validated",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "idempotent_noop",
+        "verifiedEntryCount": 5
+      }
+    },
+    {
+      "id": "conflict-same-id-different-hash",
+      "description": "Same packageId with different compositeSha256 yields conflict without overwriting",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "existingPackageSeed": "same_identity_different_hash"
+        }
+      },
+      "expected": {
+        "status": "conflict",
+        "errorCode": "PACKAGE_IDENTITY_CONFLICT",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "conflict_detected",
+        "verifiedEntryCount": 5
+      }
+    },
+    {
+      "id": "incomplete-missing-stem-in-manifest",
+      "description": "Missing bass stem in manifest yields incomplete",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "dropStemId": "bass"
+        }
+      },
+      "expected": {
+        "status": "incomplete",
+        "errorCode": "MISSING_REQUIRED_STEM",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "incomplete-missing-stem-in-zip",
+      "description": "Stem declared in manifest missing from ZIP yields incomplete",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "omitZipEntry": "stems/drums.wav"
+        }
+      },
+      "expected": {
+        "status": "incomplete",
+        "errorCode": "MISSING_REQUIRED_STEM",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "incomplete-missing-original-in-zip",
+      "description": "Original marked included=true in manifest but missing in ZIP yields incomplete",
+      "recipe": {
+        "base": "complete_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "omitZipEntry": "audio/original.wav"
+        }
+      },
+      "expected": {
+        "status": "incomplete",
+        "errorCode": "MISSING_ORIGINAL_ENTRY",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "incomplete-sha256-mismatch",
+      "description": "Valid ZIP CRC-32 but SHA-256 differs from manifest yields incomplete",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "stemSha256Mismatch": "vocals"
+        }
+      },
+      "expected": {
+        "status": "incomplete",
+        "errorCode": "SHA256_MISMATCH",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "incomplete-timeline-sample-rate",
+      "description": "Non-44100 sampleRate yields TIMELINE_MISMATCH",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "timelinePatch": {
+            "sampleRate": 48000
+          }
+        }
+      },
+      "expected": {
+        "status": "incomplete",
+        "errorCode": "TIMELINE_MISMATCH",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "incomplete-alignment-frame-mismatch",
+      "description": "Trimmed frames not matching timeline.totalFrames yields TIMELINE_MISMATCH",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "alignmentPatch": {
+            "initialTrimFrames": 100
+          }
+        }
+      },
+      "expected": {
+        "status": "incomplete",
+        "errorCode": "TIMELINE_MISMATCH",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "incomplete-alignment-silence-method",
+      "description": "Silence-based alignment method is rejected in v1",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "alignmentPatch": {
+            "method": "silence-detection"
+          }
+        }
+      },
+      "expected": {
+        "status": "incomplete",
+        "errorCode": "TIMELINE_MISMATCH",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "unsupported-future-format-version",
+      "description": "Manifest formatVersion=2 yields unsupported",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "manifestPatch": {
+            "formatVersion": 2
+          }
+        }
+      },
+      "expected": {
+        "status": "unsupported",
+        "errorCode": "UNSUPPORTED_FORMAT_VERSION",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "unsupported-unknown-format",
+      "description": "Manifest unknown format yields unsupported",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "manifestPatch": {
+            "format": "other-rehearsal-bundle"
+          }
+        }
+      },
+      "expected": {
+        "status": "unsupported",
+        "errorCode": "UNSUPPORTED_FORMAT",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "unsupported-required-feature",
+      "description": "Unknown requiredFeatures entry yields unsupported",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "manifestPatch": {
+            "requiredFeatures": [
+              "stems-4",
+              "spatial-atmos-v9"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "status": "unsupported",
+        "errorCode": "UNSUPPORTED_REQUIRED_FEATURE",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "unsupported-mp3-stem",
+      "description": "MP3 codec in stems is forbidden by ADR and yields unsupported",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "stemCodecMp3": "vocals"
+        }
+      },
+      "expected": {
+        "status": "unsupported",
+        "errorCode": "UNSUPPORTED_CODEC",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "unsupported-deflate-audio-entry",
+      "description": "DEFLATE compression on audio entry is rejected per STORE ADR rule",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "audioCompressionDeflate": "stems/vocals.wav"
+        }
+      },
+      "expected": {
+        "status": "unsupported",
+        "errorCode": "UNSUPPORTED_COMPRESSION_METHOD",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-empty-archive",
+      "description": "Zero-byte input yields EMPTY_ARCHIVE",
+      "recipe": {
+        "base": "raw_bytes",
+        "rawBytesHex": "",
+        "mutations": {}
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "EMPTY_ARCHIVE",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-invalid-zip-magic",
+      "description": "Non-ZIP random bytes yield INVALID_ZIP_ARCHIVE",
+      "recipe": {
+        "base": "raw_bytes",
+        "rawBytesHex": "524946462400000057415645666d7420",
+        "mutations": {}
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "INVALID_ZIP_ARCHIVE",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-truncated-eocd",
+      "description": "ZIP truncated at tail EOCD yields INVALID_ZIP_ARCHIVE",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "truncateTailBytes": 14
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "INVALID_ZIP_ARCHIVE",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-crc-mismatch",
+      "description": "Bit flip in ZIP entry payload with original CRC yields CRC_MISMATCH",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "flipPayloadByteWithoutUpdatingCrc": "stems/vocals.wav"
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "CRC_MISMATCH",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "corrupted-audio-header-spoofed-extension",
+      "description": "FLAC bytes placed in .wav entry with matching CRC and SHA-256 still fail binary audio header check",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "replaceEntryWithFlacBytesKeepingWavManifest": "vocals"
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "CORRUPTED_AUDIO_HEADER",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "corrupted-path-traversal-dotdot",
+      "description": "Zip Slip path ../evil.wav is rejected",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "renameZipEntry": {
+            "from": "stems/vocals.wav",
+            "to": "../evil.wav"
+          }
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "PATH_TRAVERSAL_OR_UNSAFE_PATH",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-path-absolute",
+      "description": "Absolute path /etc/passwd is rejected",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "renameZipEntry": {
+            "from": "stems/vocals.wav",
+            "to": "/stems/vocals.wav"
+          }
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "PATH_TRAVERSAL_OR_UNSAFE_PATH",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-path-drive-letter",
+      "description": "Windows drive letter path C:vocals.wav is rejected",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "renameZipEntry": {
+            "from": "stems/vocals.wav",
+            "to": "C:vocals.wav"
+          }
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "PATH_TRAVERSAL_OR_UNSAFE_PATH",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-path-backslash",
+      "description": "Backslash path separator stems\\vocals.wav is rejected",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "renameZipEntry": {
+            "from": "stems/vocals.wav",
+            "to": "stems\\vocals.wav"
+          }
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "PATH_TRAVERSAL_OR_UNSAFE_PATH",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-path-depth-exceeded",
+      "description": "Path deeper than 3 segments is rejected",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "renameZipEntry": {
+            "from": "stems/vocals.wav",
+            "to": "a/b/c/vocals.wav"
+          }
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "PATH_DEPTH_EXCEEDED",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-duplicate-case-insensitive",
+      "description": "Duplicate entry differing only by ASCII case collides",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "duplicateZipEntry": {
+            "copyFrom": "stems/vocals.wav",
+            "newPath": "stems/Vocals.wav"
+          }
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "DUPLICATE_OR_COLLIDING_ENTRY",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-duplicate-unicode-nfc-nfd",
+      "description": "Unicode NFC and NFD equivalent paths collide",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "addCollidingUnicodePair": true
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "DUPLICATE_OR_COLLIDING_ENTRY",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-encrypted-entry",
+      "description": "Encrypted ZIP flag rejects archive",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "setEncryptedFlag": "stems/vocals.wav"
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "ENCRYPTED_ENTRY_FORBIDDEN",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-symlink-entry",
+      "description": "POSIX symlink mode in externalAttributes rejects archive",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "setSymlinkAttr": "stems/vocals.wav"
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "SPECIAL_FILE_OR_SYMLINK_FORBIDDEN",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-nested-zip-extension",
+      "description": "Nested .zip extension entry is forbidden",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "addExtraZipEntry": {
+            "path": "nested/inner.zip",
+            "text": "not-a-zip"
+          }
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "NESTED_ARCHIVE_FORBIDDEN",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-nested-zip-magic",
+      "description": "Entry disguised as WAV but carrying PK ZIP magic bytes is rejected",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "embedNestedZipMagic": "vocals"
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "NESTED_ARCHIVE_FORBIDDEN",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "corrupted-zip-bomb-declared-ratio",
+      "description": "DEFLATE entry declaring >100:1 compression ratio is rejected immediately",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "deflate",
+        "mutations": {
+          "spoofManifestDeclaredSize": 250000
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "ZIP_BOMB_RATIO_EXCEEDED",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-zip-bomb-deflate-stream-lying-header",
+      "description": "DEFLATE bomb with spoofed small uncompressedSize header is stopped progressively by bytes read",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "deflate",
+        "mutations": {
+          "deflateBombManifest": true
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "ZIP_BOMB_RATIO_EXCEEDED",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-overlapping-entries",
+      "description": "ZIP entries with overlapping byte offsets are rejected",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "overlappingEntries": true
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "OVERLAPPING_ZIP_ENTRIES",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-too-many-entries",
+      "description": "More than 32 ZIP entries violates entry count limit",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "padToEntryCount": 33
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "ENTRY_COUNT_LIMIT_EXCEEDED",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-manifest-exceeds-256kib",
+      "description": "Manifest exceeding 256 KiB violates manifest size limit",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "manifestPaddingBytes": 270000
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "MANIFEST_SIZE_LIMIT_EXCEEDED",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    },
+    {
+      "id": "corrupted-forbidden-authority-field",
+      "description": "Manifest carrying ministryId/songId/versionId/userId authority field is rejected",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "manifestPatch": {
+            "ministryId": "min-forged-123"
+          }
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "FORBIDDEN_AUTHORITY_FIELD",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "corrupted-undeclared-zip-entry",
+      "description": "Extra file in ZIP not referenced in manifest is rejected",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "addExtraZipEntry": {
+            "path": "extra/sneaky.txt",
+            "text": "not declared"
+          }
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "UNDECLARED_ZIP_ENTRY",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "corrupted-duration-limit-exceeded",
+      "description": "Timeline exceeding 30 minutes (79380000 frames) is rejected",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {
+          "timelinePatch": {
+            "totalFrames": 79380001
+          }
+        }
+      },
+      "expected": {
+        "status": "corrupted",
+        "errorCode": "DURATION_LIMIT_EXCEEDED",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 1
+      }
+    },
+    {
+      "id": "insufficient-storage-space",
+      "description": "Available space below required extracted + 256 MiB reserve returns insufficientSpace",
+      "recipe": {
+        "base": "minimal_wav",
+        "manifestCompression": "store",
+        "mutations": {},
+        "options": {
+          "availableStorageBytes": 134217728
+        }
+      },
+      "expected": {
+        "status": "insufficientSpace",
+        "errorCode": "INSUFFICIENT_STORAGE_SPACE",
+        "readyForPublication": false,
+        "publicationState": "rejected",
+        "songVersionBindingAuthorized": false,
+        "idempotencyDisposition": "not_applicable",
+        "verifiedEntryCount": 0
+      }
+    }
+  ]
+}

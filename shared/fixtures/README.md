@@ -70,3 +70,11 @@ Fonte única: [harmony-analysis-v1.json](harmony-analysis-v1.json). `format = lo
 - `BassAnalysis`: reutiliza diretamente `bass`, `bassRole` e `inversion` da T2 (`chordTone` + `inversion >= 1` indica inversão real mesmo sem tonalidade; `nonChordTone` indica baixo externo ao acorde; `unspecified` indica posição fundamental).
 - Três estados em `analyzeDegree`: `analysis` (interpretação diatônica sustentada pelo `KeyContext` explícito), `indeterminate` (`missingKeyContext`, `invalidKeyContext`, `externalSlashBass`, `enharmonicMismatch`, `nonDiatonicToNaturalMinor`, `nonDiatonicChord`) e `unsupported` (entrada fora da gramática/contexto v1).
 - Corpus inicial com 61 vetores verificados entre tonalidades maiores (17), menores naturais (16), inversões/baixos externos (10), casos indeterminados (14) e não suportados (4). Empréstimos modais, dominantes secundárias e menor harmônica/melódica permanecem fora das regras de grau natural na v1 (`indeterminate`).
+
+## Rehearsal Package v1 — `.louvaio-rehearsal.zip` (T7)
+
+Especificação e corpus compartilhado em [rehearsal-package-v1/README.md](rehearsal-package-v1/README.md), manifestos de referência em [rehearsal-package-v1/manifests/](rehearsal-package-v1/manifests/valid-wav-minimal.manifest.json) e expectativas compartilhadas em [rehearsal-package-v1-corpus.json](rehearsal-package-v1/rehearsal-package-v1-corpus.json).
+
+- Formato `louvaio-rehearsal`, `formatVersion = 1`, `manifest.json` UTF-8 + exatamente quatro stems (`vocals`, `drums`, `bass`, `other`) em modo `STORE` e `original` opcional.
+- Pré-limites v1: `2 GiB` compactados, `4 GiB` extraídos, `32` entradas, `manifest.json <= 256 KiB`, profundidade `<= 3`, razão `<= 100:1`, duração `<= 30 min` (`79380000` frames em `44100` Hz), aplicados progressivamente aos bytes reais lidos.
+- Nenhum binário `.zip` ou áudio pessoal é versionado no Git; validadores TS e Dart sintetizam ZIPs determinísticos em memória/temporário a partir das receitas compartilhadas e falham fechados por padrão (`readyForPublication = true` somente quando `status === "valid"`, e `songVersionBindingAuthorized = false` na T7).
