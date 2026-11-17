@@ -270,6 +270,7 @@ Future<void> showChordPianoDiagramSheet(
   BuildContext context,
   String chordSymbol, {
   ChordDiagramInstrument initialInstrument = ChordDiagramInstrument.piano,
+  String? keyContext,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -279,6 +280,7 @@ Future<void> showChordPianoDiagramSheet(
     builder: (context) => ChordPianoDiagramSheet(
       chordSymbol: chordSymbol,
       initialInstrument: initialInstrument,
+      keyContext: keyContext,
     ),
   );
 }
@@ -287,26 +289,38 @@ Future<void> showChordPianoDiagramSheet(
 class ChordPianoDiagramSheet extends StatefulWidget {
   final String chordSymbol;
   final ChordDiagramInstrument initialInstrument;
+  final String? keyContext;
 
   const ChordPianoDiagramSheet({
     super.key,
     required this.chordSymbol,
     this.initialInstrument = ChordDiagramInstrument.piano,
+    this.keyContext,
   });
 
   @override
   State<ChordPianoDiagramSheet> createState() => _ChordPianoDiagramSheetState();
 }
 
+const List<String> _kHarmonyAnalysisKeyOptions = [
+  'C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B',
+  'Am', 'Bm', 'Cm', 'C#m', 'Dm', 'Em', 'Fm', 'F#m', 'Gm', 'G#m',
+];
+
 class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
   int _octaveOffset = 0;
   late ChordDiagramInstrument _instrument = widget.initialInstrument;
+  late String? _analysisKey = widget.keyContext;
+  bool _isKeyPickerOpen = false;
 
   @override
   void didUpdateWidget(covariant ChordPianoDiagramSheet oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.chordSymbol != widget.chordSymbol) {
       _octaveOffset = 0;
+    }
+    if (oldWidget.keyContext != widget.keyContext) {
+      _analysisKey = widget.keyContext;
     }
   }
 
@@ -364,25 +378,29 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
     final guitarLookup = _instrument == ChordDiagramInstrument.guitar
         ? lookupGuitarVoicing(widget.chordSymbol)
         : null;
+    final harmonyResult = analyzeDegree(widget.chordSymbol, key: _analysisKey);
 
-    final String summaryText;
+    final String baseSummaryText;
     if (_instrument == ChordDiagramInstrument.guitar && guitarLookup != null) {
       if (!guitarLookup.isAvailable || guitarLookup.primaryVoicing == null) {
-        summaryText =
+        baseSummaryText =
             'Diagrama indisponível para ${widget.chordSymbol} no violão. ${guitarLookup.message}';
       } else {
         final v = guitarLookup.primaryVoicing!;
         final barreSummary = v.barres.isNotEmpty
             ? ' Pestana na ${v.barres.first.fret}ª casa, dedo ${v.barres.first.finger}.'
             : '';
-        summaryText =
+        baseSummaryText =
             'Violão para ${v.chordSymbol}. Posição: ${v.positionName}. Afinação padrão E2 A2 D3 G3 B3 E4.$barreSummary Nota mais grave: ${v.lowestNote.note} na ${v.lowestNote.stringNumber}ª corda. Notas: ${v.soundingNotes.join(", ")}.';
       }
     } else {
-      summaryText =
+      baseSummaryText =
           'Acorde ${widget.chordSymbol}, qualidade $qualityTranslated. '
           'Notas: ${projection.activeNotes.map((n) => "${n.spelling} (${n.intervalName})").join(", ")}.';
     }
+    final summaryText = harmonyResult is HarmonyAnalyzed
+        ? '$baseSummaryText Grau harmônico: ${harmonyResult.analysis.degree} em ${harmonyResult.key.canonicalKey}.'
+        : baseSummaryText;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -657,6 +675,16 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
 
         const SizedBox(height: 14),
 
+        if (harmonyResult is! HarmonyUnsupported)
+          _buildHarmonySection(
+            context: context,
+            theme: theme,
+            qualityTranslated: qualityTranslated,
+            harmonyResult: harmonyResult,
+          ),
+
+        if (harmonyResult is! HarmonyUnsupported) const SizedBox(height: 14),
+
         // Disclaimer and didactic note
         Container(
           padding: const EdgeInsets.all(10),
@@ -692,6 +720,183 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildHarmonySection({
+    required BuildContext context,
+    required ThemeData theme,
+    required String qualityTranslated,
+    required HarmonyAnalysisResult harmonyResult,
+  }) {
+    final KeyContext? activeKey = harmonyResult is HarmonyAnalyzed
+        ? harmonyResult.key
+        : harmonyResult is HarmonyIndeterminate
+        ? harmonyResult.key
+        : null;
+    final BassAnalysis bassAnalysis = harmonyResult is HarmonyAnalyzed
+        ? harmonyResult.bassAnalysis
+        : (harmonyResult as HarmonyIndeterminate).bassAnalysis;
+    final String degreeText = harmonyResult is HarmonyAnalyzed
+        ? 'Grau harmônico: ${harmonyResult.analysis.degree} (${harmonyResult.analysis.degreeNumber}º grau em ${harmonyResult.key.canonicalKey})'
+        : 'Grau harmônico: Grau não determinado';
+    final String qualityText =
+        'Qualidade harmônica: ${harmonyResult is HarmonyAnalyzed ? harmonyResult.analysis.qualityLabel : qualityTranslated}';
+    final String bassText = 'Baixo / Inversão: ${bassAnalysis.label}';
+    final String explanationText = harmonyResult is HarmonyAnalyzed
+        ? harmonyResult.analysis.explanation
+        : (harmonyResult as HarmonyIndeterminate).explanation;
+
+    return Card(
+      key: const Key('chord_harmony_analysis'),
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerLowest,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.7)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      'Análise Harmônica Contextual',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                    OutlinedButton(
+                      key: const Key('harmony_key_picker_button'),
+                      onPressed: () => setState(() => _isKeyPickerOpen = !_isKeyPickerOpen),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(44, 44),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: Text(
+                        'Tom de análise: ${activeKey?.canonicalKey ?? 'Não definido'}',
+                      ),
+                    ),
+                  ],
+                ),
+                if (_isKeyPickerOpen) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _buildInstrumentChipButton(
+                        context: context,
+                        theme: theme,
+                        buttonKey: const Key('harmony_key_option_none'),
+                        label: 'Sem tom',
+                        selected: _analysisKey == null || _analysisKey!.isEmpty,
+                        onPressed: () => setState(() {
+                          _analysisKey = null;
+                          _isKeyPickerOpen = false;
+                        }),
+                      ),
+                      for (final keyOption in _kHarmonyAnalysisKeyOptions)
+                        _buildInstrumentChipButton(
+                          context: context,
+                          theme: theme,
+                          buttonKey: Key('harmony_key_option_$keyOption'),
+                          label: 'Tom: $keyOption',
+                          selected: activeKey?.canonicalKey == keyOption,
+                          onPressed: () => setState(() {
+                            _analysisKey = keyOption;
+                            _isKeyPickerOpen = false;
+                          }),
+                        ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    Container(
+                      constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: harmonyResult is HarmonyAnalyzed
+                            ? theme.colorScheme.primaryContainer
+                            : theme.colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        degreeText,
+                        key: const Key('harmony_degree_value'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: harmonyResult is HarmonyAnalyzed
+                              ? theme.colorScheme.onPrimaryContainer
+                              : theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.secondaryContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        qualityText,
+                        key: const Key('harmony_quality_value'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onSecondaryContainer,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: (bassAnalysis.isInversion || bassAnalysis.isExternalBass)
+                            ? theme.colorScheme.tertiaryContainer
+                            : theme.colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        bassText,
+                        key: const Key('harmony_bass_value'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: (bassAnalysis.isInversion || bassAnalysis.isExternalBass)
+                              ? theme.colorScheme.onTertiaryContainer
+                              : theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  explanationText,
+                  key: const Key('harmony_explanation'),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
     );
   }
 

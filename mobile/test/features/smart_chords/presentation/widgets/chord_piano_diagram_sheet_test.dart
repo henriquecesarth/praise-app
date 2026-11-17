@@ -674,4 +674,147 @@ void main() {
       }
     }
   });
+
+  group('T5 Contextual Harmonic Analysis presentation in ChordPianoDiagramSheet', () {
+    testWidgets('shows "Grau não determinado" without keyContext while identifying C/E inversion and C/F# external bass', (tester) async {
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(chordSymbol: 'C/E'),
+        ),
+      ));
+
+      expect(find.byKey(const Key('chord_harmony_analysis')), findsOneWidget);
+      expect(find.text('Tom de análise: Não definido'), findsOneWidget);
+      expect(find.text('Grau harmônico: Grau não determinado'), findsOneWidget);
+      expect(find.text('Qualidade harmônica: Maior'), findsOneWidget);
+      expect(find.text('Baixo / Inversão: 1ª inversão'), findsOneWidget);
+      expect(find.textContaining('nenhuma tonalidade explícita foi informada'), findsOneWidget);
+
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(chordSymbol: 'C/F#'),
+        ),
+      ));
+
+      expect(find.text('Grau harmônico: Grau não determinado'), findsOneWidget);
+      expect(find.text('Baixo / Inversão: Baixo externo ao acorde'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('supports in-memory key picker, major/natural minor rules, and chord transposition updates', (tester) async {
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(chordSymbol: 'G7'),
+        ),
+      ));
+
+      final pickerBtn = find.byKey(const Key('harmony_key_picker_button'));
+      await tester.ensureVisible(pickerBtn);
+      await tester.tap(pickerBtn);
+      await tester.pumpAndSettle();
+
+      final keyCOption = find.byKey(const Key('harmony_key_option_C'));
+      await tester.ensureVisible(keyCOption);
+      await tester.tap(keyCOption);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tom de análise: C'), findsOneWidget);
+      expect(find.text('Grau harmônico: V7 (5º grau em C)'), findsOneWidget);
+      expect(find.text('Qualidade harmônica: Maior com 7ª menor (Dominante)'), findsOneWidget);
+
+      // Update chord while preserving the in-memory selected key (same StatefulElement)
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(chordSymbol: 'Am'),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('Grau harmônico: vi (6º grau em C)'), findsOneWidget);
+
+      // Change in-memory key to Am and verify natural minor vs harmonic minor chord E7
+      await tester.ensureVisible(pickerBtn);
+      await tester.tap(pickerBtn);
+      await tester.pumpAndSettle();
+      final keyAmOption = find.byKey(const Key('harmony_key_option_Am'));
+      await tester.ensureVisible(keyAmOption);
+      await tester.tap(keyAmOption);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Grau harmônico: i (1º grau em Am)'), findsOneWidget);
+      expect(find.textContaining('escala menor natural'), findsOneWidget);
+
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(chordSymbol: 'E7'),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('Grau harmônico: Grau não determinado'), findsOneWidget);
+      expect(find.textContaining('menor harmônica ou melódica'), findsOneWidget);
+
+      // Reset to no key
+      await tester.ensureVisible(pickerBtn);
+      await tester.tap(pickerBtn);
+      await tester.pumpAndSettle();
+      final clearOption = find.byKey(const Key('harmony_key_option_none'));
+      await tester.ensureVisible(clearOption);
+      await tester.tap(clearOption);
+      await tester.pumpAndSettle();
+      expect(find.text('Tom de análise: Não definido'), findsOneWidget);
+      expect(find.text('Grau harmônico: Grau não determinado'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('respects explicit keyContext parameter alongside Violão diagram', (tester) async {
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(
+            chordSymbol: 'G/B',
+            initialInstrument: ChordDiagramInstrument.guitar,
+            keyContext: 'C',
+          ),
+        ),
+      ));
+
+      expect(find.byType(GuitarFretboardView), findsOneWidget);
+      expect(find.text('Tom de análise: C'), findsOneWidget);
+      expect(find.text('Grau harmônico: V (5º grau em C)'), findsOneWidget);
+      expect(find.text('Baixo / Inversão: 1ª inversão'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    for (final width in [320.0, 360.0, 393.0, 840.0]) {
+      testWidgets('fluid harmony section with open key picker at width $width and textScale 1.3', (tester) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1.0;
+
+        await tester.pumpWidget(MaterialApp(
+          home: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: const TextScaler.linear(1.3),
+              ),
+              child: const Scaffold(
+                body: ChordPianoDiagramSheet(
+                  chordSymbol: 'G/B',
+                  keyContext: 'C',
+                ),
+              ),
+            ),
+          ),
+        ));
+
+        final pickerBtn = find.byKey(const Key('harmony_key_picker_button'));
+        await tester.ensureVisible(pickerBtn);
+        await tester.tap(pickerBtn);
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const Key('harmony_key_option_none')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+    }
+  });
 }

@@ -532,3 +532,108 @@ describe('T4 Guitar Diagram integration in ChordPianoDiagramPanel', () => {
     });
   });
 });
+
+describe('T5 Contextual Harmonic Analysis in ChordPianoDiagramPanel', () => {
+  it('shows "Grau não determinado" without keyContext while still identifying C/E inversion and C/F# external bass', () => {
+    const { rerender } = render(<ChordPianoDiagramPanel chordSymbol="C/E" onClose={vi.fn()} />);
+
+    expect(screen.getByTestId('chord-harmony-analysis')).toBeInTheDocument();
+    expect(screen.getByTestId('harmony-key-picker-btn')).toHaveTextContent('Tom de análise: Não definido');
+    expect(screen.getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: Grau não determinado');
+    expect(screen.getByTestId('harmony-quality-value')).toHaveTextContent('Qualidade harmônica: Maior');
+    expect(screen.getByTestId('harmony-bass-value')).toHaveTextContent('Baixo / Inversão: 1ª inversão');
+    expect(screen.getByTestId('harmony-explanation')).toHaveTextContent('nenhuma tonalidade explícita foi informada');
+
+    rerender(<ChordPianoDiagramPanel chordSymbol="C/F#" onClose={vi.fn()} />);
+    expect(screen.getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: Grau não determinado');
+    expect(screen.getByTestId('harmony-bass-value')).toHaveTextContent('Baixo / Inversão: Baixo externo ao acorde');
+  });
+
+  it('supports explicit in-memory key selection, minor natural reference, and indeterminate non-diatonic states', () => {
+    const { rerender } = render(<ChordPianoDiagramPanel chordSymbol="G7" onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('harmony-key-picker-btn'));
+    expect(screen.getByTestId('harmony-key-options')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('harmony-key-option-C'));
+
+    expect(screen.queryByTestId('harmony-key-options')).not.toBeInTheDocument();
+    expect(screen.getByTestId('harmony-key-picker-btn')).toHaveTextContent('Tom de análise: C');
+    expect(screen.getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: V7 (5º grau em C)');
+    expect(screen.getByTestId('harmony-quality-value')).toHaveTextContent('Qualidade harmônica: Maior com 7ª menor (Dominante)');
+    expect(screen.getByTestId('chord-piano-live-region')).toHaveTextContent('Grau harmônico: V7 em C.');
+
+    // Transposition while keeping in-memory key C -> D (out of C major)
+    rerender(<ChordPianoDiagramPanel chordSymbol="D" onClose={vi.fn()} />);
+    expect(screen.getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: Grau não determinado');
+    expect(screen.getByTestId('harmony-explanation')).toHaveTextContent('fora da escala diatônica de C');
+
+    // Switch in-memory key to Am and verify natural minor vs harmonic minor chord E7
+    rerender(<ChordPianoDiagramPanel chordSymbol="Am" onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('harmony-key-picker-btn'));
+    fireEvent.click(screen.getByTestId('harmony-key-option-Am'));
+    expect(screen.getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: i (1º grau em Am)');
+    expect(screen.getByTestId('harmony-explanation')).toHaveTextContent('escala menor natural');
+
+    rerender(<ChordPianoDiagramPanel chordSymbol="E7" onClose={vi.fn()} />);
+    expect(screen.getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: Grau não determinado');
+    expect(screen.getByTestId('harmony-explanation')).toHaveTextContent('menor harmônica ou melódica');
+
+    // Clear key back to none
+    fireEvent.click(screen.getByTestId('harmony-key-picker-btn'));
+    fireEvent.click(screen.getByTestId('harmony-key-option-none'));
+    expect(screen.getByTestId('harmony-key-picker-btn')).toHaveTextContent('Tom de análise: Não definido');
+  });
+
+  it('respects keyContext prop, works identically on Violão tab, and preserves focus trap & Escape', async () => {
+    const onClose = vi.fn();
+
+    function HarmonyFocusHost() {
+      const triggerRef = useRef<HTMLButtonElement | null>(null);
+      const [open, setOpen] = React.useState(false);
+      return (
+        <div>
+          <button ref={triggerRef} type="button" data-testid="harmony-open-btn" onClick={() => setOpen(true)}>
+            Abrir
+          </button>
+          {open && (
+            <ChordPianoDiagramPanel
+              chordSymbol="G/B"
+              keyContext="C"
+              initialInstrument="guitar"
+              onClose={() => {
+                setOpen(false);
+                onClose();
+              }}
+              triggerRef={triggerRef}
+            />
+          )}
+        </div>
+      );
+    }
+
+    render(<HarmonyFocusHost />);
+    const openBtn = screen.getByTestId('harmony-open-btn');
+    openBtn.focus();
+    fireEvent.click(openBtn);
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByTestId('chord-guitar-diagram')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: V (5º grau em C)');
+    expect(within(dialog).getByTestId('harmony-bass-value')).toHaveTextContent('Baixo / Inversão: 1ª inversão');
+
+    fireEvent.click(within(dialog).getByTestId('harmony-key-picker-btn'));
+    const dialogButtons = within(dialog).getAllByRole('button');
+    const firstBtn = dialogButtons[0];
+    const lastBtn = dialogButtons[dialogButtons.length - 1];
+
+    lastBtn.focus();
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(document.activeElement).toBe(firstBtn);
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(openBtn);
+    });
+  });
+});

@@ -61,3 +61,12 @@ Fonte única: [guitar-voicings-v1.json](guitar-voicings-v1.json). `format = louv
 - Proveniência: curadoria própria LouvAIO V3 (sem cópia de catálogos externos e sem geração combinatória automática), uso livre offline e online nos clientes Web e Flutter.
 - Conjunto inicial curado (10 posições): `C`, `Am`, `G`, `D`, `Em`, `F`, `Am7`, `C7M` (`Cmaj7`), `G/B` (1ª inversão) e `F#m7(b5)` (`F#m7b5`).
 - Invariantes verificados contra o motor T2: nota exata produzida por cada corda (`openMidi + fret`), cobertura dos tons do acorde sem notas indesejadas, nota mais grave efetivamente tocada coerente com fundamental/inversão/baixo externo, coerência física de pestanas e alcance máximo de 4 casas. Acordes sem posição verificada retornam estado explícito `"Diagrama indisponível"`.
+
+## Harmony analysis v1 — inversões e graus harmônicos contextuais (T5)
+
+Fonte única: [harmony-analysis-v1.json](harmony-analysis-v1.json). `format = louvaio.harmony-analysis`, `version = 1`. Amplia o contrato T2 sem modificar `music-theory-v1.json` ou cifras persistidas.
+
+- `KeyContext` explícito: tônica (`SpelledNote` sem oitava), `mode` (`major` ou `minor`), `scaleReference` (`major` para maior; `naturalMinor` explícito para menor natural) e `spellingPolicy` (`diatonic` ou `chromaticSharps`). Não infere tonalidade automaticamente a partir dos acordes.
+- `BassAnalysis`: reutiliza diretamente `bass`, `bassRole` e `inversion` da T2 (`chordTone` + `inversion >= 1` indica inversão real mesmo sem tonalidade; `nonChordTone` indica baixo externo ao acorde; `unspecified` indica posição fundamental).
+- Três estados em `analyzeDegree`: `analysis` (interpretação diatônica sustentada pelo `KeyContext` explícito), `indeterminate` (`missingKeyContext`, `invalidKeyContext`, `externalSlashBass`, `enharmonicMismatch`, `nonDiatonicToNaturalMinor`, `nonDiatonicChord`) e `unsupported` (entrada fora da gramática/contexto v1).
+- Corpus inicial com 61 vetores verificados entre tonalidades maiores (17), menores naturais (16), inversões/baixos externos (10), casos indeterminados (14) e não suportados (4). Empréstimos modais, dominantes secundárias e menor harmônica/melódica permanecem fora das regras de grau natural na v1 (`indeterminate`).

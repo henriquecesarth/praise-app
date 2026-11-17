@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/core/music/theory.dart';
 
+import '../../support/harmony_analysis_corpus.dart';
 import '../../support/music_theory_corpus.dart';
 
 void main() {
@@ -361,5 +362,126 @@ void main() {
       final original = parseNote(text);
       expect(restored.toJson()['normalized'], original.toJson()['normalized']);
     }
+  });
+
+  group('T5 Dart contextual harmonic analysis & inversions', () {
+    final harmonyCorpus = loadHarmonyAnalysisCorpus();
+    for (final entry in harmonyCorpus['cases'] as List<dynamic>) {
+      final vector = entry as Map<String, dynamic>;
+      test('${vector['id']} matches shared harmony-analysis-v1 expectation', () {
+        final input = vector['input'] as Map<String, dynamic>;
+        final rawKey = input['key'];
+        final keyArg = switch (rawKey) {
+          null => null,
+          final String s => s,
+          final Map<String, dynamic> m => KeyContextInput(
+            tonic: m['tonic'] as String,
+            mode: m['mode'] as String,
+            spellingPolicy: m['spellingPolicy'] as String? ?? 'diatonic',
+          ),
+          _ => throw StateError('Unexpected key input type'),
+        };
+        final result = analyzeDegree(
+          input['chord'] as String,
+          key: keyArg,
+          context: input['context'] as String? ?? 'chordSymbol',
+        );
+        expect(result.toJson(), vector['expected']);
+      });
+    }
+
+    test('parses major and minor KeyContext inputs and fails closed cleanly', () {
+      final cMajor = parseKeyContext('C') as Parsed<KeyContext>;
+      expect(cMajor.normalized.canonicalKey, 'C');
+      expect(cMajor.normalized.mode, 'major');
+      expect(cMajor.normalized.scaleReference, 'major');
+      expect(
+        cMajor.normalized.scale.map((n) => n.spelling).toList(),
+        ['C', 'D', 'E', 'F', 'G', 'A', 'B'],
+      );
+
+      final aMinor = parseKeyContext('A naturalMinor') as Parsed<KeyContext>;
+      expect(aMinor.normalized.canonicalKey, 'Am');
+      expect(aMinor.normalized.mode, 'minor');
+      expect(aMinor.normalized.scaleReference, 'naturalMinor');
+      expect(
+        aMinor.normalized.scale.map((n) => n.spelling).toList(),
+        ['A', 'B', 'C', 'D', 'E', 'F', 'G'],
+      );
+
+      final bbObj = parseKeyContext(
+        const KeyContextInput(
+          tonic: 'Bb',
+          mode: 'major',
+          spellingPolicy: 'diatonic',
+        ),
+      ) as Parsed<KeyContext>;
+      expect(bbObj.normalized.canonicalKey, 'Bb');
+      expect(
+        bbObj.normalized.scale.map((n) => n.spelling).toList(),
+        ['Bb', 'C', 'D', 'Eb', 'F', 'G', 'A'],
+      );
+
+      for (final bad in [
+        '',
+        '   ',
+        'C ',
+        ' C',
+        'C\n',
+        'H',
+        'C4',
+        'CM',
+        'G##',
+        'Fbb',
+        'Cbbm',
+      ]) {
+        expect(parseKeyContext(bad), isA<Unsupported<KeyContext>>(), reason: bad);
+      }
+      expect(
+        parseKeyContext(
+          const KeyContextInput(tonic: 'C', mode: 'harmonicMinor'),
+        ),
+        isA<Unsupported<KeyContext>>(),
+      );
+    });
+
+    test('distinguishes inversions from external slash bass independently of key', () {
+      final ceParsed = parseChord('C/E') as Parsed<ChordNormalized>;
+      final ceBass = analyzeBass(ceParsed.normalized, ceParsed.notes);
+      expect(ceBass.isInversion, isTrue);
+      expect(ceBass.isExternalBass, isFalse);
+      expect(ceBass.inversion, 1);
+      expect(ceBass.label, '1ª inversão');
+
+      final cfParsed = parseChord('C/F#') as Parsed<ChordNormalized>;
+      final cfBass = analyzeBass(cfParsed.normalized, cfParsed.notes);
+      expect(cfBass.isInversion, isFalse);
+      expect(cfBass.isExternalBass, isTrue);
+      expect(cfBass.inversion, isNull);
+      expect(cfBass.label, 'Baixo externo ao acorde');
+    });
+
+    test('never infers key automatically and keeps out-of-scope chords indeterminate', () {
+      expect(
+        (analyzeDegree('C') as HarmonyIndeterminate).reason,
+        'missingKeyContext',
+      );
+      expect(
+        (analyzeDegree('D7', key: 'C') as HarmonyIndeterminate).reason,
+        'nonDiatonicChord',
+      );
+      expect(
+        (analyzeDegree('Bb', key: 'C') as HarmonyIndeterminate).reason,
+        'nonDiatonicChord',
+      );
+      expect(
+        (analyzeDegree('E7', key: 'Am') as HarmonyIndeterminate).reason,
+        'nonDiatonicToNaturalMinor',
+      );
+      expect(
+        (analyzeDegree('Fm', key: 'Am') as HarmonyIndeterminate).reason,
+        'nonDiatonicChord',
+      );
+    });
   });
 }

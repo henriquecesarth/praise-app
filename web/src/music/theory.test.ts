@@ -1,8 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { chordTones, parseChord, parseInterval, parseNote, spellPitch, transposeChord, transposeNote } from './theory';
-import type { Result, TransposeOptions } from './theory';
+import {
+  analyzeBass,
+  analyzeDegree,
+  chordTones,
+  parseChord,
+  parseInterval,
+  parseKeyContext,
+  parseNote,
+  spellPitch,
+  transposeChord,
+  transposeNote,
+} from './theory';
+import type { ChordContext, KeyContextInput, Result, TransposeOptions } from './theory';
 
 interface Vector {
   id: string;
@@ -134,5 +145,74 @@ describe('T2 TypeScript music theory engine', () => {
     // The root alone is representable; the augmented fifth would require ###.
     expect(transposeChord('G#aug', { policy: 'diatonic', interval: { diatonicSteps: 0, semitones: 1 } })).toMatchObject({ status: 'unsupported', notes: [], category: 'accidentalRange' });
     expect(transposeChord('C/B##', up)).toMatchObject({ status: 'unsupported', notes: [], category: 'accidentalRange' });
+  });
+});
+
+interface HarmonyVector {
+  id: string;
+  category: 'majorKey' | 'minorKey' | 'inversion' | 'indeterminate' | 'unsupported';
+  input: {
+    chord: string;
+    key: string | KeyContextInput | null;
+    context?: ChordContext;
+  };
+  expected: unknown;
+}
+
+const harmonyCorpus = JSON.parse(
+  readFileSync(resolve('../shared/fixtures/harmony-analysis-v1.json'), 'utf8'),
+) as { cases: HarmonyVector[] };
+
+describe('T5 TypeScript contextual harmonic analysis & inversions', () => {
+  it.each(harmonyCorpus.cases)('$id matches shared harmony-analysis-v1 expectation', ({ input, expected }) => {
+    const actual = analyzeDegree(input.chord, input.key, input.context);
+    expect(actual).toEqual(expected);
+  });
+
+  it('parses major and minor KeyContext inputs and fails closed on invalid keys', () => {
+    const cMajor = parsed(parseKeyContext('C'));
+    expect(cMajor.canonicalKey).toBe('C');
+    expect(cMajor.mode).toBe('major');
+    expect(cMajor.scaleReference).toBe('major');
+    expect(cMajor.scale.map(n => n.spelling)).toEqual(['C', 'D', 'E', 'F', 'G', 'A', 'B']);
+
+    const aMinor = parsed(parseKeyContext('A naturalMinor'));
+    expect(aMinor.canonicalKey).toBe('Am');
+    expect(aMinor.mode).toBe('minor');
+    expect(aMinor.scaleReference).toBe('naturalMinor');
+    expect(aMinor.scale.map(n => n.spelling)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'G']);
+
+    const objKey = parsed(parseKeyContext({ tonic: 'Bb', mode: 'major', spellingPolicy: 'diatonic' }));
+    expect(objKey.canonicalKey).toBe('Bb');
+    expect(objKey.scale.map(n => n.spelling)).toEqual(['Bb', 'C', 'D', 'Eb', 'F', 'G', 'A']);
+
+    for (const bad of ['', '   ', 'C ', ' C', 'C\n', 'H', 'C4', 'CM', 'G##', 'Fbb', 'Cbbm']) {
+      expect(parseKeyContext(bad).status).toBe('unsupported');
+    }
+    expect(parseKeyContext({ tonic: 'C', mode: 'harmonicMinor' as 'minor' }).status).toBe('unsupported');
+  });
+
+  it('distinguishes inversions from external slash bass independently of key via analyzeBass', () => {
+    const ceParsed = parsed(parseChord('C/E'));
+    const ceBass = analyzeBass(ceParsed, parseChord('C/E').notes);
+    expect(ceBass.isInversion).toBe(true);
+    expect(ceBass.isExternalBass).toBe(false);
+    expect(ceBass.inversion).toBe(1);
+    expect(ceBass.label).toBe('1ª inversão');
+
+    const cfParsed = parsed(parseChord('C/F#'));
+    const cfBass = analyzeBass(cfParsed, parseChord('C/F#').notes);
+    expect(cfBass.isInversion).toBe(false);
+    expect(cfBass.isExternalBass).toBe(true);
+    expect(cfBass.inversion).toBeNull();
+    expect(cfBass.label).toBe('Baixo externo ao acorde');
+  });
+
+  it('never infers key automatically and keeps modal interchange / secondary dominants indeterminate', () => {
+    expect(analyzeDegree('C')).toMatchObject({ status: 'indeterminate', reason: 'missingKeyContext', key: null });
+    expect(analyzeDegree('D7', 'C')).toMatchObject({ status: 'indeterminate', reason: 'nonDiatonicChord' });
+    expect(analyzeDegree('Bb', 'C')).toMatchObject({ status: 'indeterminate', reason: 'nonDiatonicChord' });
+    expect(analyzeDegree('E7', 'Am')).toMatchObject({ status: 'indeterminate', reason: 'nonDiatonicToNaturalMinor' });
+    expect(analyzeDegree('Fm', 'Am')).toMatchObject({ status: 'indeterminate', reason: 'nonDiatonicChord' });
   });
 });

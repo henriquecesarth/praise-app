@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  analyzeDegree,
   chordTones,
+  HarmonyAnalysisResult,
+  KeyContext,
   Result,
   ChordNormalized,
   Interval,
@@ -456,11 +459,17 @@ export function ChordPianoDiagram({ parsed, className }: ChordPianoDiagramProps)
 
 export type DiagramInstrument = 'piano' | 'guitar';
 
+const ANALYSIS_KEY_OPTIONS = [
+  'C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B',
+  'Am', 'Bm', 'Cm', 'C#m', 'Dm', 'Em', 'Fm', 'F#m', 'Gm', 'G#m',
+] as const;
+
 export interface ChordPianoDiagramPanelProps {
   chordSymbol: string | null;
   onClose: () => void;
   triggerRef?: React.RefObject<HTMLElement | null>;
   initialInstrument?: DiagramInstrument;
+  keyContext?: string | KeyContext | null;
 }
 
 export function ChordPianoDiagramPanel({
@@ -468,16 +477,25 @@ export function ChordPianoDiagramPanel({
   onClose,
   triggerRef,
   initialInstrument = 'piano',
+  keyContext,
 }: ChordPianoDiagramPanelProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const [instrument, setInstrument] = useState<DiagramInstrument>(initialInstrument);
+  const [selectedKey, setSelectedKey] = useState<string | KeyContext | null>(keyContext ?? null);
+  const [isKeyPickerOpen, setIsKeyPickerOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    setSelectedKey(keyContext ?? null);
+  }, [keyContext]);
 
   useEffect(() => {
     if (!chordSymbol) {
       setInstrument(initialInstrument);
+      setSelectedKey(keyContext ?? null);
+      setIsKeyPickerOpen(false);
     }
-  }, [chordSymbol, initialInstrument]);
+  }, [chordSymbol, initialInstrument, keyContext]);
 
   useEffect(() => {
     if (chordSymbol) {
@@ -504,12 +522,19 @@ export function ChordPianoDiagramPanel({
   const guitarLookup = result.status === 'parsed'
     ? lookupGuitarVoicing(result.originalText)
     : null;
+  const harmonyResult: HarmonyAnalysisResult | null = result.status === 'parsed'
+    ? analyzeDegree(result.originalText, selectedKey)
+    : null;
 
-  const liveSummary = result.status === 'unsupported'
+  const baseLiveSummary = result.status === 'unsupported'
     ? `Diagrama indisponível para ${result.preservedText || chordSymbol}. ${translateUnsupportedReason(result.reason, result.preservedText || chordSymbol)}`
     : instrument === 'guitar' && guitarLookup
       ? describeGuitarAriaSummary(result.originalText, guitarLookup)
       : `Acorde ${result.originalText}. Qualidade: ${translateQuality(result.normalized.quality, result.normalized.seventh)}.${result.normalized.bass ? ` Baixo: ${result.normalized.bass.spelling}.` : ''} Notas: ${result.notes.map(n => n.spelling).join(', ')}.`;
+
+  const liveSummary = harmonyResult?.status === 'analysis'
+    ? `${baseLiveSummary} Grau harmônico: ${harmonyResult.analysis.degree} em ${harmonyResult.key.canonicalKey}.`
+    : baseLiveSummary;
 
   const handleClose = () => {
     onClose();
@@ -725,6 +750,100 @@ export function ChordPianoDiagramPanel({
                   })}
                 </ul>
               </div>
+
+              {harmonyResult && harmonyResult.status !== 'unsupported' && (
+                <section
+                  className="chord-harmony-analysis"
+                  data-testid="chord-harmony-analysis"
+                  aria-label="Análise Harmônica Contextual"
+                >
+                  <div className="chord-harmony-header">
+                    <strong className="chord-harmony-title">
+                      Análise Harmônica Contextual
+                    </strong>
+                    <button
+                      type="button"
+                      data-testid="harmony-key-picker-btn"
+                      aria-expanded={isKeyPickerOpen}
+                      className="chord-piano-ctrl-btn"
+                      onClick={() => setIsKeyPickerOpen(prev => !prev)}
+                    >
+                      Tom de análise: {harmonyResult.key ? harmonyResult.key.canonicalKey : 'Não definido'}
+                    </button>
+                  </div>
+
+                  {isKeyPickerOpen && (
+                    <div
+                      className="chord-harmony-key-options"
+                      role="group"
+                      aria-label="Selecionar tonalidade de análise"
+                      data-testid="harmony-key-options"
+                    >
+                      <button
+                        type="button"
+                        data-testid="harmony-key-option-none"
+                        aria-pressed={!selectedKey}
+                        className={`chord-piano-ctrl-btn ${!selectedKey ? 'is-active' : ''}`}
+                        onClick={() => {
+                          setSelectedKey(null);
+                          setIsKeyPickerOpen(false);
+                        }}
+                      >
+                        Sem tom
+                      </button>
+                      {ANALYSIS_KEY_OPTIONS.map((keyOption) => {
+                        const isActive = harmonyResult.key?.canonicalKey === keyOption;
+                        return (
+                          <button
+                            key={keyOption}
+                            type="button"
+                            data-testid={`harmony-key-option-${keyOption}`}
+                            aria-pressed={isActive}
+                            className={`chord-piano-ctrl-btn ${isActive ? 'is-active' : ''}`}
+                            onClick={() => {
+                              setSelectedKey(keyOption);
+                              setIsKeyPickerOpen(false);
+                            }}
+                          >
+                            {keyOption}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="chord-harmony-badges">
+                    <span
+                      className={`chord-piano-pill ${harmonyResult.status === 'analysis' ? 'is-root' : ''}`}
+                      data-testid="harmony-degree-value"
+                    >
+                      {harmonyResult.status === 'analysis'
+                        ? `Grau harmônico: ${harmonyResult.analysis.degree} (${harmonyResult.analysis.degreeNumber}º grau em ${harmonyResult.key.canonicalKey})`
+                        : 'Grau harmônico: Grau não determinado'}
+                    </span>
+                    <span
+                      className="chord-piano-pill"
+                      data-testid="harmony-quality-value"
+                    >
+                      Qualidade harmônica: {harmonyResult.status === 'analysis'
+                        ? harmonyResult.analysis.qualityLabel
+                        : translateQuality(result.normalized.quality, result.normalized.seventh)}
+                    </span>
+                    <span
+                      className={`chord-piano-pill ${harmonyResult.bassAnalysis.isInversion || harmonyResult.bassAnalysis.isExternalBass ? 'is-bass' : ''}`}
+                      data-testid="harmony-bass-value"
+                    >
+                      Baixo / Inversão: {harmonyResult.bassAnalysis.label}
+                    </span>
+                  </div>
+
+                  <p className="chord-harmony-explanation" data-testid="harmony-explanation">
+                    {harmonyResult.status === 'analysis'
+                      ? harmonyResult.analysis.explanation
+                      : harmonyResult.explanation}
+                  </p>
+                </section>
+              )}
             </div>
           </>
         )}

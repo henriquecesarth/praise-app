@@ -76,9 +76,9 @@ Aceite: todas as formas verificadas, sem geração combinatória ou ampliação 
 
 Consome T2; amplia os mesmos núcleos/testes, não schemas de tom.
 
-- [ ] Fixar maior/menor e casos de baixo não pertencente ao acorde.
-- [ ] Implementar `analyzeDegree`/voicing com indeterminate e explicação; testar C/E, C/F#, C em C maior e tom ausente.
-- [ ] Expor leitura opcional no painel e testar sem alterações de texto ou inferência automática de tonalidade.
+- [x] Fixar maior/menor e casos de baixo não pertencente ao acorde.
+- [x] Implementar `analyzeDegree`/voicing com indeterminate e explicação; testar C/E, C/F#, C em C maior e tom ausente.
+- [x] Expor leitura opcional no painel e testar sem alterações de texto ou inferência automática de tonalidade.
 
 Aceite: inversão versus slash bass distinguíveis; empréstimo/dominante secundária só em tarefa posterior com corpus dedicado.
 
@@ -257,3 +257,14 @@ Base/HEAD preservado: `f77d6ce87e1b3c03cba6013abb0b0b3ac4ae4f5c` (T3 publicada),
   - Web: 7 suítes direcionadas (331 testes PASS, incluindo 15 de `guitarVoicings.test.ts` e 20 de `ChordPianoDiagram.test.tsx`), `npx tsc --noEmit` (PASS), `npm run build -- --mode test` (PASS).
   - Flutter: 8 suítes direcionadas (408 testes PASS, incluindo 7 de `guitar_voicings_test.dart` e 61 de `chord_piano_diagram_sheet_test.dart` com layout fluido em 320/360/393/840dp a 1.3x), `dart analyze` nos arquivos T4 (No issues found).
   - Revisão independente read-only (`feature-reviewer`): **PASS** (0 findings BLOCKER/HIGH/MEDIUM/LOW).
+
+## Execução incremental — T5 (2026-11-16)
+
+Base/HEAD preservado: `f02107e4ca950f8be9e532ce1bfbea3ae19bb254` (T4 publicada), branch `fix/louvaio-audit-remediation-20261113`, worktree `.worktrees/louvaio-audit-remediation`. Corpus T1 (`shared/fixtures/music-theory-v1.json`, SHA-256 `5BD27986E83EA9631763F42BCBDDAF7B8082F5ECA54B1617F5B498CF45E4C594`) e T4 (`shared/fixtures/guitar-voicings-v1.json`) preservados sem alteração. Sem commit/push/merge/deploy ou início da T6.
+
+- **Corpus harmônico v1**: [harmony-analysis-v1.json](../../../shared/fixtures/harmony-analysis-v1.json) e [documentação de fixtures](../../../shared/fixtures/README.md). 61 casos verificados cobrindo tonalidades maiores (17), tonalidades menores com referência explícita à escala menor natural (16), inversões reais vs baixo externo ao acorde (10), análises indeterminadas (14: ausência/invalidade de tonalidade, baixo externo, graus elevados de menor harmônica/melódica, divergência enarmônica e acordes cromáticos fora do escopo) e entradas não suportadas (4).
+- **Núcleos puros TS/Dart**: `parseKeyContext`, `analyzeBass` (reutilizando diretamente `bassRole` e `inversion` da T2 sem duplicar cálculo) e `analyzeDegree` em [theory.ts](../../../web/src/music/theory.ts) / [theory.test.ts](../../../web/src/music/theory.test.ts) e [theory.dart](../../../mobile/lib/core/music/theory.dart) / [theory_test.dart](../../../mobile/test/core/music/theory_test.dart) consumindo o mesmo corpus via [harmony_analysis_corpus.dart](../../../mobile/test/support/harmony_analysis_corpus.dart). Paridade estrutural 1:1 sem inferência automática de tonalidade.
+- **Interfaces Web e Flutter**: seção opcional `"Análise Harmônica Contextual"` com seletor de tonalidade exclusivamente em memória local (sem gravação em Firestore ou mutação de `SongVersion`/cifra) em [ChordPianoDiagram.tsx](../../../web/src/components/smart-chords/ChordPianoDiagram.tsx), [workspace.css](../../../web/src/components/smart-chords/workspace.css), [ChordPianoDiagram.test.tsx](../../../web/src/components/smart-chords/ChordPianoDiagram.test.tsx), [chord_piano_diagram_sheet.dart](../../../mobile/lib/features/smart_chords/presentation/widgets/chord_piano_diagram_sheet.dart) e [chord_piano_diagram_sheet_test.dart](../../../mobile/test/features/smart_chords/presentation/widgets/chord_piano_diagram_sheet_test.dart).
+- **Validação executada**:
+  - Web: 13 suítes (547 testes PASS, incluindo 172 de `theory.test.ts` com 61 casos do corpus T5 e 23 de `ChordPianoDiagram.test.tsx`), `npx tsc --noEmit` (PASS), `npm run build -- --mode test` (PASS).
+  - Flutter: 577 testes PASS em core/music, domínio Smart Chords, `chord_piano_diagram_sheet_test.dart` (incluindo layout fluido T5 em 320/360/393/840dp a 1.3x), `chord_lyric_line_test.dart`, `musical_progression_line_test.dart`, `smart_chord_reader_screen_test.dart` e `song_detail_view_test.dart`; `dart analyze` nos arquivos T5 (`No issues found`).

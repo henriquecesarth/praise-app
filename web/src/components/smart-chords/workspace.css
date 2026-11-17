@@ -871,3 +871,62 @@
   border-color: #B45309;
   color: #FCD34D;
 }
+
+/* ==========================================================================
+   T5: Análise Harmônica Contextual (ChordPianoDiagramPanel)
+   ========================================================================== */
+.chord-harmony-analysis {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle, #DCD3C6);
+  background: var(--bg-surface, #FFFFFF);
+}
+
+.chord-harmony-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chord-harmony-title {
+  font-size: 0.875rem;
+  color: var(--text-primary, #18221D);
+}
+
+.chord-harmony-key-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chord-harmony-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.chord-harmony-explanation {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-secondary, #46544E);
+}
+
+.dark .chord-harmony-analysis {
+  background: var(--bg-surface, #11231B);
+  border-color: var(--border-subtle, #1E3D2F);
+}
+
+.dark .chord-harmony-title {
+  color: var(--text-primary, #F5EFE6);
+}
+
+.dark .chord-harmony-explanation {
+  color: var(--text-secondary, #A0AFA7);
+}

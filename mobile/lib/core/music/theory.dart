@@ -782,3 +782,689 @@ TheoryResult<ChordNormalized> transposeChord(
   );
   return _chordResult(text, root, formula, bass);
 }
+
+final class KeyContextInput {
+  const KeyContextInput({
+    required this.tonic,
+    required this.mode,
+    this.spellingPolicy = 'diatonic',
+  });
+  final Object tonic;
+  final String mode;
+  final String spellingPolicy;
+}
+
+final class KeyContext extends NormalizedTheory {
+  KeyContext({
+    required this.canonicalKey,
+    required this.tonic,
+    required this.mode,
+    required this.scaleReference,
+    required this.spellingPolicy,
+    required List<SpelledNote> scale,
+  }) : scale = List.unmodifiable(scale);
+  final String canonicalKey;
+  final SpelledNote tonic;
+  final String mode;
+  final String scaleReference;
+  final String spellingPolicy;
+  final List<SpelledNote> scale;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': 'key',
+    'canonicalKey': canonicalKey,
+    'tonic': tonic.toJson(),
+    'mode': mode,
+    'scaleReference': scaleReference,
+    'spellingPolicy': spellingPolicy,
+    'scale': scale.map((n) => n.toJson()).toList(),
+  };
+}
+
+final class BassAnalysis {
+  const BassAnalysis({
+    required this.bass,
+    required this.bassRole,
+    required this.inversion,
+    required this.isSlashChord,
+    required this.isInversion,
+    required this.isExternalBass,
+    required this.label,
+    required this.explanation,
+  });
+  final SpelledNote? bass;
+  final String bassRole;
+  final int? inversion;
+  final bool isSlashChord;
+  final bool isInversion;
+  final bool isExternalBass;
+  final String label;
+  final String explanation;
+
+  Map<String, Object?> toJson() => {
+    'bass': bass?.toJson(),
+    'bassRole': bassRole,
+    'inversion': inversion,
+    'isSlashChord': isSlashChord,
+    'isInversion': isInversion,
+    'isExternalBass': isExternalBass,
+    'label': label,
+    'explanation': explanation,
+  };
+}
+
+final class DegreeAnalysis {
+  const DegreeAnalysis({
+    required this.degree,
+    required this.romanRoot,
+    required this.degreeNumber,
+    required this.alteration,
+    required this.quality,
+    required this.seventh,
+    required this.qualityLabel,
+    required this.scaleReference,
+    required this.inversion,
+    required this.bassRole,
+    required this.secondaryTarget,
+    required this.explanation,
+  });
+  final String degree;
+  final String romanRoot;
+  final int degreeNumber;
+  final String alteration;
+  final String quality;
+  final String? seventh;
+  final String qualityLabel;
+  final String scaleReference;
+  final int? inversion;
+  final String bassRole;
+  final String? secondaryTarget;
+  final String explanation;
+
+  Map<String, Object?> toJson() => {
+    'degree': degree,
+    'romanRoot': romanRoot,
+    'degreeNumber': degreeNumber,
+    'alteration': alteration,
+    'quality': quality,
+    'seventh': seventh,
+    'qualityLabel': qualityLabel,
+    'scaleReference': scaleReference,
+    'inversion': inversion,
+    'bassRole': bassRole,
+    'secondaryTarget': secondaryTarget,
+    'explanation': explanation,
+  };
+}
+
+sealed class HarmonyAnalysisResult {
+  const HarmonyAnalysisResult(this.originalText);
+  final String originalText;
+  String get status;
+  Map<String, Object?> toJson();
+}
+
+final class HarmonyAnalyzed extends HarmonyAnalysisResult {
+  HarmonyAnalyzed({
+    required String originalText,
+    required this.chord,
+    required List<SpelledNote> notes,
+    required this.key,
+    required this.bassAnalysis,
+    required this.analysis,
+  }) : notes = List.unmodifiable(notes),
+       super(originalText);
+
+  @override
+  String get status => 'analysis';
+  final ChordNormalized chord;
+  final List<SpelledNote> notes;
+  final KeyContext key;
+  final BassAnalysis bassAnalysis;
+  final DegreeAnalysis analysis;
+  List<String> get diatonicSpellings =>
+      List.unmodifiable(notes.map((n) => n.spelling));
+  List<int> get pitchClasses =>
+      List.unmodifiable(notes.map((n) => n.pitchClass));
+
+  @override
+  Map<String, Object?> toJson() => {
+    'status': status,
+    'originalText': originalText,
+    'chord': chord.toJson(),
+    'notes': notes.map((n) => n.toJson()).toList(),
+    'diatonicSpellings': diatonicSpellings,
+    'pitchClasses': pitchClasses,
+    'key': key.toJson(),
+    'bassAnalysis': bassAnalysis.toJson(),
+    'analysis': analysis.toJson(),
+  };
+}
+
+final class HarmonyIndeterminate extends HarmonyAnalysisResult {
+  HarmonyIndeterminate({
+    required String originalText,
+    required this.chord,
+    required List<SpelledNote> notes,
+    required this.key,
+    required this.bassAnalysis,
+    required this.reason,
+    required this.explanation,
+  }) : notes = List.unmodifiable(notes),
+       super(originalText);
+
+  @override
+  String get status => 'indeterminate';
+  final ChordNormalized chord;
+  final List<SpelledNote> notes;
+  final KeyContext? key;
+  final BassAnalysis bassAnalysis;
+  final String reason;
+  final String explanation;
+  List<String> get diatonicSpellings =>
+      List.unmodifiable(notes.map((n) => n.spelling));
+  List<int> get pitchClasses =>
+      List.unmodifiable(notes.map((n) => n.pitchClass));
+
+  @override
+  Map<String, Object?> toJson() => {
+    'status': status,
+    'originalText': originalText,
+    'chord': chord.toJson(),
+    'notes': notes.map((n) => n.toJson()).toList(),
+    'diatonicSpellings': diatonicSpellings,
+    'pitchClasses': pitchClasses,
+    'key': key?.toJson(),
+    'bassAnalysis': bassAnalysis.toJson(),
+    'analysis': null,
+    'reason': reason,
+    'explanation': explanation,
+  };
+}
+
+final class HarmonyUnsupported extends HarmonyAnalysisResult {
+  const HarmonyUnsupported({
+    required String originalText,
+    required this.category,
+    required this.reason,
+    required this.explanation,
+  }) : super(originalText);
+
+  @override
+  String get status => 'unsupported';
+  String get preservedText => originalText;
+  final String category;
+  final String reason;
+  final String explanation;
+
+  @override
+  Map<String, Object?> toJson() => {
+    'status': status,
+    'originalText': originalText,
+    'preservedText': preservedText,
+    'chord': null,
+    'notes': <Object?>[],
+    'diatonicSpellings': <String>[],
+    'pitchClasses': <int>[],
+    'key': null,
+    'bassAnalysis': null,
+    'analysis': null,
+    'category': category,
+    'reason': reason,
+    'explanation': explanation,
+  };
+}
+
+const _majorScaleIntervals = <SignedInterval>[
+  SignedInterval(0, 0),
+  SignedInterval(1, 2),
+  SignedInterval(2, 4),
+  SignedInterval(3, 5),
+  SignedInterval(4, 7),
+  SignedInterval(5, 9),
+  SignedInterval(6, 11),
+];
+
+const _naturalMinorScaleIntervals = <SignedInterval>[
+  SignedInterval(0, 0),
+  SignedInterval(1, 2),
+  SignedInterval(2, 3),
+  SignedInterval(3, 5),
+  SignedInterval(4, 7),
+  SignedInterval(5, 8),
+  SignedInterval(6, 10),
+];
+
+const _romanUpper = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+const _romanLower = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii'];
+
+final _keyStringPattern = RegExp(
+  r'^([A-Ga-g][#b♯♭♮𝄪𝄫]*)(?:(m|min)|\s+(major|minor|naturalMinor|maior|menor))?$',
+  unicode: true,
+);
+
+TheoryResult<KeyContext> parseKeyContext(Object? input) {
+  if (input is KeyContext) {
+    return Parsed(input.canonicalKey, input, input.scale);
+  }
+  if (input is String) {
+    if (input.isEmpty) return Unsupported(input, 'invalidSyntax', 'emptyKey');
+    if (input.contains('\r') || input.contains('\n')) {
+      return Unsupported(input, 'invalidSyntax', 'invalidKey');
+    }
+    final match = _keyStringPattern.firstMatch(input);
+    if (match == null || match.start != 0 || match.end != input.length) {
+      return Unsupported(input, 'invalidSyntax', 'invalidKey');
+    }
+    final parsedTonic = parseNote(match.group(1)!);
+    if (parsedTonic is Unsupported<NoteNormalized>) {
+      return Unsupported(input, parsedTonic.category, parsedTonic.reason);
+    }
+    final tonicNorm = (parsedTonic as Parsed<NoteNormalized>).normalized;
+    if (tonicNorm.octave != null) {
+      return Unsupported(input, 'invalidSyntax', 'invalidKey');
+    }
+    final kw = match.group(2) ?? match.group(3) ?? 'major';
+    final mode =
+        (kw == 'm' ||
+            kw == 'min' ||
+            kw == 'minor' ||
+            kw == 'naturalMinor' ||
+            kw == 'menor')
+        ? 'minor'
+        : 'major';
+    return _buildKeyContext(input, tonicNorm.note, mode, 'diatonic');
+  }
+  if (input is KeyContextInput || input is Map) {
+    final Object? rawTonic;
+    final Object? rawMode;
+    final Object? rawPolicy;
+    if (input is KeyContextInput) {
+      rawTonic = input.tonic;
+      rawMode = input.mode;
+      rawPolicy = input.spellingPolicy;
+    } else {
+      final map = input as Map;
+      rawTonic = map['tonic'];
+      rawMode = map['mode'];
+      rawPolicy = map['spellingPolicy'] ?? 'diatonic';
+    }
+    final String? mode = (rawMode == 'major' || rawMode == 'maior')
+        ? 'major'
+        : (rawMode == 'minor' ||
+              rawMode == 'naturalMinor' ||
+              rawMode == 'menor')
+        ? 'minor'
+        : null;
+    final String tonicText = rawTonic is String
+        ? rawTonic
+        : rawTonic is SpelledNote
+        ? rawTonic.spelling
+        : '';
+    final rawOriginal = tonicText.isEmpty
+        ? ''
+        : '$tonicText${mode == 'minor' ? 'm' : ''}';
+    if (mode == null) {
+      return Unsupported(rawOriginal, 'invalidSyntax', 'invalidKeyMode');
+    }
+    SpelledNote? tonic;
+    if (rawTonic is SpelledNote) {
+      tonic = rawTonic;
+    } else if (rawTonic is String) {
+      final parsedTonic = parseNote(rawTonic);
+      if (parsedTonic is Unsupported<NoteNormalized>) {
+        return Unsupported(
+          rawOriginal,
+          parsedTonic.category,
+          parsedTonic.reason,
+        );
+      }
+      final tonicNorm = (parsedTonic as Parsed<NoteNormalized>).normalized;
+      if (tonicNorm.octave != null) {
+        return Unsupported(rawOriginal, 'invalidSyntax', 'invalidKey');
+      }
+      tonic = tonicNorm.note;
+    } else {
+      return Unsupported(rawOriginal, 'invalidSyntax', 'invalidKey');
+    }
+    if (rawPolicy != 'diatonic' && rawPolicy != 'chromaticSharps') {
+      return Unsupported(rawOriginal, 'invalidSyntax', 'invalidSpellingPolicy');
+    }
+    return _buildKeyContext(
+      '${tonic.spelling}${mode == 'minor' ? 'm' : ''}',
+      tonic,
+      mode,
+      rawPolicy as String,
+    );
+  }
+  return const Unsupported('', 'invalidSyntax', 'invalidKey');
+}
+
+TheoryResult<KeyContext> _buildKeyContext(
+  String originalText,
+  SpelledNote tonic,
+  String mode,
+  String spellingPolicy,
+) {
+  final scaleReference = mode == 'major' ? 'major' : 'naturalMinor';
+  final intervals = mode == 'major'
+      ? _majorScaleIntervals
+      : _naturalMinorScaleIntervals;
+  final scale = <SpelledNote>[];
+  for (final interval in intervals) {
+    final moved = _move(
+      tonic,
+      interval.diatonicSteps.toInt(),
+      interval.semitones.toInt(),
+    );
+    if (moved == null) {
+      return Unsupported(
+        originalText,
+        'accidentalRange',
+        'targetRequiresTripleAccidental',
+      );
+    }
+    scale.add(moved);
+  }
+  return Parsed(
+    originalText,
+    KeyContext(
+      canonicalKey: '${tonic.spelling}${mode == 'minor' ? 'm' : ''}',
+      tonic: tonic,
+      mode: mode,
+      scaleReference: scaleReference,
+      spellingPolicy: spellingPolicy,
+      scale: scale,
+    ),
+    scale,
+  );
+}
+
+/// Reuse T2 [ChordNormalized.bassRole] and [ChordNormalized.inversion] directly.
+BassAnalysis analyzeBass(ChordNormalized chord, List<SpelledNote> notes) {
+  final tonesList = notes.map((n) => n.spelling).join(', ');
+  final isSlashChord = chord.bass != null;
+  final isInversion =
+      chord.bassRole == 'chordTone' &&
+      chord.inversion != null &&
+      chord.inversion! >= 1;
+  final isExternalBass = chord.bassRole == 'nonChordTone';
+
+  final String label;
+  final String explanation;
+  if (chord.bassRole == 'unspecified') {
+    label = 'Posição fundamental';
+    explanation =
+        'Acorde em posição fundamental (baixo na fundamental ${chord.root.spelling}).';
+  } else if (chord.bassRole == 'chordTone' &&
+      chord.inversion == 0 &&
+      chord.bass != null) {
+    label = 'Posição fundamental (baixo explícito)';
+    explanation =
+        'Baixo explícito ${chord.bass!.spelling} coincide com a fundamental do acorde ${chord.canonicalSymbol}.';
+  } else if (chord.bassRole == 'chordTone' &&
+      chord.inversion != null &&
+      chord.inversion! >= 1 &&
+      chord.bass != null) {
+    label = '${chord.inversion}ª inversão';
+    explanation =
+        '${chord.inversion}ª inversão: o baixo ${chord.bass!.spelling} pertence aos tons do acorde ($tonesList).';
+  } else {
+    final bassSpelling = chord.bass?.spelling ?? '';
+    label = 'Baixo externo ao acorde';
+    explanation =
+        'Baixo externo ($bassSpelling): a nota do baixo não pertence aos constituintes do acorde ($tonesList), não constituindo inversão.';
+  }
+
+  return BassAnalysis(
+    bass: chord.bass,
+    bassRole: chord.bassRole,
+    inversion: chord.inversion,
+    isSlashChord: isSlashChord,
+    isInversion: isInversion,
+    isExternalBass: isExternalBass,
+    label: label,
+    explanation: explanation,
+  );
+}
+
+String _describeHarmonyQuality(String quality, String? seventh) {
+  if (quality == 'diminished' && seventh == 'minor') {
+    return 'Meio-diminuto';
+  }
+  final base = switch (quality) {
+    'major' => 'Maior',
+    'minor' => 'Menor',
+    'diminished' => 'Diminuto',
+    'augmented' => 'Aumentado',
+    'suspended2' => 'Suspenso (sus2)',
+    'suspended4' => 'Suspenso (sus4)',
+    _ => quality,
+  };
+  if (seventh == null) return base;
+  if (quality == 'major' && seventh == 'minor') {
+    return 'Maior com 7ª menor (Dominante)';
+  }
+  return switch (seventh) {
+    'major' => '$base com 7ª maior',
+    'minor' => '$base com 7ª menor',
+    _ => '$base com 7ª diminuta',
+  };
+}
+
+HarmonyAnalysisResult analyzeDegree(
+  String chordText, {
+  Object? key,
+  String context = 'chordSymbol',
+}) {
+  final parsedChord = parseChord(chordText, context: context);
+  if (parsedChord is Unsupported<ChordNormalized>) {
+    return HarmonyUnsupported(
+      originalText: parsedChord.originalText,
+      category: parsedChord.category,
+      reason: parsedChord.reason,
+      explanation: 'Entrada musical não suportada pelo contrato harmônico v1.',
+    );
+  }
+
+  final okChord = parsedChord as Parsed<ChordNormalized>;
+  final chord = okChord.normalized;
+  final notes = okChord.notes;
+  final bassAnalysis = analyzeBass(chord, notes);
+  final tonesList = notes.map((n) => n.spelling).join(', ');
+
+  if (key == null || (key is String && key.isEmpty)) {
+    return HarmonyIndeterminate(
+      originalText: okChord.originalText,
+      chord: chord,
+      notes: notes,
+      key: null,
+      bassAnalysis: bassAnalysis,
+      reason: 'missingKeyContext',
+      explanation:
+          '${bassAnalysis.explanation} Grau harmônico indeterminado: nenhuma tonalidade explícita foi informada.',
+    );
+  }
+
+  final keyResult = parseKeyContext(key);
+  if (keyResult is Unsupported<KeyContext>) {
+    return HarmonyIndeterminate(
+      originalText: okChord.originalText,
+      chord: chord,
+      notes: notes,
+      key: null,
+      bassAnalysis: bassAnalysis,
+      reason: 'invalidKeyContext',
+      explanation:
+          '${bassAnalysis.explanation} Grau harmônico indeterminado: a tonalidade informada é inválida ou fora do escopo v1.',
+    );
+  }
+
+  final parsedKey = (keyResult as Parsed<KeyContext>).normalized;
+  final scaleList = parsedKey.scale.map((n) => n.spelling).join(', ');
+
+  if (chord.bassRole == 'nonChordTone') {
+    return HarmonyIndeterminate(
+      originalText: okChord.originalText,
+      chord: chord,
+      notes: notes,
+      key: parsedKey,
+      bassAnalysis: bassAnalysis,
+      reason: 'externalSlashBass',
+      explanation:
+          '${bassAnalysis.explanation} Grau harmônico único indeterminado na v1 devido ao baixo externo ao acorde.',
+    );
+  }
+
+  var matchedDegree = -1;
+  for (var i = 0; i < 7; i++) {
+    if (parsedKey.scale[i].spelling == chord.root.spelling) {
+      var allDiatonic = true;
+      for (var j = 0; j < chord.intervals.length; j++) {
+        final steps = chord.intervals[j].diatonicSteps.toInt();
+        if (notes[j].spelling != parsedKey.scale[(i + steps) % 7].spelling) {
+          allDiatonic = false;
+          break;
+        }
+      }
+      if (allDiatonic) {
+        matchedDegree = i;
+        break;
+      }
+    }
+  }
+
+  if (matchedDegree < 0) {
+    var enharmonicDegree = -1;
+    for (var i = 0; i < 7; i++) {
+      if (parsedKey.scale[i].pitchClass == chord.root.pitchClass) {
+        var allMatchPitchClasses = true;
+        for (final interval in chord.intervals) {
+          final moved = _move(
+            parsedKey.scale[i],
+            interval.diatonicSteps.toInt(),
+            interval.semitones.toInt(),
+          );
+          final expectedNote =
+              parsedKey.scale[(i + interval.diatonicSteps.toInt()) % 7];
+          if (moved == null || moved.spelling != expectedNote.spelling) {
+            allMatchPitchClasses = false;
+            break;
+          }
+        }
+        if (allMatchPitchClasses) {
+          enharmonicDegree = i;
+          break;
+        }
+      }
+    }
+
+    if (enharmonicDegree >= 0) {
+      if (parsedKey.spellingPolicy == 'chromaticSharps') {
+        matchedDegree = enharmonicDegree;
+      } else {
+        return HarmonyIndeterminate(
+          originalText: okChord.originalText,
+          chord: chord,
+          notes: notes,
+          key: parsedKey,
+          bassAnalysis: bassAnalysis,
+          reason: 'enharmonicMismatch',
+          explanation:
+              'As alturas de ${chord.canonicalSymbol} coincidem enarmonicamente com ${parsedKey.canonicalKey}, mas a grafia ($tonesList) diverge da escala diatônica ($scaleList).',
+        );
+      }
+    }
+  }
+
+  if (matchedDegree < 0) {
+    if (parsedKey.mode == 'minor') {
+      final raised6 = _move(parsedKey.tonic, 5, 9);
+      final raised7 = _move(parsedKey.tonic, 6, 11);
+      final allowedSpellings = <String>{
+        ...parsedKey.scale.map((n) => n.spelling),
+        if (raised6 != null) raised6.spelling,
+        if (raised7 != null) raised7.spelling,
+      };
+      if (notes.every((n) => allowedSpellings.contains(n.spelling))) {
+        return HarmonyIndeterminate(
+          originalText: okChord.originalText,
+          chord: chord,
+          notes: notes,
+          key: parsedKey,
+          bassAnalysis: bassAnalysis,
+          reason: 'nonDiatonicToNaturalMinor',
+          explanation:
+              'O acorde ${chord.canonicalSymbol} utiliza graus elevados típicos de menor harmônica ou melódica, fora da escala menor natural de referência de ${parsedKey.canonicalKey} ($scaleList).',
+        );
+      }
+    }
+
+    return HarmonyIndeterminate(
+      originalText: okChord.originalText,
+      chord: chord,
+      notes: notes,
+      key: parsedKey,
+      bassAnalysis: bassAnalysis,
+      reason: 'nonDiatonicChord',
+      explanation:
+          'O acorde ${chord.canonicalSymbol} possui notas cromáticas fora da escala diatônica de ${parsedKey.canonicalKey} ($scaleList).',
+    );
+  }
+
+  final degreeNumber = matchedDegree + 1;
+  final romanRoot =
+      (chord.quality == 'minor' || chord.quality == 'diminished')
+      ? _romanLower[matchedDegree]
+      : _romanUpper[matchedDegree];
+  final chordSuffix = chord.canonicalSymbol
+      .substring(chord.root.spelling.length)
+      .split('/')
+      .first;
+
+  final String degree;
+  if (chordSuffix.isEmpty || chordSuffix == 'm') {
+    degree = romanRoot;
+  } else if (chordSuffix == 'dim') {
+    degree = '$romanRoot°';
+  } else if (chordSuffix == 'm7b5') {
+    degree = '$romanRoot' 'ø7';
+  } else if (chordSuffix == 'dim7') {
+    degree = '$romanRoot°7';
+  } else if (chordSuffix == 'aug') {
+    degree = '$romanRoot+';
+  } else if (chordSuffix.startsWith('m') && !chordSuffix.startsWith('maj')) {
+    degree = '$romanRoot${chordSuffix.substring(1)}';
+  } else {
+    degree = '$romanRoot$chordSuffix';
+  }
+
+  final qualityLabel = _describeHarmonyQuality(chord.quality, chord.seventh);
+  final modeLabel = parsedKey.mode == 'major'
+      ? '${parsedKey.tonic.spelling} maior'
+      : '${parsedKey.tonic.spelling} menor (escala menor natural)';
+
+  return HarmonyAnalyzed(
+    originalText: okChord.originalText,
+    chord: chord,
+    notes: notes,
+    key: parsedKey,
+    bassAnalysis: bassAnalysis,
+    analysis: DegreeAnalysis(
+      degree: degree,
+      romanRoot: romanRoot,
+      degreeNumber: degreeNumber,
+      alteration: '',
+      quality: chord.quality,
+      seventh: chord.seventh,
+      qualityLabel: qualityLabel,
+      scaleReference: parsedKey.scaleReference,
+      inversion: chord.inversion,
+      bassRole: chord.bassRole,
+      secondaryTarget: null,
+      explanation:
+          'Grau $degree ($degreeNumber' 'º grau de $modeLabel), qualidade ${qualityLabel.toLowerCase()}. ${bassAnalysis.explanation}',
+    ),
+  );
+}
