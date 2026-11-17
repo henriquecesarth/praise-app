@@ -25,6 +25,7 @@ import '../features/ministry_context/presentation/controllers/join_ministry_cont
 import '../features/members/presentation/controllers/invite_code_controller.dart';
 import '../features/teams/presentation/controllers/teams_providers.dart';
 import '../features/vocal/presentation/controllers/vocal_providers.dart';
+import '../features/rehearsal_packages/presentation/controllers/rehearsal_package_controller.dart';
 export '../features/schedules/presentation/controllers/schedule_providers.dart';
 export '../features/repertoire/presentation/controllers/repertoire_providers.dart';
 export '../features/availability/presentation/controllers/availability_providers.dart';
@@ -36,6 +37,7 @@ export '../features/ministry_context/presentation/controllers/join_ministry_cont
 export '../features/members/presentation/controllers/invite_code_controller.dart';
 export '../features/teams/presentation/controllers/teams_providers.dart';
 export '../features/vocal/presentation/controllers/vocal_providers.dart';
+export '../features/rehearsal_packages/presentation/controllers/rehearsal_package_controller.dart';
 
 /// Clears all authenticated feature caches from memory upon logout or user change.
 /// Accepts either [Ref] or [ProviderContainer].
@@ -137,6 +139,12 @@ void resetAuthenticatedFeatures(
   try {
     container.read(customVocalExercisesNotifierProvider.notifier).reset();
   } catch (_) {}
+  try {
+    container.read(rehearsalPackagesNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
+    container.read(rehearsalPackageManagerProvider).invalidateSession();
+  } catch (_) {}
 
   container.invalidate(createMinistryNotifierProvider);
   container.invalidate(joinMinistryNotifierProvider);
@@ -164,6 +172,7 @@ void resetAuthenticatedFeatures(
   container.invalidate(smartChordFormNotifierProvider);
   container.invalidate(smartChordImportNotifierProvider);
   container.invalidate(customVocalExercisesNotifierProvider);
+  container.invalidate(rehearsalPackagesNotifierProvider);
 
   container.invalidate(unreadNotificationCountProvider);
   container.invalidate(notificationListProvider);

@@ -610,6 +610,460 @@ void main() {
     expect(dupStemRes.errorCode, 'DUPLICATE_OR_COLLIDING_ENTRY');
     expect(dupStemRes.readyForPublication, isFalse);
   });
+
+  group('T8 Fase A — Adversarial Reproductions for INFO-1 and INFO-2', () {
+    Map<String, dynamic> buildValidBaseManifest(Uint8List wav) {
+      final base = Map<String, dynamic>.from(
+        loadReferenceManifest('valid-wav-minimal.manifest.json'),
+      );
+      base['packageId'] = '55555555-5555-4555-8555-555555555555';
+      base['displayName'] = 'T8 Fase A Hardening';
+      base['stems'] = ['vocals', 'drums', 'bass', 'other']
+          .map(
+            (id) => {
+              'id': id,
+              'path': 'stems/$id.wav',
+              'container': 'wav',
+              'codec': 'pcm_s16le',
+              'bitsPerSample': 16,
+              'byteLength': wav.length,
+              'sha256': IncrementalSha256.computeHex(wav),
+              'sampleRate': 44100,
+              'channels': 2,
+              'decodedFrames': 4410,
+            },
+          )
+          .toList();
+      return base;
+    }
+
+    Uint8List buildZipWithManifest(
+      Map<String, dynamic> manifest,
+      Uint8List wav,
+    ) {
+      return buildSyntheticZip([
+        SyntheticZipEntry(
+          path: 'manifest.json',
+          uncompressedData: Uint8List.fromList(utf8.encode(jsonEncode(manifest))),
+        ),
+        ...['vocals', 'drums', 'bass', 'other'].map(
+          (id) => SyntheticZipEntry(
+            path: 'stems/$id.wav',
+            uncompressedData: wav,
+          ),
+        ),
+      ]);
+    }
+
+    test('INFO-1: rejects malformed alignment.perStem and perStem[id] fields', () async {
+      final wav = buildSyntheticWavPcm16(seed: 11);
+      final base = buildValidBaseManifest(wav);
+
+      final invalidCases = <(String, Object?, RehearsalValidationStatus, String)>[
+        (
+          'perStem is string',
+          'invalid',
+          RehearsalValidationStatus.corrupted,
+          'INVALID_MANIFEST_JSON',
+        ),
+        (
+          'perStem is array',
+          <Object?>[],
+          RehearsalValidationStatus.corrupted,
+          'INVALID_MANIFEST_JSON',
+        ),
+        (
+          'perStem.vocals is string',
+          {'vocals': 'invalid'},
+          RehearsalValidationStatus.corrupted,
+          'INVALID_MANIFEST_JSON',
+        ),
+        (
+          'perStem.vocals is int',
+          {'vocals': 123},
+          RehearsalValidationStatus.corrupted,
+          'INVALID_MANIFEST_JSON',
+        ),
+        (
+          'perStem unknown stem id',
+          {'synth': <String, Object?>{}},
+          RehearsalValidationStatus.corrupted,
+          'INVALID_MANIFEST_JSON',
+        ),
+        (
+          'perStem.vocals unknown key',
+          {
+            'vocals': {'extra': 1},
+          },
+          RehearsalValidationStatus.corrupted,
+          'INVALID_MANIFEST_JSON',
+        ),
+        (
+          'perStem.vocals.initialTrimFrames is string',
+          {
+            'vocals': {'initialTrimFrames': '10'},
+          },
+          RehearsalValidationStatus.incomplete,
+          'TIMELINE_MISMATCH',
+        ),
+        (
+          'perStem.vocals.initialTrimFrames is negative',
+          {
+            'vocals': {'initialTrimFrames': -1},
+          },
+          RehearsalValidationStatus.incomplete,
+          'TIMELINE_MISMATCH',
+        ),
+        (
+          'perStem.vocals.initialTrimFrames is explicit null',
+          {
+            'vocals': {'initialTrimFrames': null},
+          },
+          RehearsalValidationStatus.incomplete,
+          'TIMELINE_MISMATCH',
+        ),
+        (
+          'perStem.vocals.trailingTrimFrames is string',
+          {
+            'vocals': {'trailingTrimFrames': '5'},
+          },
+          RehearsalValidationStatus.incomplete,
+          'TIMELINE_MISMATCH',
+        ),
+        (
+          'perStem.vocals.trailingTrimFrames is negative',
+          {
+            'vocals': {'trailingTrimFrames': -2},
+          },
+          RehearsalValidationStatus.incomplete,
+          'TIMELINE_MISMATCH',
+        ),
+      ];
+
+      for (final (label, perStemValue, expectedStatus, expectedCode)
+          in invalidCases) {
+        final manifest = Map<String, dynamic>.from(base);
+        manifest['alignment'] = {
+          ...Map<String, dynamic>.from(base['alignment'] as Map),
+          'perStem': perStemValue,
+        };
+        final zipBytes = buildZipWithManifest(manifest, wav);
+        final res = await validateRehearsalPackage(
+          MemoryRehearsalByteSource(zipBytes),
+        );
+        expect(res.readyForPublication, isFalse, reason: label);
+        expect(res.status, expectedStatus, reason: label);
+        expect(res.errorCode, expectedCode, reason: label);
+      }
+    });
+
+    test('INFO-2: rejects Unicode canonical collisions across Cyrillic, Latin Ext, Hangul, Greek, and reordered marks', () async {
+      final wav = buildSyntheticWavPcm16(seed: 22);
+      final base = buildValidBaseManifest(wav);
+
+      final collidingPairs = <(String, String, String)>[
+        ('Cyrillic й vs и+breve', 'stems/\u0439.wav', 'stems/\u0438\u0306.wav'),
+        ('Latin Ext ạ vs a+dot below', 'stems/\u1EA1.wav', 'stems/a\u0323.wav'),
+        ('Latin Ext multi-step ắ vs a+acute+breve', 'stems/\u1EAF.wav', 'stems/a\u0301\u0306.wav'),
+        ('Hangul 가 vs Jamo', 'stems/\uAC00.wav', 'stems/\u1100\u1161.wav'),
+        ('Reordered combining marks', 'stems/a\u0323\u0301.wav', 'stems/a\u0301\u0323.wav'),
+        ('Greek ά vs α+acute', 'stems/\u03AC.wav', 'stems/\u03B1\u0301.wav'),
+      ];
+
+      for (final (label, pathA, pathB) in collidingPairs) {
+        expect(
+          canonicalizeRehearsalPath(pathA),
+          canonicalizeRehearsalPath(pathB),
+          reason: '$label canonical path mismatch',
+        );
+
+        final manifest = Map<String, dynamic>.from(base);
+        final stems = (base['stems'] as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+        stems[0]['path'] = pathA;
+        stems[1]['path'] = pathB;
+        manifest['stems'] = stems;
+
+        final zipBytes = buildSyntheticZip([
+          SyntheticZipEntry(
+            path: 'manifest.json',
+            uncompressedData: Uint8List.fromList(utf8.encode(jsonEncode(manifest))),
+          ),
+          SyntheticZipEntry(path: pathA, uncompressedData: wav),
+          SyntheticZipEntry(path: pathB, uncompressedData: wav),
+          SyntheticZipEntry(path: 'stems/bass.wav', uncompressedData: wav),
+          SyntheticZipEntry(path: 'stems/other.wav', uncompressedData: wav),
+        ]);
+
+        final res = await validateRehearsalPackage(
+          MemoryRehearsalByteSource(zipBytes),
+        );
+        expect(res.readyForPublication, isFalse, reason: label);
+        expect(res.status, RehearsalValidationStatus.corrupted, reason: label);
+        expect(res.errorCode, 'DUPLICATE_OR_COLLIDING_ENTRY', reason: label);
+      }
+    });
+
+    test('validateAndExtractRehearsalPackage performs zero sink opens on invalid package', () async {
+      final wav = buildSyntheticWavPcm16(seed: 33);
+      final noManifestZip = buildSyntheticZip([
+        SyntheticZipEntry(path: 'stems/vocals.wav', uncompressedData: wav),
+      ]);
+
+      var openCalls = 0;
+      final res = await validateAndExtractRehearsalPackage(
+        MemoryRehearsalByteSource(noManifestZip),
+        options: const RehearsalValidationOptions(),
+        openTargetSink: (entry) async {
+          openCalls++;
+          throw StateError('Should never open sink for invalid package');
+        },
+      );
+
+      expect(res.readyForPublication, isFalse);
+      expect(res.status, RehearsalValidationStatus.corrupted);
+      expect(res.errorCode, 'MISSING_MANIFEST');
+      expect(openCalls, 0);
+    });
+
+    test('validateAndExtractRehearsalPackage streams manifest (STORE & DEFLATE), stems, and original within <= 64 KiB slices', () async {
+      final deflateCase = synthesizeAllCorpusCases().firstWhere(
+        (c) => c.id == 'valid-with-original-and-practice-deflate-manifest',
+      );
+      final tempDir = Directory.systemTemp.createTempSync('louvaio_t8_extract_');
+      try {
+        final zipFile = File('${tempDir.path}/pkg.louvaio-rehearsal.zip');
+        zipFile.writeAsBytesSync(deflateCase.bytes);
+
+        final fileSource = FileRehearsalByteSource(zipFile, maxSliceBytes: 16384);
+        final spy = _SpyRehearsalByteSource(fileSource);
+
+        final validationProgress = <(int, int)>[];
+        final extractProgress = <(int, int)>[];
+        final writtenFiles = <String, File>{};
+        var counter = 0;
+
+        final result = await validateAndExtractRehearsalPackage(
+          spy,
+          options: RehearsalValidationOptions(
+            maxChunkBytes: 16384,
+            onProgress: (processed, total) {
+              validationProgress.add((processed, total));
+            },
+          ),
+          openTargetSink: (entry) async {
+            final safeName = 'entry_${counter++}.bin';
+            final outFile = File('${tempDir.path}/$safeName');
+            writtenFiles[entry.path] = outFile;
+            return outFile.openWrite();
+          },
+          onExtractProgress: (extracted, total) {
+            extractProgress.add((extracted, total));
+          },
+        );
+
+        expect(result.status, RehearsalValidationStatus.valid);
+        expect(result.readyForPublication, isTrue);
+        expect(result.manifestSummary?.includesOriginal, isTrue);
+        expect(spy.maxObservedSliceLength, lessThanOrEqualTo(16384));
+        expect(
+          result.budget.maxObservedSingleReadBytes,
+          lessThanOrEqualTo(RehearsalLimitsV1.defaultMaxChunkBytes),
+        );
+
+        // Verify progress callbacks fired monotonically to completion.
+        expect(validationProgress, isNotEmpty);
+        expect(
+          validationProgress.last.$1,
+          validationProgress.last.$2,
+        );
+        expect(extractProgress, isNotEmpty);
+        expect(extractProgress.last.$1, extractProgress.last.$2);
+        expect(extractProgress.last.$2, result.budget.actualExtractedBytes);
+
+        // Verify every extracted file matches verified entry byte length and SHA-256.
+        expect(writtenFiles.keys.toSet(), {
+          'manifest.json',
+          'audio/stems/vocals.wav',
+          'audio/stems/drums.wav',
+          'audio/stems/bass.wav',
+          'audio/stems/other.wav',
+          'audio/original.wav',
+        });
+        for (final entry in result.verifiedEntries) {
+          final bytes = writtenFiles[entry.path]!.readAsBytesSync();
+          expect(bytes.length, entry.uncompressedBytes);
+          expect(IncrementalSha256.computeHex(bytes), entry.sha256);
+        }
+
+        // Also verify STORE manifest extraction on valid-wav-minimal.
+        final storeCase = synthesizeAllCorpusCases().firstWhere(
+          (c) => c.id == 'valid-wav-minimal',
+        );
+        final storeFiles = <String, File>{};
+        var storeCounter = 0;
+        final storeResult = await validateAndExtractRehearsalPackage(
+          MemoryRehearsalByteSource(storeCase.bytes),
+          options: const RehearsalValidationOptions(maxChunkBytes: 16384),
+          openTargetSink: (entry) async {
+            final outFile = File('${tempDir.path}/store_${storeCounter++}.bin');
+            storeFiles[entry.path] = outFile;
+            return outFile.openWrite();
+          },
+        );
+        expect(storeResult.readyForPublication, isTrue);
+        expect(storeFiles.keys.toSet(), {
+          'manifest.json',
+          'stems/vocals.wav',
+          'stems/drums.wav',
+          'stems/bass.wav',
+          'stems/other.wav',
+        });
+        for (final entry in storeResult.verifiedEntries) {
+          final bytes = storeFiles[entry.path]!.readAsBytesSync();
+          expect(bytes.length, entry.uncompressedBytes);
+          expect(IncrementalSha256.computeHex(bytes), entry.sha256);
+        }
+      } finally {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
+    test('validateAndExtractRehearsalPackage closes sink on cancellation and propagates FileSystemException', () async {
+      final minimalCase = synthesizeAllCorpusCases().firstWhere(
+        (c) => c.id == 'valid-wav-minimal',
+      );
+      final tempDir = Directory.systemTemp.createTempSync('louvaio_t8_err_');
+      try {
+        // 1. Cancellation mid-extraction closes sink and fails closed.
+        final token = RehearsalCancellationToken();
+        var openedCount = 0;
+        var closedCount = 0;
+        final cancelRes = await validateAndExtractRehearsalPackage(
+          MemoryRehearsalByteSource(minimalCase.bytes),
+          options: RehearsalValidationOptions(cancellationToken: token),
+          openTargetSink: (entry) async {
+            openedCount++;
+            final f = File('${tempDir.path}/cancel_$openedCount.bin');
+            final inner = f.openWrite();
+            if (openedCount == 2) {
+              token.cancel();
+            }
+            return _TrackingIOSink(inner, onClose: () => closedCount++);
+          },
+        );
+        expect(cancelRes.readyForPublication, isFalse);
+        expect(cancelRes.status, RehearsalValidationStatus.cancelled);
+        expect(cancelRes.errorCode, 'VALIDATION_CANCELLED');
+        expect(closedCount, openedCount);
+
+        // 2. FileSystemException (ENOSPC simulation) closes sink in finally and rethrows.
+        var fsClosed = false;
+        await expectLater(
+          () => validateAndExtractRehearsalPackage(
+            MemoryRehearsalByteSource(minimalCase.bytes),
+            options: const RehearsalValidationOptions(),
+            openTargetSink: (entry) async {
+              final f = File('${tempDir.path}/enospc.bin');
+              return _FailingIOSink(
+                f.openWrite(),
+                onClose: () => fsClosed = true,
+              );
+            },
+          ),
+          throwsA(isA<FileSystemException>()),
+        );
+        expect(fsClosed, isTrue);
+      } finally {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+  });
+}
+
+final class _TrackingIOSink implements IOSink {
+  _TrackingIOSink(this._inner, {required this.onClose});
+
+  final IOSink _inner;
+  final void Function() onClose;
+  bool _closed = false;
+
+  @override
+  Encoding get encoding => _inner.encoding;
+  @override
+  set encoding(Encoding value) => _inner.encoding = value;
+  @override
+  void add(List<int> data) => _inner.add(data);
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) =>
+      _inner.addError(error, stackTrace);
+  @override
+  Future<void> addStream(Stream<List<int>> stream) => _inner.addStream(stream);
+  @override
+  Future<void> close() {
+    if (!_closed) {
+      _closed = true;
+      onClose();
+    }
+    return _inner.close();
+  }
+  @override
+  Future<void> get done => _inner.done;
+  @override
+  Future<void> flush() => _inner.flush();
+  @override
+  void write(Object? object) => _inner.write(object);
+  @override
+  void writeAll(Iterable<Object?> objects, [String separator = '']) =>
+      _inner.writeAll(objects, separator);
+  @override
+  void writeCharCode(int charCode) => _inner.writeCharCode(charCode);
+  @override
+  void writeln([Object? object = '']) => _inner.writeln(object);
+}
+
+final class _FailingIOSink implements IOSink {
+  _FailingIOSink(this._inner, {required this.onClose});
+
+  final IOSink _inner;
+  final void Function() onClose;
+  bool _closed = false;
+
+  @override
+  Encoding get encoding => _inner.encoding;
+  @override
+  set encoding(Encoding value) => _inner.encoding = value;
+  @override
+  void add(List<int> data) {
+    throw const FileSystemException('Simulated ENOSPC');
+  }
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) =>
+      _inner.addError(error, stackTrace);
+  @override
+  Future<void> addStream(Stream<List<int>> stream) => _inner.addStream(stream);
+  @override
+  Future<void> close() {
+    if (!_closed) {
+      _closed = true;
+      onClose();
+    }
+    return _inner.close();
+  }
+  @override
+  Future<void> get done => _inner.done;
+  @override
+  Future<void> flush() => _inner.flush();
+  @override
+  void write(Object? object) => _inner.write(object);
+  @override
+  void writeAll(Iterable<Object?> objects, [String separator = '']) =>
+      _inner.writeAll(objects, separator);
+  @override
+  void writeCharCode(int charCode) => _inner.writeCharCode(charCode);
+  @override
+  void writeln([Object? object = '']) => _inner.writeln(object);
 }
 
 final class _ShortReadByteSource implements RehearsalByteSource {

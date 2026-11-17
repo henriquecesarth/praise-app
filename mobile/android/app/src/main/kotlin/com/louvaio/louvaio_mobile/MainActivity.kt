@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.ViewGroup
+import com.louvaio.louvaio_mobile.audio.RehearsalPackageSafHandler
 import com.louvaio.louvaio_mobile.pdf.SmartChordPdfHandler
 import com.louvaio.louvaio_mobile.vocal.PianoBank
 import com.louvaio.louvaio_mobile.vocal.VocalAudioPlayer
@@ -45,6 +46,8 @@ class MainActivity : FlutterActivity() {
     private var vocalAudioChannel: MethodChannel? = null
     private var pdfExportChannel: MethodChannel? = null
     private var smartChordPdfHandler: SmartChordPdfHandler? = null
+    private var rehearsalPackageSafChannel: MethodChannel? = null
+    private var rehearsalPackageSafHandler: RehearsalPackageSafHandler? = null
 
     private class ShareRequest(
         val initial: Boolean,
@@ -272,6 +275,22 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        val safHandler = RehearsalPackageSafHandler(this)
+        rehearsalPackageSafHandler = safHandler
+        val safChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            RehearsalPackageSafHandler.CHANNEL_NAME,
+        )
+        rehearsalPackageSafChannel = safChannel
+        safHandler.attachChannel(safChannel)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (rehearsalPackageSafHandler?.handleActivityResult(requestCode, resultCode, data) == true) {
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     override fun onStop() {
@@ -400,6 +419,10 @@ class MainActivity : FlutterActivity() {
         pdfExportChannel?.setMethodCallHandler(null)
         pdfExportChannel = null
         smartChordPdfHandler = null
+        rehearsalPackageSafHandler?.dispose()
+        rehearsalPackageSafHandler = null
+        rehearsalPackageSafChannel?.setMethodCallHandler(null)
+        rehearsalPackageSafChannel = null
         methodChannel?.setMethodCallHandler(null)
         requests.forEach { cancelRead(it) }
         requests.clear()

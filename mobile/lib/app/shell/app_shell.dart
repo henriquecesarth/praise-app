@@ -656,6 +656,21 @@ class _ProfileView extends ConsumerWidget {
               onTap: () => GoRouter.of(context).push('/vocal'),
             ),
             const Divider(),
+            ListTile(
+              key: const ValueKey('profile_rehearsal_packages_tile'),
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.folder_zip_outlined,
+                color: theme.colorScheme.primary,
+              ),
+              title: const Text('Pacotes de Ensaio Offline'),
+              subtitle: const Text(
+                'Importar e gerenciar pacotes .louvaio-rehearsal.zip neste aparelho',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => GoRouter.of(context).push('/rehearsal-packages'),
+            ),
+            const Divider(),
           ],
           ListTile(
             contentPadding: EdgeInsets.zero,

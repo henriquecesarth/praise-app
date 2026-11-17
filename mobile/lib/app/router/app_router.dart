@@ -10,6 +10,7 @@ import '../../features/ministry_context/presentation/ministry_selector_screen.da
 import '../providers.dart';
 import '../shell/app_shell.dart';
 import '../../features/vocal/presentation/vocal_player_screen.dart';
+import '../../features/rehearsal_packages/presentation/views/rehearsal_packages_screen.dart';
 
 bool shouldPreservePendingShareOnAuthentication(
   AuthState? previous, {
@@ -44,8 +45,8 @@ GoRouter createRouter(Ref ref) {
         return isLoggingIn ? null : '/login';
       }
 
-      // Authenticated users can access the vocal module offline or online.
-      if (loc == '/vocal') return null;
+      // Authenticated users can access the vocal and offline rehearsal modules offline or online.
+      if (loc == '/vocal' || loc == '/rehearsal-packages') return null;
 
       // Authenticated users should not be on /login
       if (isLoggingIn) {
@@ -81,6 +82,11 @@ GoRouter createRouter(Ref ref) {
         path: '/vocal',
         name: 'vocal-player',
         builder: (_, __) => const VocalPlayerScreen(),
+      ),
+      GoRoute(
+        path: '/rehearsal-packages',
+        name: 'rehearsal-packages',
+        builder: (_, __) => const RehearsalPackagesScreen(),
       ),
       GoRoute(
         path: '/',

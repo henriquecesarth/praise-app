@@ -209,6 +209,7 @@ final class RehearsalValidationOptions {
     this.maxChunkBytes = RehearsalLimitsV1.defaultMaxChunkBytes,
     this.maxMemoryBudgetBytes = RehearsalLimitsV1.defaultMaxMemoryBudgetBytes,
     this.cancellationToken,
+    this.onProgress,
   });
 
   final List<ExistingRehearsalPackage> existingPackages;
@@ -217,6 +218,7 @@ final class RehearsalValidationOptions {
   final int maxChunkBytes;
   final int maxMemoryBudgetBytes;
   final RehearsalCancellationToken? cancellationToken;
+  final void Function(int processedBytes, int totalBytes)? onProgress;
 }
 
 /// Verified binary audio metadata extracted during header/tail inspection.
@@ -642,7 +644,7 @@ const Set<String> _nestedArchiveExtensions = {
   '.rar',
 };
 
-const Map<int, String> _latinDecompLower = {
+const Map<int, String> _unicodeDecompLower = {
   // U+00C0..U+00FF
   0x00C0: 'a\u0300', 0x00C1: 'a\u0301', 0x00C2: 'a\u0302', 0x00C3: 'a\u0303',
   0x00C4: 'a\u0308', 0x00C5: 'a\u030A', 0x00C6: '\u00E6', 0x00C7: 'c\u0327',
@@ -693,31 +695,373 @@ const Map<int, String> _latinDecompLower = {
   0x0174: 'w\u0302', 0x0175: 'w\u0302', 0x0176: 'y\u0302', 0x0177: 'y\u0302',
   0x0178: 'y\u0308', 0x0179: 'z\u0301', 0x017A: 'z\u0301',
   0x017B: 'z\u0307', 0x017C: 'z\u0307', 0x017D: 'z\u030C', 0x017E: 'z\u030C',
+  // U+0180..U+024F (Latin Extended-B)
+  0x01A0: 'o\u031B', 0x01A1: 'o\u031B', 0x01AF: 'u\u031B', 0x01B0: 'u\u031B',
+  0x01CD: 'a\u030C', 0x01CE: 'a\u030C', 0x01CF: 'i\u030C', 0x01D0: 'i\u030C',
+  0x01D1: 'o\u030C', 0x01D2: 'o\u030C', 0x01D3: 'u\u030C', 0x01D4: 'u\u030C',
+  0x01D5: 'u\u0308\u0304', 0x01D6: 'u\u0308\u0304',
+  0x01D7: 'u\u0308\u0301', 0x01D8: 'u\u0308\u0301',
+  0x01D9: 'u\u0308\u030C', 0x01DA: 'u\u0308\u030C',
+  0x01DB: 'u\u0308\u0300', 0x01DC: 'u\u0308\u0300',
+  0x01DE: 'a\u0308\u0304', 0x01DF: 'a\u0308\u0304',
+  0x01E0: 'a\u0307\u0304', 0x01E1: 'a\u0307\u0304',
+  0x01E2: '\u00E6\u0304', 0x01E3: '\u00E6\u0304',
+  0x01E6: 'g\u030C', 0x01E7: 'g\u030C', 0x01E8: 'k\u030C', 0x01E9: 'k\u030C',
+  0x01EA: 'o\u0328', 0x01EB: 'o\u0328',
+  0x01EC: 'o\u0328\u0304', 0x01ED: 'o\u0328\u0304',
+  0x01EE: '\u0292\u030C', 0x01EF: '\u0292\u030C', 0x01F0: 'j\u030C',
+  0x01F4: 'g\u0301', 0x01F5: 'g\u0301', 0x01F8: 'n\u0300', 0x01F9: 'n\u0300',
+  0x01FA: 'a\u030A\u0301', 0x01FB: 'a\u030A\u0301',
+  0x01FC: '\u00E6\u0301', 0x01FD: '\u00E6\u0301',
+  0x01FE: '\u00F8\u0301', 0x01FF: '\u00F8\u0301',
+  0x0200: 'a\u030F', 0x0201: 'a\u030F', 0x0202: 'a\u0311', 0x0203: 'a\u0311',
+  0x0204: 'e\u030F', 0x0205: 'e\u030F', 0x0206: 'e\u0311', 0x0207: 'e\u0311',
+  0x0208: 'i\u030F', 0x0209: 'i\u030F', 0x020A: 'i\u0311', 0x020B: 'i\u0311',
+  0x020C: 'o\u030F', 0x020D: 'o\u030F', 0x020E: 'o\u0311', 0x020F: 'o\u0311',
+  0x0210: 'r\u030F', 0x0211: 'r\u030F', 0x0212: 'r\u0311', 0x0213: 'r\u0311',
+  0x0214: 'u\u030F', 0x0215: 'u\u030F', 0x0216: 'u\u0311', 0x0217: 'u\u0311',
+  0x0218: 's\u0326', 0x0219: 's\u0326', 0x021A: 't\u0326', 0x021B: 't\u0326',
+  0x021E: 'h\u030C', 0x021F: 'h\u030C', 0x0226: 'a\u0307', 0x0227: 'a\u0307',
+  0x0228: 'e\u0327', 0x0229: 'e\u0327',
+  0x022A: 'o\u0308\u0304', 0x022B: 'o\u0308\u0304',
+  0x022C: 'o\u0303\u0304', 0x022D: 'o\u0303\u0304',
+  0x022E: 'o\u0307', 0x022F: 'o\u0307',
+  0x0230: 'o\u0307\u0304', 0x0231: 'o\u0307\u0304',
+  0x0232: 'y\u0304', 0x0233: 'y\u0304',
+  // U+0340..U+0344 (Combining Diacritical Marks canonical decompositions)
+  0x0340: '\u0300', 0x0341: '\u0301', 0x0343: '\u0313', 0x0344: '\u0308\u0301',
+  // U+0370..U+03FF (Greek and Coptic)
+  0x0374: '\u02B9', 0x037E: ';', 0x0385: '\u00A8\u0301', 0x0386: '\u03B1\u0301',
+  0x0387: '\u00B7', 0x0388: '\u03B5\u0301', 0x0389: '\u03B7\u0301', 0x038A: '\u03B9\u0301',
+  0x038C: '\u03BF\u0301', 0x038E: '\u03C5\u0301', 0x038F: '\u03C9\u0301',
+  0x0390: '\u03B9\u0308\u0301',
+  0x03AA: '\u03B9\u0308', 0x03AB: '\u03C5\u0308', 0x03AC: '\u03B1\u0301', 0x03AD: '\u03B5\u0301',
+  0x03AE: '\u03B7\u0301', 0x03AF: '\u03B9\u0301', 0x03B0: '\u03C5\u0308\u0301',
+  0x03CA: '\u03B9\u0308', 0x03CB: '\u03C5\u0308', 0x03CC: '\u03BF\u0301',
+  0x03CD: '\u03C5\u0301', 0x03CE: '\u03C9\u0301',
+  0x03D3: '\u03D2\u0301', 0x03D4: '\u03D2\u0308',
+  // U+0400..U+04FF (Cyrillic)
+  0x0400: '\u0435\u0300', 0x0401: '\u0435\u0308', 0x0403: '\u0433\u0301', 0x0407: '\u0456\u0308',
+  0x040C: '\u043A\u0301', 0x040D: '\u0438\u0300', 0x040E: '\u0443\u0306', 0x0419: '\u0438\u0306',
+  0x0439: '\u0438\u0306', 0x0450: '\u0435\u0300', 0x0451: '\u0435\u0308', 0x0453: '\u0433\u0301',
+  0x0457: '\u0456\u0308', 0x045C: '\u043A\u0301', 0x045D: '\u0438\u0300', 0x045E: '\u0443\u0306',
+  0x0476: '\u0475\u030F', 0x0477: '\u0475\u030F', 0x04C1: '\u0436\u0306', 0x04C2: '\u0436\u0306',
+  0x04D0: '\u0430\u0306', 0x04D1: '\u0430\u0306', 0x04D2: '\u0430\u0308', 0x04D3: '\u0430\u0308',
+  0x04D6: '\u0435\u0306', 0x04D7: '\u0435\u0306', 0x04DA: '\u04D9\u0308', 0x04DB: '\u04D9\u0308',
+  0x04DC: '\u0436\u0308', 0x04DD: '\u0436\u0308', 0x04DE: '\u0437\u0308', 0x04DF: '\u0437\u0308',
+  0x04E2: '\u0438\u0304', 0x04E3: '\u0438\u0304', 0x04E4: '\u0438\u0308', 0x04E5: '\u0438\u0308',
+  0x04E6: '\u043E\u0308', 0x04E7: '\u043E\u0308', 0x04EA: '\u04E9\u0308', 0x04EB: '\u04E9\u0308',
+  0x04EC: '\u044D\u0308', 0x04ED: '\u044D\u0308', 0x04EE: '\u0443\u0304', 0x04EF: '\u0443\u0304',
+  0x04F0: '\u0443\u0308', 0x04F1: '\u0443\u0308', 0x04F2: '\u0443\u030B', 0x04F3: '\u0443\u030B',
+  0x04F4: '\u0447\u0308', 0x04F5: '\u0447\u0308', 0x04F8: '\u044B\u0308', 0x04F9: '\u044B\u0308',
+  // U+1E00..U+1EFF (Latin Extended Additional)
+  0x1E00: 'a\u0325', 0x1E01: 'a\u0325', 0x1E02: 'b\u0307', 0x1E03: 'b\u0307',
+  0x1E04: 'b\u0323', 0x1E05: 'b\u0323', 0x1E06: 'b\u0331', 0x1E07: 'b\u0331',
+  0x1E08: 'c\u0327\u0301', 0x1E09: 'c\u0327\u0301',
+  0x1E0A: 'd\u0307', 0x1E0B: 'd\u0307', 0x1E0C: 'd\u0323', 0x1E0D: 'd\u0323',
+  0x1E0E: 'd\u0331', 0x1E0F: 'd\u0331', 0x1E10: 'd\u0327', 0x1E11: 'd\u0327',
+  0x1E12: 'd\u032D', 0x1E13: 'd\u032D',
+  0x1E14: 'e\u0304\u0300', 0x1E15: 'e\u0304\u0300',
+  0x1E16: 'e\u0304\u0301', 0x1E17: 'e\u0304\u0301',
+  0x1E18: 'e\u032D', 0x1E19: 'e\u032D', 0x1E1A: 'e\u0330', 0x1E1B: 'e\u0330',
+  0x1E1C: 'e\u0327\u0306', 0x1E1D: 'e\u0327\u0306',
+  0x1E1E: 'f\u0307', 0x1E1F: 'f\u0307', 0x1E20: 'g\u0304', 0x1E21: 'g\u0304',
+  0x1E22: 'h\u0307', 0x1E23: 'h\u0307', 0x1E24: 'h\u0323', 0x1E25: 'h\u0323',
+  0x1E26: 'h\u0308', 0x1E27: 'h\u0308', 0x1E28: 'h\u0327', 0x1E29: 'h\u0327',
+  0x1E2A: 'h\u032E', 0x1E2B: 'h\u032E', 0x1E2C: 'i\u0330', 0x1E2D: 'i\u0330',
+  0x1E2E: 'i\u0308\u0301', 0x1E2F: 'i\u0308\u0301',
+  0x1E30: 'k\u0301', 0x1E31: 'k\u0301', 0x1E32: 'k\u0323', 0x1E33: 'k\u0323',
+  0x1E34: 'k\u0331', 0x1E35: 'k\u0331', 0x1E36: 'l\u0323', 0x1E37: 'l\u0323',
+  0x1E38: 'l\u0323\u0304', 0x1E39: 'l\u0323\u0304',
+  0x1E3A: 'l\u0331', 0x1E3B: 'l\u0331', 0x1E3C: 'l\u032D', 0x1E3D: 'l\u032D',
+  0x1E3E: 'm\u0301', 0x1E3F: 'm\u0301', 0x1E40: 'm\u0307', 0x1E41: 'm\u0307',
+  0x1E42: 'm\u0323', 0x1E43: 'm\u0323', 0x1E44: 'n\u0307', 0x1E45: 'n\u0307',
+  0x1E46: 'n\u0323', 0x1E47: 'n\u0323', 0x1E48: 'n\u0331', 0x1E49: 'n\u0331',
+  0x1E4A: 'n\u032D', 0x1E4B: 'n\u032D',
+  0x1E4C: 'o\u0303\u0301', 0x1E4D: 'o\u0303\u0301',
+  0x1E4E: 'o\u0303\u0308', 0x1E4F: 'o\u0303\u0308',
+  0x1E50: 'o\u0304\u0300', 0x1E51: 'o\u0304\u0300',
+  0x1E52: 'o\u0304\u0301', 0x1E53: 'o\u0304\u0301',
+  0x1E54: 'p\u0301', 0x1E55: 'p\u0301', 0x1E56: 'p\u0307', 0x1E57: 'p\u0307',
+  0x1E58: 'r\u0307', 0x1E59: 'r\u0307', 0x1E5A: 'r\u0323', 0x1E5B: 'r\u0323',
+  0x1E5C: 'r\u0323\u0304', 0x1E5D: 'r\u0323\u0304',
+  0x1E5E: 'r\u0331', 0x1E5F: 'r\u0331', 0x1E60: 's\u0307', 0x1E61: 's\u0307',
+  0x1E62: 's\u0323', 0x1E63: 's\u0323',
+  0x1E64: 's\u0301\u0307', 0x1E65: 's\u0301\u0307',
+  0x1E66: 's\u030C\u0307', 0x1E67: 's\u030C\u0307',
+  0x1E68: 's\u0323\u0307', 0x1E69: 's\u0323\u0307',
+  0x1E6A: 't\u0307', 0x1E6B: 't\u0307', 0x1E6C: 't\u0323', 0x1E6D: 't\u0323',
+  0x1E6E: 't\u0331', 0x1E6F: 't\u0331', 0x1E70: 't\u032D', 0x1E71: 't\u032D',
+  0x1E72: 'u\u0324', 0x1E73: 'u\u0324', 0x1E74: 'u\u0330', 0x1E75: 'u\u0330',
+  0x1E76: 'u\u032D', 0x1E77: 'u\u032D',
+  0x1E78: 'u\u0303\u0301', 0x1E79: 'u\u0303\u0301',
+  0x1E7A: 'u\u0304\u0308', 0x1E7B: 'u\u0304\u0308',
+  0x1E7C: 'v\u0303', 0x1E7D: 'v\u0303', 0x1E7E: 'v\u0323', 0x1E7F: 'v\u0323',
+  0x1E80: 'w\u0300', 0x1E81: 'w\u0300', 0x1E82: 'w\u0301', 0x1E83: 'w\u0301',
+  0x1E84: 'w\u0308', 0x1E85: 'w\u0308', 0x1E86: 'w\u0307', 0x1E87: 'w\u0307',
+  0x1E88: 'w\u0323', 0x1E89: 'w\u0323', 0x1E8A: 'x\u0307', 0x1E8B: 'x\u0307',
+  0x1E8C: 'x\u0308', 0x1E8D: 'x\u0308', 0x1E8E: 'y\u0307', 0x1E8F: 'y\u0307',
+  0x1E90: 'z\u0302', 0x1E91: 'z\u0302', 0x1E92: 'z\u0323', 0x1E93: 'z\u0323',
+  0x1E94: 'z\u0331', 0x1E95: 'z\u0331', 0x1E96: 'h\u0331', 0x1E97: 't\u0308',
+  0x1E98: 'w\u030A', 0x1E99: 'y\u030A', 0x1E9B: '\u017F\u0307',
+  0x1EA0: 'a\u0323', 0x1EA1: 'a\u0323', 0x1EA2: 'a\u0309', 0x1EA3: 'a\u0309',
+  0x1EA4: 'a\u0302\u0301', 0x1EA5: 'a\u0302\u0301',
+  0x1EA6: 'a\u0302\u0300', 0x1EA7: 'a\u0302\u0300',
+  0x1EA8: 'a\u0302\u0309', 0x1EA9: 'a\u0302\u0309',
+  0x1EAA: 'a\u0302\u0303', 0x1EAB: 'a\u0302\u0303',
+  0x1EAC: 'a\u0323\u0302', 0x1EAD: 'a\u0323\u0302',
+  0x1EAE: 'a\u0306\u0301', 0x1EAF: 'a\u0306\u0301',
+  0x1EB0: 'a\u0306\u0300', 0x1EB1: 'a\u0306\u0300',
+  0x1EB2: 'a\u0306\u0309', 0x1EB3: 'a\u0306\u0309',
+  0x1EB4: 'a\u0306\u0303', 0x1EB5: 'a\u0306\u0303',
+  0x1EB6: 'a\u0323\u0306', 0x1EB7: 'a\u0323\u0306',
+  0x1EB8: 'e\u0323', 0x1EB9: 'e\u0323', 0x1EBA: 'e\u0309', 0x1EBB: 'e\u0309',
+  0x1EBC: 'e\u0303', 0x1EBD: 'e\u0303',
+  0x1EBE: 'e\u0302\u0301', 0x1EBF: 'e\u0302\u0301',
+  0x1EC0: 'e\u0302\u0300', 0x1EC1: 'e\u0302\u0300',
+  0x1EC2: 'e\u0302\u0309', 0x1EC3: 'e\u0302\u0309',
+  0x1EC4: 'e\u0302\u0303', 0x1EC5: 'e\u0302\u0303',
+  0x1EC6: 'e\u0323\u0302', 0x1EC7: 'e\u0323\u0302',
+  0x1EC8: 'i\u0309', 0x1EC9: 'i\u0309', 0x1ECA: 'i\u0323', 0x1ECB: 'i\u0323',
+  0x1ECC: 'o\u0323', 0x1ECD: 'o\u0323', 0x1ECE: 'o\u0309', 0x1ECF: 'o\u0309',
+  0x1ED0: 'o\u0302\u0301', 0x1ED1: 'o\u0302\u0301',
+  0x1ED2: 'o\u0302\u0300', 0x1ED3: 'o\u0302\u0300',
+  0x1ED4: 'o\u0302\u0309', 0x1ED5: 'o\u0302\u0309',
+  0x1ED6: 'o\u0302\u0303', 0x1ED7: 'o\u0302\u0303',
+  0x1ED8: 'o\u0323\u0302', 0x1ED9: 'o\u0323\u0302',
+  0x1EDA: 'o\u031B\u0301', 0x1EDB: 'o\u031B\u0301',
+  0x1EDC: 'o\u031B\u0300', 0x1EDD: 'o\u031B\u0300',
+  0x1EDE: 'o\u031B\u0309', 0x1EDF: 'o\u031B\u0309',
+  0x1EE0: 'o\u031B\u0303', 0x1EE1: 'o\u031B\u0303',
+  0x1EE2: 'o\u031B\u0323', 0x1EE3: 'o\u031B\u0323',
+  0x1EE4: 'u\u0323', 0x1EE5: 'u\u0323', 0x1EE6: 'u\u0309', 0x1EE7: 'u\u0309',
+  0x1EE8: 'u\u031B\u0301', 0x1EE9: 'u\u031B\u0301',
+  0x1EEA: 'u\u031B\u0300', 0x1EEB: 'u\u031B\u0300',
+  0x1EEC: 'u\u031B\u0309', 0x1EED: 'u\u031B\u0309',
+  0x1EEE: 'u\u031B\u0303', 0x1EEF: 'u\u031B\u0303',
+  0x1EF0: 'u\u031B\u0323', 0x1EF1: 'u\u031B\u0323',
+  0x1EF2: 'y\u0300', 0x1EF3: 'y\u0300', 0x1EF4: 'y\u0323', 0x1EF5: 'y\u0323',
+  0x1EF6: 'y\u0309', 0x1EF7: 'y\u0309', 0x1EF8: 'y\u0303', 0x1EF9: 'y\u0303',
+  // U+1F00..U+1FFF (Greek Extended)
+  0x1F00: '\u03B1\u0313', 0x1F01: '\u03B1\u0314',
+  0x1F02: '\u03B1\u0313\u0300', 0x1F03: '\u03B1\u0314\u0300',
+  0x1F04: '\u03B1\u0313\u0301', 0x1F05: '\u03B1\u0314\u0301',
+  0x1F06: '\u03B1\u0313\u0342', 0x1F07: '\u03B1\u0314\u0342',
+  0x1F08: '\u03B1\u0313', 0x1F09: '\u03B1\u0314',
+  0x1F0A: '\u03B1\u0313\u0300', 0x1F0B: '\u03B1\u0314\u0300',
+  0x1F0C: '\u03B1\u0313\u0301', 0x1F0D: '\u03B1\u0314\u0301',
+  0x1F0E: '\u03B1\u0313\u0342', 0x1F0F: '\u03B1\u0314\u0342',
+  0x1F10: '\u03B5\u0313', 0x1F11: '\u03B5\u0314',
+  0x1F12: '\u03B5\u0313\u0300', 0x1F13: '\u03B5\u0314\u0300',
+  0x1F14: '\u03B5\u0313\u0301', 0x1F15: '\u03B5\u0314\u0301',
+  0x1F18: '\u03B5\u0313', 0x1F19: '\u03B5\u0314',
+  0x1F1A: '\u03B5\u0313\u0300', 0x1F1B: '\u03B5\u0314\u0300',
+  0x1F1C: '\u03B5\u0313\u0301', 0x1F1D: '\u03B5\u0314\u0301',
+  0x1F20: '\u03B7\u0313', 0x1F21: '\u03B7\u0314',
+  0x1F22: '\u03B7\u0313\u0300', 0x1F23: '\u03B7\u0314\u0300',
+  0x1F24: '\u03B7\u0313\u0301', 0x1F25: '\u03B7\u0314\u0301',
+  0x1F26: '\u03B7\u0313\u0342', 0x1F27: '\u03B7\u0314\u0342',
+  0x1F28: '\u03B7\u0313', 0x1F29: '\u03B7\u0314',
+  0x1F2A: '\u03B7\u0313\u0300', 0x1F2B: '\u03B7\u0314\u0300',
+  0x1F2C: '\u03B7\u0313\u0301', 0x1F2D: '\u03B7\u0314\u0301',
+  0x1F2E: '\u03B7\u0313\u0342', 0x1F2F: '\u03B7\u0314\u0342',
+  0x1F30: '\u03B9\u0313', 0x1F31: '\u03B9\u0314',
+  0x1F32: '\u03B9\u0313\u0300', 0x1F33: '\u03B9\u0314\u0300',
+  0x1F34: '\u03B9\u0313\u0301', 0x1F35: '\u03B9\u0314\u0301',
+  0x1F36: '\u03B9\u0313\u0342', 0x1F37: '\u03B9\u0314\u0342',
+  0x1F38: '\u03B9\u0313', 0x1F39: '\u03B9\u0314',
+  0x1F3A: '\u03B9\u0313\u0300', 0x1F3B: '\u03B9\u0314\u0300',
+  0x1F3C: '\u03B9\u0313\u0301', 0x1F3D: '\u03B9\u0314\u0301',
+  0x1F3E: '\u03B9\u0313\u0342', 0x1F3F: '\u03B9\u0314\u0342',
+  0x1F40: '\u03BF\u0313', 0x1F41: '\u03BF\u0314',
+  0x1F42: '\u03BF\u0313\u0300', 0x1F43: '\u03BF\u0314\u0300',
+  0x1F44: '\u03BF\u0313\u0301', 0x1F45: '\u03BF\u0314\u0301',
+  0x1F48: '\u03BF\u0313', 0x1F49: '\u03BF\u0314',
+  0x1F4A: '\u03BF\u0313\u0300', 0x1F4B: '\u03BF\u0314\u0300',
+  0x1F4C: '\u03BF\u0313\u0301', 0x1F4D: '\u03BF\u0314\u0301',
+  0x1F50: '\u03C5\u0313', 0x1F51: '\u03C5\u0314',
+  0x1F52: '\u03C5\u0313\u0300', 0x1F53: '\u03C5\u0314\u0300',
+  0x1F54: '\u03C5\u0313\u0301', 0x1F55: '\u03C5\u0314\u0301',
+  0x1F56: '\u03C5\u0313\u0342', 0x1F57: '\u03C5\u0314\u0342',
+  0x1F59: '\u03C5\u0314', 0x1F5B: '\u03C5\u0314\u0300',
+  0x1F5D: '\u03C5\u0314\u0301', 0x1F5F: '\u03C5\u0314\u0342',
+  0x1F60: '\u03C9\u0313', 0x1F61: '\u03C9\u0314',
+  0x1F62: '\u03C9\u0313\u0300', 0x1F63: '\u03C9\u0314\u0300',
+  0x1F64: '\u03C9\u0313\u0301', 0x1F65: '\u03C9\u0314\u0301',
+  0x1F66: '\u03C9\u0313\u0342', 0x1F67: '\u03C9\u0314\u0342',
+  0x1F68: '\u03C9\u0313', 0x1F69: '\u03C9\u0314',
+  0x1F6A: '\u03C9\u0313\u0300', 0x1F6B: '\u03C9\u0314\u0300',
+  0x1F6C: '\u03C9\u0313\u0301', 0x1F6D: '\u03C9\u0314\u0301',
+  0x1F6E: '\u03C9\u0313\u0342', 0x1F6F: '\u03C9\u0314\u0342',
+  0x1F70: '\u03B1\u0300', 0x1F71: '\u03B1\u0301', 0x1F72: '\u03B5\u0300', 0x1F73: '\u03B5\u0301',
+  0x1F74: '\u03B7\u0300', 0x1F75: '\u03B7\u0301', 0x1F76: '\u03B9\u0300', 0x1F77: '\u03B9\u0301',
+  0x1F78: '\u03BF\u0300', 0x1F79: '\u03BF\u0301', 0x1F7A: '\u03C5\u0300', 0x1F7B: '\u03C5\u0301',
+  0x1F7C: '\u03C9\u0300', 0x1F7D: '\u03C9\u0301',
+  0x1F80: '\u03B1\u0313\u0345', 0x1F81: '\u03B1\u0314\u0345',
+  0x1F82: '\u03B1\u0313\u0300\u0345', 0x1F83: '\u03B1\u0314\u0300\u0345',
+  0x1F84: '\u03B1\u0313\u0301\u0345', 0x1F85: '\u03B1\u0314\u0301\u0345',
+  0x1F86: '\u03B1\u0313\u0342\u0345', 0x1F87: '\u03B1\u0314\u0342\u0345',
+  0x1F88: '\u03B1\u0313\u0345', 0x1F89: '\u03B1\u0314\u0345',
+  0x1F8A: '\u03B1\u0313\u0300\u0345', 0x1F8B: '\u03B1\u0314\u0300\u0345',
+  0x1F8C: '\u03B1\u0313\u0301\u0345', 0x1F8D: '\u03B1\u0314\u0301\u0345',
+  0x1F8E: '\u03B1\u0313\u0342\u0345', 0x1F8F: '\u03B1\u0314\u0342\u0345',
+  0x1F90: '\u03B7\u0313\u0345', 0x1F91: '\u03B7\u0314\u0345',
+  0x1F92: '\u03B7\u0313\u0300\u0345', 0x1F93: '\u03B7\u0314\u0300\u0345',
+  0x1F94: '\u03B7\u0313\u0301\u0345', 0x1F95: '\u03B7\u0314\u0301\u0345',
+  0x1F96: '\u03B7\u0313\u0342\u0345', 0x1F97: '\u03B7\u0314\u0342\u0345',
+  0x1F98: '\u03B7\u0313\u0345', 0x1F99: '\u03B7\u0314\u0345',
+  0x1F9A: '\u03B7\u0313\u0300\u0345', 0x1F9B: '\u03B7\u0314\u0300\u0345',
+  0x1F9C: '\u03B7\u0313\u0301\u0345', 0x1F9D: '\u03B7\u0314\u0301\u0345',
+  0x1F9E: '\u03B7\u0313\u0342\u0345', 0x1F9F: '\u03B7\u0314\u0342\u0345',
+  0x1FA0: '\u03C9\u0313\u0345', 0x1FA1: '\u03C9\u0314\u0345',
+  0x1FA2: '\u03C9\u0313\u0300\u0345', 0x1FA3: '\u03C9\u0314\u0300\u0345',
+  0x1FA4: '\u03C9\u0313\u0301\u0345', 0x1FA5: '\u03C9\u0314\u0301\u0345',
+  0x1FA6: '\u03C9\u0313\u0342\u0345', 0x1FA7: '\u03C9\u0314\u0342\u0345',
+  0x1FA8: '\u03C9\u0313\u0345', 0x1FA9: '\u03C9\u0314\u0345',
+  0x1FAA: '\u03C9\u0313\u0300\u0345', 0x1FAB: '\u03C9\u0314\u0300\u0345',
+  0x1FAC: '\u03C9\u0313\u0301\u0345', 0x1FAD: '\u03C9\u0314\u0301\u0345',
+  0x1FAE: '\u03C9\u0313\u0342\u0345', 0x1FAF: '\u03C9\u0314\u0342\u0345',
+  0x1FB0: '\u03B1\u0306', 0x1FB1: '\u03B1\u0304',
+  0x1FB2: '\u03B1\u0300\u0345', 0x1FB3: '\u03B1\u0345', 0x1FB4: '\u03B1\u0301\u0345',
+  0x1FB6: '\u03B1\u0342', 0x1FB7: '\u03B1\u0342\u0345',
+  0x1FB8: '\u03B1\u0306', 0x1FB9: '\u03B1\u0304',
+  0x1FBA: '\u03B1\u0300', 0x1FBB: '\u03B1\u0301', 0x1FBC: '\u03B1\u0345',
+  0x1FBE: '\u03B9', 0x1FC1: '\u00A8\u0342',
+  0x1FC2: '\u03B7\u0300\u0345', 0x1FC3: '\u03B7\u0345', 0x1FC4: '\u03B7\u0301\u0345',
+  0x1FC6: '\u03B7\u0342', 0x1FC7: '\u03B7\u0342\u0345',
+  0x1FC8: '\u03B5\u0300', 0x1FC9: '\u03B5\u0301',
+  0x1FCA: '\u03B7\u0300', 0x1FCB: '\u03B7\u0301', 0x1FCC: '\u03B7\u0345',
+  0x1FCD: '\u1FBF\u0300', 0x1FCE: '\u1FBF\u0301', 0x1FCF: '\u1FBF\u0342',
+  0x1FD0: '\u03B9\u0306', 0x1FD1: '\u03B9\u0304',
+  0x1FD2: '\u03B9\u0308\u0300', 0x1FD3: '\u03B9\u0308\u0301',
+  0x1FD6: '\u03B9\u0342', 0x1FD7: '\u03B9\u0308\u0342',
+  0x1FD8: '\u03B9\u0306', 0x1FD9: '\u03B9\u0304',
+  0x1FDA: '\u03B9\u0300', 0x1FDB: '\u03B9\u0301',
+  0x1FDD: '\u1FFE\u0300', 0x1FDE: '\u1FFE\u0301', 0x1FDF: '\u1FFE\u0342',
+  0x1FE0: '\u03C5\u0306', 0x1FE1: '\u03C5\u0304',
+  0x1FE2: '\u03C5\u0308\u0300', 0x1FE3: '\u03C5\u0308\u0301',
+  0x1FE4: '\u03C1\u0313', 0x1FE5: '\u03C1\u0314',
+  0x1FE6: '\u03C5\u0342', 0x1FE7: '\u03C5\u0308\u0342',
+  0x1FE8: '\u03C5\u0306', 0x1FE9: '\u03C5\u0304',
+  0x1FEA: '\u03C5\u0300', 0x1FEB: '\u03C5\u0301', 0x1FEC: '\u03C1\u0314',
+  0x1FED: '\u00A8\u0300', 0x1FEE: '\u00A8\u0301', 0x1FEF: '`',
+  0x1FF2: '\u03C9\u0300\u0345', 0x1FF3: '\u03C9\u0345', 0x1FF4: '\u03C9\u0301\u0345',
+  0x1FF6: '\u03C9\u0342', 0x1FF7: '\u03C9\u0342\u0345',
+  0x1FF8: '\u03BF\u0300', 0x1FF9: '\u03BF\u0301',
+  0x1FFA: '\u03C9\u0300', 0x1FFB: '\u03C9\u0301', 0x1FFC: '\u03C9\u0345',
+  0x1FFD: '\u00B4',
 };
 
+const Set<int> _ccc220BelowMarks = {
+  0x0339, 0x033A, 0x033B, 0x033C, 0x0347, 0x0348, 0x0349, 0x034D, 0x034E,
+  0x0353, 0x0354, 0x0355, 0x0356, 0x0359, 0x035A, 0x1AB5, 0x1AB6, 0x1AB7,
+  0x1AB8, 0x1AB9, 0x1ABA, 0x1ABD, 0x1ABF, 0x1AC0, 0x1AC3, 0x1AC4, 0x1ACA,
+  0x1ADD, 0x1AE6, 0x1DC2, 0x1DCA, 0x1DCF, 0x1DF9, 0x1DFD, 0x1DFF, 0x20E8,
+  0x20EC, 0x20ED, 0x20EE, 0x20EF,
+};
+
+bool _isCombiningMark(int cp) {
+  if (cp >= 0x0300 && cp <= 0x036F) return cp != 0x034F;
+  if (cp >= 0x1AB0 && cp <= 0x1AFF) return true;
+  if (cp >= 0x1DC0 && cp <= 0x1DFF) return true;
+  if (cp >= 0x20D0 && cp <= 0x20FF) {
+    return (cp < 0x20DD || cp > 0x20E0) && (cp < 0x20E2 || cp > 0x20E4);
+  }
+  if (cp >= 0xFE20 && cp <= 0xFE2F) return true;
+  return false;
+}
+
 int _combiningClass(int cp) {
-  if (cp == 0x0327 || cp == 0x0328) return 202;
-  if (cp >= 0x0316 && cp <= 0x0333) return 220;
-  if (cp >= 0x0300 && cp <= 0x0314) return 230;
-  if (cp >= 0x033D && cp <= 0x0344) return 230;
-  if (cp >= 0x0346 && cp <= 0x036F) return 230;
+  if ((cp >= 0x0334 && cp <= 0x0338) ||
+      cp == 0x20D2 ||
+      cp == 0x20D3 ||
+      (cp >= 0x20D8 && cp <= 0x20DA) ||
+      cp == 0x20E5 ||
+      cp == 0x20E6 ||
+      cp == 0x20EA ||
+      cp == 0x20EB) {
+    return 1;
+  }
+  if (cp == 0x0321 ||
+      cp == 0x0322 ||
+      cp == 0x0327 ||
+      cp == 0x0328 ||
+      cp == 0x1DD0) {
+    return 202;
+  }
+  if (cp == 0x1DCE) return 214;
+  if (cp == 0x031B) return 216;
+  if (cp == 0x1DFA) return 218;
+  if ((cp >= 0x0316 && cp <= 0x0319) ||
+      (cp >= 0x031C && cp <= 0x0320) ||
+      (cp >= 0x0323 && cp <= 0x0326) ||
+      (cp >= 0x0329 && cp <= 0x0333) ||
+      (cp >= 0xFE27 && cp <= 0xFE2D) ||
+      _ccc220BelowMarks.contains(cp)) {
+    return 220;
+  }
+  if (cp == 0x1DF7 || cp == 0x1DF8) return 228;
+  if (cp == 0x0315 || cp == 0x031A || cp == 0x0358 || cp == 0x1DF6) {
+    return 232;
+  }
+  if (cp == 0x035C || cp == 0x035F || cp == 0x0362 || cp == 0x1DFC) {
+    return 233;
+  }
+  if (cp == 0x035D ||
+      cp == 0x035E ||
+      cp == 0x0360 ||
+      cp == 0x0361 ||
+      cp == 0x1AEB ||
+      cp == 0x1DCD) {
+    return 234;
+  }
+  if (cp == 0x0345) return 240;
   return 230;
 }
 
-/// Normalizes precomposed Latin characters (`U+00C0..U+017F`) and combining
-/// marks (`U+0300..U+036F`) + lowercase for collision detection equivalent to
-/// JS `normalize('NFC').toLowerCase()`.
+/// Normalizes precomposed Latin (`U+00C0..U+024F`, `U+1E00..U+1EFF`),
+/// Greek (`U+0370..U+03FF`, `U+1F00..U+1FFF`), Cyrillic (`U+0400..U+04FF`),
+/// algorithmic Hangul syllables (`U+AC00..U+D7A3`), and Unicode combining
+/// marks (`U+0300..U+036F`, `U+1AB0..U+1AFF`, `U+1DC0..U+1DFF`,
+/// `U+20D0..U+20FF`, `U+FE20..U+FE2F`) + lowercase for collision detection.
 String canonicalizeRehearsalPath(String input) {
-  final expanded = StringBuffer();
-  for (final rune in input.runes) {
-    final mapped = _latinDecompLower[rune];
-    if (mapped != null) {
-      expanded.write(mapped);
-    } else if (rune >= 0x41 && rune <= 0x5A) {
-      expanded.writeCharCode(rune + 0x20);
-    } else {
-      expanded.write(String.fromCharCode(rune).toLowerCase());
+  var current = input;
+  for (var pass = 0; pass < 8; pass++) {
+    final expanded = StringBuffer();
+    var changed = false;
+    for (final rune in current.runes) {
+      if (rune >= 0xAC00 && rune <= 0xD7A3) {
+        final sIndex = rune - 0xAC00;
+        final l = 0x1100 + (sIndex ~/ 588);
+        final v = 0x1161 + ((sIndex % 588) ~/ 28);
+        final t = sIndex % 28;
+        expanded.writeCharCode(l);
+        expanded.writeCharCode(v);
+        if (t != 0) {
+          expanded.writeCharCode(0x11A7 + t);
+        }
+        changed = true;
+      } else {
+        final mapped = _unicodeDecompLower[rune];
+        if (mapped != null) {
+          expanded.write(mapped);
+          if (mapped.runes.length != 1 || mapped.runes.first != rune) {
+            changed = true;
+          }
+        } else if (rune >= 0x41 && rune <= 0x5A) {
+          expanded.writeCharCode(rune + 0x20);
+          changed = true;
+        } else {
+          final lower = String.fromCharCode(rune).toLowerCase();
+          expanded.write(lower);
+          if (lower.runes.length != 1 || lower.runes.first != rune) {
+            changed = true;
+          }
+        }
+      }
     }
+    current = expanded.toString();
+    if (!changed) break;
   }
 
   final out = StringBuffer();
@@ -737,8 +1081,8 @@ String canonicalizeRehearsalPath(String input) {
     marks.clear();
   }
 
-  for (final rune in expanded.toString().runes) {
-    if (rune >= 0x0300 && rune <= 0x036F) {
+  for (final rune in current.runes) {
+    if (_isCombiningMark(rune)) {
       marks.add(rune);
     } else {
       flushMarks();
@@ -1651,6 +1995,666 @@ final class _ParsedManifest {
   final bool hasPractice;
 }
 
+final class _ZipIndex {
+  const _ZipIndex({
+    required this.resolvedEntries,
+    required this.cdSize,
+    required this.declaredExtractedBytes,
+  });
+
+  final Map<String, _CdEntry> resolvedEntries;
+  final int cdSize;
+  final int declaredExtractedBytes;
+}
+
+final class _ZipIndexOutcome {
+  const _ZipIndexOutcome.ok(this.index) : error = null;
+  const _ZipIndexOutcome.err(this.error) : index = null;
+
+  final _ZipIndex? index;
+  final (RehearsalValidationStatus, String, String)? error;
+}
+
+Future<Uint8List> _readBoundedFromSource({
+  required RehearsalByteSource source,
+  required int offset,
+  required int length,
+  required int maxChunkBytes,
+  required RehearsalCancellationToken? token,
+  void Function(int sliceLength)? onSliceRead,
+}) async {
+  if (length == 0) return Uint8List(0);
+  if (length <= maxChunkBytes) {
+    if (token != null && token.isCancelled) {
+      throw const _CancelledException();
+    }
+    final slice = await source.readSlice(offset, length);
+    if (token != null && token.isCancelled) {
+      throw const _CancelledException();
+    }
+    onSliceRead?.call(slice.length);
+    if (slice.length != length) {
+      throw const _TruncatedException();
+    }
+    return slice;
+  }
+  final out = Uint8List(length);
+  var pos = 0;
+  while (pos < length) {
+    if (token != null && token.isCancelled) {
+      throw const _CancelledException();
+    }
+    final take = math.min(maxChunkBytes, length - pos);
+    final slice = await source.readSlice(offset + pos, take);
+    onSliceRead?.call(slice.length);
+    if (slice.length != take) {
+      throw const _TruncatedException();
+    }
+    out.setRange(pos, pos + take, slice);
+    pos += take;
+  }
+  return out;
+}
+
+Future<_ZipIndexOutcome> _readZipIndex({
+  required int compressedBytes,
+  required int maxChunkBytes,
+  required int maxMemoryBudgetBytes,
+  required Future<Uint8List> Function(int offset, int length) readBounded,
+  required bool Function(int bytes) checkMemory,
+  required RehearsalCancellationToken? token,
+  void Function(int count)? onEntryCount,
+}) async {
+  // 1. Locate End of Central Directory (EOCD) scanning backwards in <= maxChunkBytes tail slices.
+  final maxTailSearch = math.min(compressedBytes, 22 + 65535);
+  if (checkMemory(maxTailSearch)) {
+    return _ZipIndexOutcome.err((
+      RehearsalValidationStatus.insufficientSpace,
+      'MEMORY_BUDGET_EXCEEDED',
+      'Working memory exceeds configured budget of $maxMemoryBudgetBytes bytes',
+    ));
+  }
+
+  final tailStart = compressedBytes - maxTailSearch;
+  final tailBytes = await readBounded(tailStart, maxTailSearch);
+
+  var eocdRelOffset = -1;
+  for (var i = tailBytes.length - 22; i >= 0; i--) {
+    if (tailBytes[i] == 0x50 &&
+        tailBytes[i + 1] == 0x4B &&
+        tailBytes[i + 2] == 0x05 &&
+        tailBytes[i + 3] == 0x06) {
+      final commentLen = _u16le(tailBytes, i + 20);
+      if (i + 22 + commentLen == tailBytes.length) {
+        eocdRelOffset = i;
+        break;
+      }
+    }
+  }
+
+  if (eocdRelOffset < 0) {
+    return const _ZipIndexOutcome.err((
+      RehearsalValidationStatus.corrupted,
+      'INVALID_ZIP_ARCHIVE',
+      'ZIP End of Central Directory not found',
+    ));
+  }
+
+  final eocdOffset = tailStart + eocdRelOffset;
+  final diskNumber = _u16le(tailBytes, eocdRelOffset + 4);
+  final cdStartDisk = _u16le(tailBytes, eocdRelOffset + 6);
+  final entriesOnDisk = _u16le(tailBytes, eocdRelOffset + 8);
+  var totalEntries = _u16le(tailBytes, eocdRelOffset + 10);
+  var cdSize = _u32le(tailBytes, eocdRelOffset + 12);
+  var cdOffset = _u32le(tailBytes, eocdRelOffset + 16);
+
+  if (diskNumber != 0 ||
+      cdStartDisk != 0 ||
+      entriesOnDisk != totalEntries) {
+    return const _ZipIndexOutcome.err((
+      RehearsalValidationStatus.corrupted,
+      'INVALID_ZIP_ARCHIVE',
+      'Multi-disk ZIP archives are not supported',
+    ));
+  }
+
+  // Check optional ZIP64 EOCD Locator immediately before EOCD.
+  var cdLimitOffset = eocdOffset;
+  if (eocdOffset >= 20) {
+    final locOffset = eocdOffset - 20;
+    final locBytes = (locOffset >= tailStart)
+        ? Uint8List.sublistView(
+            tailBytes,
+            locOffset - tailStart,
+            locOffset - tailStart + 20,
+          )
+        : await readBounded(locOffset, 20);
+    if (_u32le(locBytes, 0) == 0x07064B50) {
+      final z64Disk = _u32le(locBytes, 4);
+      final z64Offset = _u64le(locBytes, 8);
+      final z64TotalDisks = _u32le(locBytes, 16);
+      if (z64Disk != 0 || z64TotalDisks > 1) {
+        return const _ZipIndexOutcome.err((
+          RehearsalValidationStatus.corrupted,
+          'INVALID_ZIP_ARCHIVE',
+          'Multi-disk ZIP64 archives are not supported',
+        ));
+      }
+      if (z64Offset < 0 || z64Offset > locOffset || 56 > locOffset - z64Offset) {
+        return const _ZipIndexOutcome.err((
+          RehearsalValidationStatus.corrupted,
+          'TRUNCATED_ARCHIVE',
+          'ZIP64 EOCD offset out of bounds',
+        ));
+      }
+      final z64Bytes = await readBounded(z64Offset, 56);
+      if (_u32le(z64Bytes, 0) != 0x06064B50) {
+        return const _ZipIndexOutcome.err((
+          RehearsalValidationStatus.corrupted,
+          'INVALID_ZIP_ARCHIVE',
+          'Invalid ZIP64 EOCD signature',
+        ));
+      }
+      final z64DiskNum = _u32le(z64Bytes, 16);
+      final z64CdDisk = _u32le(z64Bytes, 20);
+      final z64EntriesOnDisk = _u64le(z64Bytes, 24);
+      final z64TotalEntries = _u64le(z64Bytes, 32);
+      final z64CdSize = _u64le(z64Bytes, 40);
+      final z64CdOffset = _u64le(z64Bytes, 48);
+      if (z64DiskNum != 0 ||
+          z64CdDisk != 0 ||
+          z64EntriesOnDisk != z64TotalEntries) {
+        return const _ZipIndexOutcome.err((
+          RehearsalValidationStatus.corrupted,
+          'INVALID_ZIP_ARCHIVE',
+          'Multi-disk ZIP64 EOCD rejected',
+        ));
+      }
+      totalEntries = z64TotalEntries;
+      cdSize = z64CdSize;
+      cdOffset = z64CdOffset;
+      cdLimitOffset = z64Offset;
+    } else if (totalEntries == 0xFFFF ||
+        cdSize == 0xFFFFFFFF ||
+        cdOffset == 0xFFFFFFFF) {
+      return const _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'INVALID_ZIP_ARCHIVE',
+        'ZIP64 markers present without ZIP64 EOCD locator',
+      ));
+    }
+  }
+
+  if (totalEntries == 0) {
+    return const _ZipIndexOutcome.err((
+      RehearsalValidationStatus.corrupted,
+      'EMPTY_ARCHIVE',
+      'ZIP archive contains zero entries',
+    ));
+  }
+
+  if (totalEntries > RehearsalLimitsV1.maxEntries) {
+    return _ZipIndexOutcome.err((
+      RehearsalValidationStatus.corrupted,
+      'ENTRY_COUNT_LIMIT_EXCEEDED',
+      'Archive entry count $totalEntries exceeds maximum ${RehearsalLimitsV1.maxEntries}',
+    ));
+  }
+  onEntryCount?.call(totalEntries);
+
+  if (cdOffset < 0 ||
+      cdSize < 0 ||
+      cdOffset > cdLimitOffset ||
+      cdSize > cdLimitOffset - cdOffset) {
+    return const _ZipIndexOutcome.err((
+      RehearsalValidationStatus.corrupted,
+      'TRUNCATED_ARCHIVE',
+      'Central Directory bounds exceed archive',
+    ));
+  }
+
+  if (checkMemory(cdSize + maxChunkBytes)) {
+    return _ZipIndexOutcome.err((
+      RehearsalValidationStatus.insufficientSpace,
+      'MEMORY_BUDGET_EXCEEDED',
+      'Central Directory exceeds memory budget of $maxMemoryBudgetBytes bytes',
+    ));
+  }
+
+  if (token != null && token.isCancelled) {
+    return const _ZipIndexOutcome.err((
+      RehearsalValidationStatus.cancelled,
+      'VALIDATION_CANCELLED',
+      'Validation cancelled before Central Directory read',
+    ));
+  }
+
+  // 2. Read and parse Central Directory records.
+  final cdBytes = await readBounded(cdOffset, cdSize);
+  final entries = <_CdEntry>[];
+  final seenCanonical = <String>{};
+  var cdPos = 0;
+  var runningDeclaredBytes = 0;
+
+  for (var i = 0; i < totalEntries; i++) {
+    if (cdPos + 46 > cdBytes.length || _u32le(cdBytes, cdPos) != 0x02014B50) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'INVALID_ZIP_ARCHIVE',
+        'Malformed Central Directory entry #$i',
+      ));
+    }
+
+    final flags = _u16le(cdBytes, cdPos + 8);
+    final method = _u16le(cdBytes, cdPos + 10);
+    final crc32 = _u32le(cdBytes, cdPos + 16);
+    var compSize = _u32le(cdBytes, cdPos + 20);
+    var uncompSize = _u32le(cdBytes, cdPos + 24);
+    final nameLen = _u16le(cdBytes, cdPos + 28);
+    final extraLen = _u16le(cdBytes, cdPos + 30);
+    final commentLen = _u16le(cdBytes, cdPos + 32);
+    var diskStart = _u16le(cdBytes, cdPos + 34);
+    final externalAttr = _u32le(cdBytes, cdPos + 38);
+    var lfhOffset = _u32le(cdBytes, cdPos + 42);
+
+    final recordEnd = cdPos + 46 + nameLen + extraLen + commentLen;
+    if (recordEnd > cdBytes.length) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'TRUNCATED_ARCHIVE',
+        'Central Directory record #$i truncated',
+      ));
+    }
+
+    final rawNameBytes = Uint8List.sublistView(
+      cdBytes,
+      cdPos + 46,
+      cdPos + 46 + nameLen,
+    );
+    final extraBytes = Uint8List.sublistView(
+      cdBytes,
+      cdPos + 46 + nameLen,
+      cdPos + 46 + nameLen + extraLen,
+    );
+
+    // Parse ZIP64 extra field (0x0001) if sentinel values exist.
+    if (uncompSize == 0xFFFFFFFF ||
+        compSize == 0xFFFFFFFF ||
+        lfhOffset == 0xFFFFFFFF ||
+        diskStart == 0xFFFF) {
+      var ep = 0;
+      while (ep + 4 <= extraBytes.length) {
+        final hid = _u16le(extraBytes, ep);
+        final hlen = _u16le(extraBytes, ep + 2);
+        if (ep + 4 + hlen > extraBytes.length) break;
+        if (hid == 0x0001) {
+          var fp = ep + 4;
+          if (uncompSize == 0xFFFFFFFF && fp + 8 <= ep + 4 + hlen) {
+            uncompSize = _u64le(extraBytes, fp);
+            fp += 8;
+          }
+          if (compSize == 0xFFFFFFFF && fp + 8 <= ep + 4 + hlen) {
+            compSize = _u64le(extraBytes, fp);
+            fp += 8;
+          }
+          if (lfhOffset == 0xFFFFFFFF && fp + 8 <= ep + 4 + hlen) {
+            lfhOffset = _u64le(extraBytes, fp);
+            fp += 8;
+          }
+          if (diskStart == 0xFFFF && fp + 4 <= ep + 4 + hlen) {
+            diskStart = _u32le(extraBytes, fp);
+          }
+          break;
+        }
+        ep += 4 + hlen;
+      }
+    }
+
+    if (diskStart != 0) {
+      return const _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'INVALID_ZIP_ARCHIVE',
+        'Multi-disk entry rejected',
+      ));
+    }
+
+    // Security check: encryption (bit 0, bit 6, or method 99).
+    if ((flags & 0x0001) != 0 || (flags & 0x0040) != 0 || method == 99) {
+      return const _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'ENCRYPTED_ENTRY_FORBIDDEN',
+        'Encrypted ZIP entries are forbidden',
+      ));
+    }
+
+    String rawName;
+    try {
+      rawName = utf8.decode(rawNameBytes, allowMalformed: false);
+    } on FormatException {
+      return const _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'PATH_TRAVERSAL_OR_UNSAFE_PATH',
+        'Non-UTF-8 entry name rejected',
+      ));
+    }
+
+    // Security check: directory, symlink, or POSIX special file.
+    final posixType = (externalAttr >>> 16) & 0xF000;
+    final isPosixSpecialOrSymlink =
+        posixType == 0xA000 ||
+        posixType == 0x4000 ||
+        posixType == 0x1000 ||
+        posixType == 0x2000 ||
+        posixType == 0x6000 ||
+        posixType == 0xC000;
+    final isDosDirectory = (externalAttr & 0x10) != 0;
+    if (rawName.endsWith('/') ||
+        rawName.endsWith('\\') ||
+        isDosDirectory ||
+        isPosixSpecialOrSymlink) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'SPECIAL_FILE_OR_SYMLINK_FORBIDDEN',
+        'Directory, symlink, or special file entry forbidden: $rawName',
+      ));
+    }
+
+    final pathError = _validateRelativeEntryPath(rawName);
+    if (pathError != null) {
+      return _ZipIndexOutcome.err(pathError);
+    }
+
+    if (_hasNestedArchiveExtension(rawName)) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'NESTED_ARCHIVE_FORBIDDEN',
+        'Nested archive extension forbidden: $rawName',
+      ));
+    }
+
+    final canonical = canonicalizeRehearsalPath(rawName);
+    if (!seenCanonical.add(canonical)) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'DUPLICATE_OR_COLLIDING_ENTRY',
+        'Duplicate or Unicode/case-colliding ZIP entry: $rawName',
+      ));
+    }
+
+    entries.add(
+      _CdEntry(
+        path: rawName,
+        canonicalPath: canonical,
+        rawNameBytes: rawNameBytes,
+        flags: flags,
+        compressionMethod: method,
+        crc32: crc32,
+        compressedSize: compSize,
+        uncompressedSize: uncompSize,
+        externalAttr: externalAttr,
+        localHeaderOffset: lfhOffset,
+        dataOffset: 0,
+      ),
+    );
+
+    runningDeclaredBytes += uncompSize;
+    cdPos = recordEnd;
+  }
+
+  if (cdPos != cdBytes.length) {
+    return const _ZipIndexOutcome.err((
+      RehearsalValidationStatus.corrupted,
+      'INVALID_ZIP_ARCHIVE',
+      'Central Directory trailing garbage detected',
+    ));
+  }
+
+  if (runningDeclaredBytes > RehearsalLimitsV1.maxExtractedBytes) {
+    return _ZipIndexOutcome.err((
+      RehearsalValidationStatus.corrupted,
+      'EXTRACTED_SIZE_LIMIT_EXCEEDED',
+      'Declared extracted size $runningDeclaredBytes exceeds limit ${RehearsalLimitsV1.maxExtractedBytes}',
+    ));
+  }
+
+  // Check manifest presence & compression rules & declared bomb ratios before reading entries.
+  _CdEntry? manifestEntry;
+  for (final entry in entries) {
+    if (entry.path == 'manifest.json') {
+      manifestEntry = entry;
+    }
+  }
+  if (manifestEntry == null) {
+    return const _ZipIndexOutcome.err((
+      RehearsalValidationStatus.corrupted,
+      'MISSING_MANIFEST',
+      'Required root manifest.json is missing',
+    ));
+  }
+
+  for (final entry in entries) {
+    final isManifest = entry.path == 'manifest.json';
+    if (isManifest) {
+      if (entry.compressionMethod != 0 && entry.compressionMethod != 8) {
+        return _ZipIndexOutcome.err((
+          RehearsalValidationStatus.unsupported,
+          'UNSUPPORTED_COMPRESSION_METHOD',
+          'Unsupported compression method ${entry.compressionMethod} for manifest.json',
+        ));
+      }
+      if (entry.uncompressedSize > RehearsalLimitsV1.maxManifestBytes) {
+        return _ZipIndexOutcome.err((
+          RehearsalValidationStatus.corrupted,
+          'MANIFEST_SIZE_LIMIT_EXCEEDED',
+          'manifest.json size ${entry.uncompressedSize} exceeds ${RehearsalLimitsV1.maxManifestBytes} bytes',
+        ));
+      }
+      if (entry.compressionMethod == 8) {
+        if ((entry.compressedSize == 0 && entry.uncompressedSize > 0) ||
+            entry.uncompressedSize >
+                entry.compressedSize * RehearsalLimitsV1.maxCompressionRatio) {
+          return const _ZipIndexOutcome.err((
+            RehearsalValidationStatus.corrupted,
+            'ZIP_BOMB_RATIO_EXCEEDED',
+            'manifest.json declared compression ratio exceeds ${RehearsalLimitsV1.maxCompressionRatio}:1',
+          ));
+        }
+      } else if (entry.compressedSize != entry.uncompressedSize) {
+        return const _ZipIndexOutcome.err((
+          RehearsalValidationStatus.corrupted,
+          'HEADER_MISMATCH',
+          'STORE entry manifest.json has mismatched compressed/uncompressed sizes',
+        ));
+      }
+    } else {
+      if (entry.compressionMethod != 0) {
+        return _ZipIndexOutcome.err((
+          RehearsalValidationStatus.unsupported,
+          'UNSUPPORTED_COMPRESSION_METHOD',
+          'Media/auxiliary entry ${entry.path} must use STORE (0), got ${entry.compressionMethod}',
+        ));
+      }
+      if (entry.compressedSize != entry.uncompressedSize) {
+        return _ZipIndexOutcome.err((
+          RehearsalValidationStatus.corrupted,
+          'HEADER_MISMATCH',
+          'STORE entry ${entry.path} has mismatched compressed/uncompressed sizes',
+        ));
+      }
+    }
+  }
+
+  // 3. Verify Local File Headers match CD and no physical ranges overlap.
+  final sortedByOffset = List<_CdEntry>.from(entries)
+    ..sort((a, b) => a.localHeaderOffset.compareTo(b.localHeaderOffset));
+
+  final resolvedEntries = <String, _CdEntry>{};
+  var prevDataEnd = 0;
+
+  for (final entry in sortedByOffset) {
+    if (token != null && token.isCancelled) {
+      return const _ZipIndexOutcome.err((
+        RehearsalValidationStatus.cancelled,
+        'VALIDATION_CANCELLED',
+        'Validation cancelled during Local File Header verification',
+      ));
+    }
+
+    if (entry.localHeaderOffset < 0 ||
+        entry.localHeaderOffset > cdOffset ||
+        30 > cdOffset - entry.localHeaderOffset) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'TRUNCATED_ARCHIVE',
+        'Local File Header out of bounds for ${entry.path}',
+      ));
+    }
+
+    if (entry.localHeaderOffset < prevDataEnd) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'OVERLAPPING_ZIP_ENTRIES',
+        'Overlapping ZIP entries detected near ${entry.path}',
+      ));
+    }
+
+    final lfh = await readBounded(entry.localHeaderOffset, 30);
+    if (_u32le(lfh, 0) != 0x04034B50) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'HEADER_MISMATCH',
+        'Invalid Local File Header signature for ${entry.path}',
+      ));
+    }
+
+    final lfhFlags = _u16le(lfh, 6);
+    final lfhMethod = _u16le(lfh, 8);
+    final lfhCrc = _u32le(lfh, 14);
+    var lfhComp = _u32le(lfh, 18);
+    var lfhUncomp = _u32le(lfh, 22);
+    final lfhNameLen = _u16le(lfh, 26);
+    final lfhExtraLen = _u16le(lfh, 28);
+
+    final hasDataDescriptor = (lfhFlags & 0x08) != 0;
+    if (lfhFlags != entry.flags ||
+        lfhMethod != entry.compressionMethod ||
+        lfhNameLen != entry.rawNameBytes.length) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'HEADER_MISMATCH',
+        'LFH/CD flags, method, or filename length mismatch for ${entry.path}',
+      ));
+    }
+
+    final varLen = lfhNameLen + lfhExtraLen;
+    if (varLen > cdOffset - (entry.localHeaderOffset + 30)) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'TRUNCATED_ARCHIVE',
+        'LFH filename/extra exceeds CD offset for ${entry.path}',
+      ));
+    }
+    final dataOffset = entry.localHeaderOffset + 30 + varLen;
+
+    final lfhVarBytes = varLen > 0
+        ? await readBounded(entry.localHeaderOffset + 30, varLen)
+        : Uint8List(0);
+    for (var k = 0; k < lfhNameLen; k++) {
+      if (lfhVarBytes[k] != entry.rawNameBytes[k]) {
+        return _ZipIndexOutcome.err((
+          RehearsalValidationStatus.corrupted,
+          'HEADER_MISMATCH',
+          'LFH/CD filename bytes mismatch for ${entry.path}',
+        ));
+      }
+    }
+
+    if (lfhComp == 0xFFFFFFFF || lfhUncomp == 0xFFFFFFFF) {
+      final extraBytes = Uint8List.sublistView(lfhVarBytes, lfhNameLen);
+      int? z64Uncomp;
+      int? z64Comp;
+      var ep = 0;
+      while (ep + 4 <= extraBytes.length) {
+        final hid = _u16le(extraBytes, ep);
+        final hlen = _u16le(extraBytes, ep + 2);
+        if (ep + 4 + hlen > extraBytes.length) break;
+        if (hid == 0x0001) {
+          var fp = ep + 4;
+          if (lfhUncomp == 0xFFFFFFFF && fp + 8 <= ep + 4 + hlen) {
+            z64Uncomp = _u64le(extraBytes, fp);
+            fp += 8;
+          }
+          if (lfhComp == 0xFFFFFFFF && fp + 8 <= ep + 4 + hlen) {
+            z64Comp = _u64le(extraBytes, fp);
+          }
+          break;
+        }
+        ep += 4 + hlen;
+      }
+      if (lfhUncomp == 0xFFFFFFFF) {
+        if (z64Uncomp == null) {
+          return _ZipIndexOutcome.err((
+            RehearsalValidationStatus.corrupted,
+            'HEADER_MISMATCH',
+            'Missing LFH ZIP64 uncompressedSize extra field for ${entry.path}',
+          ));
+        }
+        lfhUncomp = z64Uncomp;
+      }
+      if (lfhComp == 0xFFFFFFFF) {
+        if (z64Comp == null) {
+          return _ZipIndexOutcome.err((
+            RehearsalValidationStatus.corrupted,
+            'HEADER_MISMATCH',
+            'Missing LFH ZIP64 compressedSize extra field for ${entry.path}',
+          ));
+        }
+        lfhComp = z64Comp;
+      }
+    }
+
+    if (!hasDataDescriptor || (lfhCrc != 0 || lfhComp != 0 || lfhUncomp != 0)) {
+      if (lfhCrc != entry.crc32 ||
+          lfhComp != entry.compressedSize ||
+          lfhUncomp != entry.uncompressedSize) {
+        return _ZipIndexOutcome.err((
+          RehearsalValidationStatus.corrupted,
+          'HEADER_MISMATCH',
+          'LFH/CD CRC or size mismatch for ${entry.path}',
+        ));
+      }
+    }
+
+    if (entry.compressedSize < 0 ||
+        entry.compressedSize > compressedBytes - dataOffset) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'TRUNCATED_ARCHIVE',
+        'Entry payload truncated for ${entry.path}',
+      ));
+    }
+    if (entry.compressedSize > cdOffset - dataOffset) {
+      return _ZipIndexOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'OVERLAPPING_ZIP_ENTRIES',
+        'Entry payload overlaps Central Directory for ${entry.path}',
+      ));
+    }
+    final dataEnd = dataOffset + entry.compressedSize;
+
+    prevDataEnd = dataEnd;
+    resolvedEntries[entry.path] = entry.withDataOffset(dataOffset);
+  }
+
+  return _ZipIndexOutcome.ok(
+    _ZipIndex(
+      resolvedEntries: resolvedEntries,
+      cdSize: cdSize,
+      declaredExtractedBytes: runningDeclaredBytes,
+    ),
+  );
+}
+
 /// Validates a `.louvaio-rehearsal.zip` package incrementally against the T7 v1 contract.
 Future<RehearsalValidationResult> validateRehearsalPackage(
   RehearsalByteSource source, {
@@ -1722,43 +2726,18 @@ Future<RehearsalValidationResult> validateRehearsalPackage(
     return peakWorkingMemoryBytes > maxMemoryBudgetBytes;
   }
 
-  Future<Uint8List> readBounded(int offset, int length) async {
-    if (length == 0) return Uint8List(0);
-    if (length <= maxChunkBytes) {
-      if (token != null && token.isCancelled) {
-        throw const _CancelledException();
+  Future<Uint8List> readBounded(int offset, int length) => _readBoundedFromSource(
+    source: source,
+    offset: offset,
+    length: length,
+    maxChunkBytes: maxChunkBytes,
+    token: token,
+    onSliceRead: (sliceLen) {
+      if (sliceLen > maxObservedSingleReadBytes) {
+        maxObservedSingleReadBytes = sliceLen;
       }
-      final slice = await source.readSlice(offset, length);
-      if (token != null && token.isCancelled) {
-        throw const _CancelledException();
-      }
-      if (slice.length > maxObservedSingleReadBytes) {
-        maxObservedSingleReadBytes = slice.length;
-      }
-      if (slice.length != length) {
-        throw const _TruncatedException();
-      }
-      return slice;
-    }
-    final out = Uint8List(length);
-    var pos = 0;
-    while (pos < length) {
-      if (token != null && token.isCancelled) {
-        throw const _CancelledException();
-      }
-      final take = math.min(maxChunkBytes, length - pos);
-      final slice = await source.readSlice(offset + pos, take);
-      if (slice.length > maxObservedSingleReadBytes) {
-        maxObservedSingleReadBytes = slice.length;
-      }
-      if (slice.length != take) {
-        throw const _TruncatedException();
-      }
-      out.setRange(pos, pos + take, slice);
-      pos += take;
-    }
-    return out;
-  }
+    },
+  );
 
   try {
     if (token != null && token.isCancelled) {
@@ -1793,588 +2772,24 @@ Future<RehearsalValidationResult> validateRehearsalPackage(
       );
     }
 
-    // 1. Locate End of Central Directory (EOCD) scanning backwards in <= maxChunkBytes tail slices.
-    final maxTailSearch = math.min(compressedBytes, 22 + 65535);
-    if (checkMemory(maxTailSearch)) {
-      return fail(
-        RehearsalValidationStatus.insufficientSpace,
-        'MEMORY_BUDGET_EXCEEDED',
-        'Working memory exceeds configured budget of $maxMemoryBudgetBytes bytes',
-      );
+    final indexOutcome = await _readZipIndex(
+      compressedBytes: compressedBytes,
+      maxChunkBytes: maxChunkBytes,
+      maxMemoryBudgetBytes: maxMemoryBudgetBytes,
+      readBounded: readBounded,
+      checkMemory: checkMemory,
+      token: token,
+      onEntryCount: (count) => entryCount = count,
+    );
+    if (indexOutcome.error != null) {
+      final err = indexOutcome.error!;
+      return fail(err.$1, err.$2, err.$3);
     }
 
-    final tailStart = compressedBytes - maxTailSearch;
-    final tailBytes = await readBounded(tailStart, maxTailSearch);
-
-    var eocdRelOffset = -1;
-    for (var i = tailBytes.length - 22; i >= 0; i--) {
-      if (tailBytes[i] == 0x50 &&
-          tailBytes[i + 1] == 0x4B &&
-          tailBytes[i + 2] == 0x05 &&
-          tailBytes[i + 3] == 0x06) {
-        final commentLen = _u16le(tailBytes, i + 20);
-        if (i + 22 + commentLen == tailBytes.length) {
-          eocdRelOffset = i;
-          break;
-        }
-      }
-    }
-
-    if (eocdRelOffset < 0) {
-      return fail(
-        RehearsalValidationStatus.corrupted,
-        'INVALID_ZIP_ARCHIVE',
-        'ZIP End of Central Directory not found',
-      );
-    }
-
-    final eocdOffset = tailStart + eocdRelOffset;
-    final diskNumber = _u16le(tailBytes, eocdRelOffset + 4);
-    final cdStartDisk = _u16le(tailBytes, eocdRelOffset + 6);
-    final entriesOnDisk = _u16le(tailBytes, eocdRelOffset + 8);
-    var totalEntries = _u16le(tailBytes, eocdRelOffset + 10);
-    var cdSize = _u32le(tailBytes, eocdRelOffset + 12);
-    var cdOffset = _u32le(tailBytes, eocdRelOffset + 16);
-
-    if (diskNumber != 0 ||
-        cdStartDisk != 0 ||
-        entriesOnDisk != totalEntries) {
-      return fail(
-        RehearsalValidationStatus.corrupted,
-        'INVALID_ZIP_ARCHIVE',
-        'Multi-disk ZIP archives are not supported',
-      );
-    }
-
-    // Check optional ZIP64 EOCD Locator immediately before EOCD.
-    var cdLimitOffset = eocdOffset;
-    if (eocdOffset >= 20) {
-      final locOffset = eocdOffset - 20;
-      final locBytes = (locOffset >= tailStart)
-          ? Uint8List.sublistView(
-              tailBytes,
-              locOffset - tailStart,
-              locOffset - tailStart + 20,
-            )
-          : await readBounded(locOffset, 20);
-      if (_u32le(locBytes, 0) == 0x07064B50) {
-        final z64Disk = _u32le(locBytes, 4);
-        final z64Offset = _u64le(locBytes, 8);
-        final z64TotalDisks = _u32le(locBytes, 16);
-        if (z64Disk != 0 || z64TotalDisks > 1) {
-          return fail(
-            RehearsalValidationStatus.corrupted,
-            'INVALID_ZIP_ARCHIVE',
-            'Multi-disk ZIP64 archives are not supported',
-          );
-        }
-        if (z64Offset < 0 || z64Offset > locOffset || 56 > locOffset - z64Offset) {
-          return fail(
-            RehearsalValidationStatus.corrupted,
-            'TRUNCATED_ARCHIVE',
-            'ZIP64 EOCD offset out of bounds',
-          );
-        }
-        final z64Bytes = await readBounded(z64Offset, 56);
-        if (_u32le(z64Bytes, 0) != 0x06064B50) {
-          return fail(
-            RehearsalValidationStatus.corrupted,
-            'INVALID_ZIP_ARCHIVE',
-            'Invalid ZIP64 EOCD signature',
-          );
-        }
-        final z64DiskNum = _u32le(z64Bytes, 16);
-        final z64CdDisk = _u32le(z64Bytes, 20);
-        final z64EntriesOnDisk = _u64le(z64Bytes, 24);
-        final z64TotalEntries = _u64le(z64Bytes, 32);
-        final z64CdSize = _u64le(z64Bytes, 40);
-        final z64CdOffset = _u64le(z64Bytes, 48);
-        if (z64DiskNum != 0 ||
-            z64CdDisk != 0 ||
-            z64EntriesOnDisk != z64TotalEntries) {
-          return fail(
-            RehearsalValidationStatus.corrupted,
-            'INVALID_ZIP_ARCHIVE',
-            'Multi-disk ZIP64 EOCD rejected',
-          );
-        }
-        totalEntries = z64TotalEntries;
-        cdSize = z64CdSize;
-        cdOffset = z64CdOffset;
-        cdLimitOffset = z64Offset;
-      } else if (totalEntries == 0xFFFF ||
-          cdSize == 0xFFFFFFFF ||
-          cdOffset == 0xFFFFFFFF) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'INVALID_ZIP_ARCHIVE',
-          'ZIP64 markers present without ZIP64 EOCD locator',
-        );
-      }
-    }
-
-    if (totalEntries == 0) {
-      return fail(
-        RehearsalValidationStatus.corrupted,
-        'EMPTY_ARCHIVE',
-        'ZIP archive contains zero entries',
-      );
-    }
-
-    if (totalEntries > RehearsalLimitsV1.maxEntries) {
-      return fail(
-        RehearsalValidationStatus.corrupted,
-        'ENTRY_COUNT_LIMIT_EXCEEDED',
-        'Archive entry count $totalEntries exceeds maximum ${RehearsalLimitsV1.maxEntries}',
-      );
-    }
-    entryCount = totalEntries;
-
-    if (cdOffset < 0 ||
-        cdSize < 0 ||
-        cdOffset > cdLimitOffset ||
-        cdSize > cdLimitOffset - cdOffset) {
-      return fail(
-        RehearsalValidationStatus.corrupted,
-        'TRUNCATED_ARCHIVE',
-        'Central Directory bounds exceed archive',
-      );
-    }
-
-    if (checkMemory(cdSize + maxChunkBytes)) {
-      return fail(
-        RehearsalValidationStatus.insufficientSpace,
-        'MEMORY_BUDGET_EXCEEDED',
-        'Central Directory exceeds memory budget of $maxMemoryBudgetBytes bytes',
-      );
-    }
-
-    if (token != null && token.isCancelled) {
-      return fail(
-        RehearsalValidationStatus.cancelled,
-        'VALIDATION_CANCELLED',
-        'Validation cancelled before Central Directory read',
-      );
-    }
-
-    // 2. Read and parse Central Directory records.
-    final cdBytes = await readBounded(cdOffset, cdSize);
-    final entries = <_CdEntry>[];
-    final seenCanonical = <String>{};
-    var cdPos = 0;
-    var runningDeclaredBytes = 0;
-
-    for (var i = 0; i < totalEntries; i++) {
-      if (cdPos + 46 > cdBytes.length || _u32le(cdBytes, cdPos) != 0x02014B50) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'INVALID_ZIP_ARCHIVE',
-          'Malformed Central Directory entry #$i',
-        );
-      }
-
-      final flags = _u16le(cdBytes, cdPos + 8);
-      final method = _u16le(cdBytes, cdPos + 10);
-      final crc32 = _u32le(cdBytes, cdPos + 16);
-      var compSize = _u32le(cdBytes, cdPos + 20);
-      var uncompSize = _u32le(cdBytes, cdPos + 24);
-      final nameLen = _u16le(cdBytes, cdPos + 28);
-      final extraLen = _u16le(cdBytes, cdPos + 30);
-      final commentLen = _u16le(cdBytes, cdPos + 32);
-      var diskStart = _u16le(cdBytes, cdPos + 34);
-      final externalAttr = _u32le(cdBytes, cdPos + 38);
-      var lfhOffset = _u32le(cdBytes, cdPos + 42);
-
-      final recordEnd = cdPos + 46 + nameLen + extraLen + commentLen;
-      if (recordEnd > cdBytes.length) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'TRUNCATED_ARCHIVE',
-          'Central Directory record #$i truncated',
-        );
-      }
-
-      final rawNameBytes = Uint8List.sublistView(
-        cdBytes,
-        cdPos + 46,
-        cdPos + 46 + nameLen,
-      );
-      final extraBytes = Uint8List.sublistView(
-        cdBytes,
-        cdPos + 46 + nameLen,
-        cdPos + 46 + nameLen + extraLen,
-      );
-
-      // Parse ZIP64 extra field (0x0001) if sentinel values exist.
-      if (uncompSize == 0xFFFFFFFF ||
-          compSize == 0xFFFFFFFF ||
-          lfhOffset == 0xFFFFFFFF ||
-          diskStart == 0xFFFF) {
-        var ep = 0;
-        while (ep + 4 <= extraBytes.length) {
-          final hid = _u16le(extraBytes, ep);
-          final hlen = _u16le(extraBytes, ep + 2);
-          if (ep + 4 + hlen > extraBytes.length) break;
-          if (hid == 0x0001) {
-            var fp = ep + 4;
-            if (uncompSize == 0xFFFFFFFF && fp + 8 <= ep + 4 + hlen) {
-              uncompSize = _u64le(extraBytes, fp);
-              fp += 8;
-            }
-            if (compSize == 0xFFFFFFFF && fp + 8 <= ep + 4 + hlen) {
-              compSize = _u64le(extraBytes, fp);
-              fp += 8;
-            }
-            if (lfhOffset == 0xFFFFFFFF && fp + 8 <= ep + 4 + hlen) {
-              lfhOffset = _u64le(extraBytes, fp);
-              fp += 8;
-            }
-            if (diskStart == 0xFFFF && fp + 4 <= ep + 4 + hlen) {
-              diskStart = _u32le(extraBytes, fp);
-            }
-            break;
-          }
-          ep += 4 + hlen;
-        }
-      }
-
-      if (diskStart != 0) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'INVALID_ZIP_ARCHIVE',
-          'Multi-disk entry rejected',
-        );
-      }
-
-      // Security check: encryption (bit 0, bit 6, or method 99).
-      if ((flags & 0x0001) != 0 || (flags & 0x0040) != 0 || method == 99) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'ENCRYPTED_ENTRY_FORBIDDEN',
-          'Encrypted ZIP entries are forbidden',
-        );
-      }
-
-      String rawName;
-      try {
-        rawName = utf8.decode(rawNameBytes, allowMalformed: false);
-      } on FormatException {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'PATH_TRAVERSAL_OR_UNSAFE_PATH',
-          'Non-UTF-8 entry name rejected',
-        );
-      }
-
-      // Security check: directory, symlink, or POSIX special file.
-      final posixType = (externalAttr >>> 16) & 0xF000;
-      final isPosixSpecialOrSymlink =
-          posixType == 0xA000 ||
-          posixType == 0x4000 ||
-          posixType == 0x1000 ||
-          posixType == 0x2000 ||
-          posixType == 0x6000 ||
-          posixType == 0xC000;
-      final isDosDirectory = (externalAttr & 0x10) != 0;
-      if (rawName.endsWith('/') ||
-          rawName.endsWith('\\') ||
-          isDosDirectory ||
-          isPosixSpecialOrSymlink) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'SPECIAL_FILE_OR_SYMLINK_FORBIDDEN',
-          'Directory, symlink, or special file entry forbidden: $rawName',
-        );
-      }
-
-      final pathError = _validateRelativeEntryPath(rawName);
-      if (pathError != null) {
-        return fail(pathError.$1, pathError.$2, pathError.$3);
-      }
-
-      if (_hasNestedArchiveExtension(rawName)) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'NESTED_ARCHIVE_FORBIDDEN',
-          'Nested archive extension forbidden: $rawName',
-        );
-      }
-
-      final canonical = canonicalizeRehearsalPath(rawName);
-      if (!seenCanonical.add(canonical)) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'DUPLICATE_OR_COLLIDING_ENTRY',
-          'Duplicate or Unicode/case-colliding ZIP entry: $rawName',
-        );
-      }
-
-      entries.add(
-        _CdEntry(
-          path: rawName,
-          canonicalPath: canonical,
-          rawNameBytes: rawNameBytes,
-          flags: flags,
-          compressionMethod: method,
-          crc32: crc32,
-          compressedSize: compSize,
-          uncompressedSize: uncompSize,
-          externalAttr: externalAttr,
-          localHeaderOffset: lfhOffset,
-          dataOffset: 0,
-        ),
-      );
-
-      runningDeclaredBytes += uncompSize;
-      cdPos = recordEnd;
-    }
-
-    if (cdPos != cdBytes.length) {
-      return fail(
-        RehearsalValidationStatus.corrupted,
-        'INVALID_ZIP_ARCHIVE',
-        'Central Directory trailing garbage detected',
-      );
-    }
-
-    if (runningDeclaredBytes > RehearsalLimitsV1.maxExtractedBytes) {
-      return fail(
-        RehearsalValidationStatus.corrupted,
-        'EXTRACTED_SIZE_LIMIT_EXCEEDED',
-        'Declared extracted size $runningDeclaredBytes exceeds limit ${RehearsalLimitsV1.maxExtractedBytes}',
-      );
-    }
-
-    // Check manifest presence & compression rules & declared bomb ratios before reading entries.
-    _CdEntry? manifestEntry;
-    for (final entry in entries) {
-      if (entry.path == 'manifest.json') {
-        manifestEntry = entry;
-      }
-    }
-    if (manifestEntry == null) {
-      return fail(
-        RehearsalValidationStatus.corrupted,
-        'MISSING_MANIFEST',
-        'Required root manifest.json is missing',
-      );
-    }
-
-    for (final entry in entries) {
-      final isManifest = entry.path == 'manifest.json';
-      if (isManifest) {
-        if (entry.compressionMethod != 0 && entry.compressionMethod != 8) {
-          return fail(
-            RehearsalValidationStatus.unsupported,
-            'UNSUPPORTED_COMPRESSION_METHOD',
-            'Unsupported compression method ${entry.compressionMethod} for manifest.json',
-          );
-        }
-        if (entry.uncompressedSize > RehearsalLimitsV1.maxManifestBytes) {
-          return fail(
-            RehearsalValidationStatus.corrupted,
-            'MANIFEST_SIZE_LIMIT_EXCEEDED',
-            'manifest.json size ${entry.uncompressedSize} exceeds ${RehearsalLimitsV1.maxManifestBytes} bytes',
-          );
-        }
-        if (entry.compressionMethod == 8) {
-          if ((entry.compressedSize == 0 && entry.uncompressedSize > 0) ||
-              entry.uncompressedSize >
-                  entry.compressedSize * RehearsalLimitsV1.maxCompressionRatio) {
-            return fail(
-              RehearsalValidationStatus.corrupted,
-              'ZIP_BOMB_RATIO_EXCEEDED',
-              'manifest.json declared compression ratio exceeds ${RehearsalLimitsV1.maxCompressionRatio}:1',
-            );
-          }
-        } else if (entry.compressedSize != entry.uncompressedSize) {
-          return fail(
-            RehearsalValidationStatus.corrupted,
-            'HEADER_MISMATCH',
-            'STORE entry manifest.json has mismatched compressed/uncompressed sizes',
-          );
-        }
-      } else {
-        if (entry.compressionMethod != 0) {
-          return fail(
-            RehearsalValidationStatus.unsupported,
-            'UNSUPPORTED_COMPRESSION_METHOD',
-            'Media/auxiliary entry ${entry.path} must use STORE (0), got ${entry.compressionMethod}',
-          );
-        }
-        if (entry.compressedSize != entry.uncompressedSize) {
-          return fail(
-            RehearsalValidationStatus.corrupted,
-            'HEADER_MISMATCH',
-            'STORE entry ${entry.path} has mismatched compressed/uncompressed sizes',
-          );
-        }
-      }
-    }
-
-    // 3. Verify Local File Headers match CD and no physical ranges overlap.
-    final sortedByOffset = List<_CdEntry>.from(entries)
-      ..sort((a, b) => a.localHeaderOffset.compareTo(b.localHeaderOffset));
-
-    final resolvedEntries = <String, _CdEntry>{};
-    var prevDataEnd = 0;
-
-    for (final entry in sortedByOffset) {
-      if (token != null && token.isCancelled) {
-        return fail(
-          RehearsalValidationStatus.cancelled,
-          'VALIDATION_CANCELLED',
-          'Validation cancelled during Local File Header verification',
-        );
-      }
-
-      if (entry.localHeaderOffset < 0 ||
-          entry.localHeaderOffset > cdOffset ||
-          30 > cdOffset - entry.localHeaderOffset) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'TRUNCATED_ARCHIVE',
-          'Local File Header out of bounds for ${entry.path}',
-        );
-      }
-
-      if (entry.localHeaderOffset < prevDataEnd) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'OVERLAPPING_ZIP_ENTRIES',
-          'Overlapping ZIP entries detected near ${entry.path}',
-        );
-      }
-
-      final lfh = await readBounded(entry.localHeaderOffset, 30);
-      if (_u32le(lfh, 0) != 0x04034B50) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'HEADER_MISMATCH',
-          'Invalid Local File Header signature for ${entry.path}',
-        );
-      }
-
-      final lfhFlags = _u16le(lfh, 6);
-      final lfhMethod = _u16le(lfh, 8);
-      final lfhCrc = _u32le(lfh, 14);
-      var lfhComp = _u32le(lfh, 18);
-      var lfhUncomp = _u32le(lfh, 22);
-      final lfhNameLen = _u16le(lfh, 26);
-      final lfhExtraLen = _u16le(lfh, 28);
-
-      final hasDataDescriptor = (lfhFlags & 0x08) != 0;
-      if (lfhFlags != entry.flags ||
-          lfhMethod != entry.compressionMethod ||
-          lfhNameLen != entry.rawNameBytes.length) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'HEADER_MISMATCH',
-          'LFH/CD flags, method, or filename length mismatch for ${entry.path}',
-        );
-      }
-
-      final varLen = lfhNameLen + lfhExtraLen;
-      if (varLen > cdOffset - (entry.localHeaderOffset + 30)) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'TRUNCATED_ARCHIVE',
-          'LFH filename/extra exceeds CD offset for ${entry.path}',
-        );
-      }
-      final dataOffset = entry.localHeaderOffset + 30 + varLen;
-
-      final lfhVarBytes = varLen > 0
-          ? await readBounded(entry.localHeaderOffset + 30, varLen)
-          : Uint8List(0);
-      for (var k = 0; k < lfhNameLen; k++) {
-        if (lfhVarBytes[k] != entry.rawNameBytes[k]) {
-          return fail(
-            RehearsalValidationStatus.corrupted,
-            'HEADER_MISMATCH',
-            'LFH/CD filename bytes mismatch for ${entry.path}',
-          );
-        }
-      }
-
-      if (lfhComp == 0xFFFFFFFF || lfhUncomp == 0xFFFFFFFF) {
-        final extraBytes = Uint8List.sublistView(lfhVarBytes, lfhNameLen);
-        int? z64Uncomp;
-        int? z64Comp;
-        var ep = 0;
-        while (ep + 4 <= extraBytes.length) {
-          final hid = _u16le(extraBytes, ep);
-          final hlen = _u16le(extraBytes, ep + 2);
-          if (ep + 4 + hlen > extraBytes.length) break;
-          if (hid == 0x0001) {
-            var fp = ep + 4;
-            if (lfhUncomp == 0xFFFFFFFF && fp + 8 <= ep + 4 + hlen) {
-              z64Uncomp = _u64le(extraBytes, fp);
-              fp += 8;
-            }
-            if (lfhComp == 0xFFFFFFFF && fp + 8 <= ep + 4 + hlen) {
-              z64Comp = _u64le(extraBytes, fp);
-            }
-            break;
-          }
-          ep += 4 + hlen;
-        }
-        if (lfhUncomp == 0xFFFFFFFF) {
-          if (z64Uncomp == null) {
-            return fail(
-              RehearsalValidationStatus.corrupted,
-              'HEADER_MISMATCH',
-              'Missing LFH ZIP64 uncompressedSize extra field for ${entry.path}',
-            );
-          }
-          lfhUncomp = z64Uncomp;
-        }
-        if (lfhComp == 0xFFFFFFFF) {
-          if (z64Comp == null) {
-            return fail(
-              RehearsalValidationStatus.corrupted,
-              'HEADER_MISMATCH',
-              'Missing LFH ZIP64 compressedSize extra field for ${entry.path}',
-            );
-          }
-          lfhComp = z64Comp;
-        }
-      }
-
-      if (!hasDataDescriptor || (lfhCrc != 0 || lfhComp != 0 || lfhUncomp != 0)) {
-        if (lfhCrc != entry.crc32 ||
-            lfhComp != entry.compressedSize ||
-            lfhUncomp != entry.uncompressedSize) {
-          return fail(
-            RehearsalValidationStatus.corrupted,
-            'HEADER_MISMATCH',
-            'LFH/CD CRC or size mismatch for ${entry.path}',
-          );
-        }
-      }
-
-      if (entry.compressedSize < 0 ||
-          entry.compressedSize > compressedBytes - dataOffset) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'TRUNCATED_ARCHIVE',
-          'Entry payload truncated for ${entry.path}',
-        );
-      }
-      if (entry.compressedSize > cdOffset - dataOffset) {
-        return fail(
-          RehearsalValidationStatus.corrupted,
-          'OVERLAPPING_ZIP_ENTRIES',
-          'Entry payload overlaps Central Directory for ${entry.path}',
-        );
-      }
-      final dataEnd = dataOffset + entry.compressedSize;
-
-      prevDataEnd = dataEnd;
-      resolvedEntries[entry.path] = entry.withDataOffset(dataOffset);
-    }
-
-    declaredExtractedBytes = runningDeclaredBytes;
+    final zipIndex = indexOutcome.index!;
+    final cdSize = zipIndex.cdSize;
+    final resolvedEntries = zipIndex.resolvedEntries;
+    declaredExtractedBytes = zipIndex.declaredExtractedBytes;
     // 4. Preflight storage space check before streaming entries.
     final requiredStorage = computeRequiredStorage(declaredExtractedBytes);
     if (options.availableStorageBytes != null &&
@@ -2396,6 +2811,14 @@ Future<RehearsalValidationResult> validateRehearsalPackage(
       cdSize: cdSize,
       checkMemory: checkMemory,
       token: token,
+      onProgress: options.onProgress == null
+          ? null
+          : (manifestBytesProcessed) {
+              options.onProgress!(
+                math.min(manifestBytesProcessed, declaredExtractedBytes),
+                declaredExtractedBytes,
+              );
+            },
     );
 
     if (manifestResult.error != null) {
@@ -2657,6 +3080,11 @@ Future<RehearsalValidationResult> validateRehearsalPackage(
             'Actual extracted bytes exceeded ${RehearsalLimitsV1.maxExtractedBytes}',
           );
         }
+
+        options.onProgress?.call(
+          math.min(actualExtractedBytes, declaredExtractedBytes),
+          declaredExtractedBytes,
+        );
       }
 
       if (totalProcessed != zipEntry.uncompressedSize) {
@@ -2805,6 +3233,335 @@ Future<RehearsalValidationResult> validateRehearsalPackage(
   }
 }
 
+/// Two-phase bounded validation and verified entry extraction helper.
+///
+/// Phase 1 executes [validateRehearsalPackage] completely without calling
+/// [openTargetSink]. If `validation.readyForPublication` is `false`, Phase 1's
+/// result is returned immediately with zero target writes.
+///
+/// Phase 2 re-reads the ZIP directory and local file headers in bounded slices
+/// (`<= options.maxChunkBytes`), opens one target [IOSink] per entry in
+/// `validation.verifiedEntries` via [openTargetSink] (closing it in `finally`),
+/// streams decompressed bytes (`STORE` or `DEFLATE` for `manifest.json`) while
+/// re-verifying CRC-32, SHA-256, and exact byte length, and flushes/closes each
+/// sink.
+///
+/// Fails closed by returning a rejected [RehearsalValidationResult] on
+/// cancellation, archive corruption/mutation, or hash/CRC/size mismatch, and
+/// rethrows [FileSystemException] (such as `ENOSPC`) or sink I/O errors so
+/// callers can perform atomic staging rollback.
+Future<RehearsalValidationResult> validateAndExtractRehearsalPackage(
+  RehearsalByteSource source, {
+  required RehearsalValidationOptions options,
+  required Future<IOSink> Function(VerifiedRehearsalEntry entry) openTargetSink,
+  void Function(int extractedBytes, int totalBytes)? onExtractProgress,
+}) async {
+  // Phase 1: Full validation before any target sink is opened.
+  final validation = await validateRehearsalPackage(source, options: options);
+  if (!validation.readyForPublication) {
+    return validation;
+  }
+
+  final maxChunkBytes = math.min(
+    math.max(1, options.maxChunkBytes),
+    RehearsalLimitsV1.defaultMaxChunkBytes,
+  );
+  final maxMemoryBudgetBytes = math.max(1, options.maxMemoryBudgetBytes);
+  final token = options.cancellationToken;
+  final compressedBytes = source.byteLength;
+  var peakWorkingMemoryBytes = validation.budget.peakWorkingMemoryBytes;
+  var maxObservedSingleReadBytes =
+      validation.budget.maxObservedSingleReadBytes;
+
+  final totalExtractBytes = validation.verifiedEntries.fold<int>(
+    0,
+    (sum, entry) => sum + entry.uncompressedBytes,
+  );
+  var extractedBytes = 0;
+
+  RehearsalValidationResult failExtraction(
+    RehearsalValidationStatus status,
+    String errorCode,
+    String errorMessage,
+  ) {
+    return RehearsalValidationResult(
+      status: status,
+      errorCode: errorCode,
+      errorMessage: errorMessage,
+      idempotencyDisposition: 'not_applicable',
+      packageIdentity: validation.packageIdentity,
+      manifestSummary: validation.manifestSummary,
+      budget: RehearsalValidationBudget(
+        compressedBytes: compressedBytes,
+        declaredExtractedBytes: validation.budget.declaredExtractedBytes,
+        actualExtractedBytes: extractedBytes,
+        entryCount: validation.budget.entryCount,
+        requiredFreeStorageBytes: validation.budget.requiredFreeStorageBytes,
+        availableStorageBytes: options.availableStorageBytes,
+        maxChunkBytes: maxChunkBytes,
+        maxMemoryBudgetBytes: maxMemoryBudgetBytes,
+        peakWorkingMemoryBytes: peakWorkingMemoryBytes,
+        maxObservedSingleReadBytes: maxObservedSingleReadBytes,
+      ),
+      verifiedEntries: validation.verifiedEntries,
+    );
+  }
+
+  bool checkMemory(int currentBytes) {
+    if (currentBytes > peakWorkingMemoryBytes) {
+      peakWorkingMemoryBytes = currentBytes;
+    }
+    return peakWorkingMemoryBytes > maxMemoryBudgetBytes;
+  }
+
+  Future<Uint8List> readBounded(int offset, int length) => _readBoundedFromSource(
+    source: source,
+    offset: offset,
+    length: length,
+    maxChunkBytes: maxChunkBytes,
+    token: token,
+    onSliceRead: (sliceLen) {
+      if (sliceLen > maxObservedSingleReadBytes) {
+        maxObservedSingleReadBytes = sliceLen;
+      }
+    },
+  );
+
+  try {
+    if (token != null && token.isCancelled) {
+      return failExtraction(
+        RehearsalValidationStatus.cancelled,
+        'VALIDATION_CANCELLED',
+        'Extraction cancelled before start',
+      );
+    }
+
+    if (compressedBytes < 22 ||
+        compressedBytes > RehearsalLimitsV1.maxCompressedBytes) {
+      return failExtraction(
+        RehearsalValidationStatus.corrupted,
+        'INVALID_ZIP_ARCHIVE',
+        'Archive size invalid during extraction',
+      );
+    }
+
+    final indexOutcome = await _readZipIndex(
+      compressedBytes: compressedBytes,
+      maxChunkBytes: maxChunkBytes,
+      maxMemoryBudgetBytes: maxMemoryBudgetBytes,
+      readBounded: readBounded,
+      checkMemory: checkMemory,
+      token: token,
+    );
+    if (indexOutcome.error != null) {
+      final err = indexOutcome.error!;
+      return failExtraction(err.$1, err.$2, err.$3);
+    }
+
+    final resolvedEntries = indexOutcome.index!.resolvedEntries;
+
+    for (final entry in validation.verifiedEntries) {
+      if (token != null && token.isCancelled) {
+        return failExtraction(
+          RehearsalValidationStatus.cancelled,
+          'VALIDATION_CANCELLED',
+          'Extraction cancelled before ${entry.path}',
+        );
+      }
+
+      final zipEntry = resolvedEntries[entry.path];
+      if (zipEntry == null ||
+          zipEntry.compressionMethod != entry.compressionMethod ||
+          zipEntry.crc32 != entry.crc32 ||
+          zipEntry.compressedSize != entry.compressedBytes ||
+          zipEntry.uncompressedSize != entry.uncompressedBytes) {
+        return failExtraction(
+          RehearsalValidationStatus.corrupted,
+          'HEADER_MISMATCH',
+          'Archive entry changed or missing during extraction: ${entry.path}',
+        );
+      }
+
+      final sink = await openTargetSink(entry);
+      var closed = false;
+      try {
+        final crc = IncrementalCrc32();
+        final sha = IncrementalSha256();
+        var entryWritten = 0;
+
+        void recordAndWriteChunk(List<int> bytes) {
+          if (bytes.isEmpty) return;
+          entryWritten += bytes.length;
+          if (entryWritten > entry.uncompressedBytes) {
+            throw _ValidationAbort(
+              RehearsalValidationStatus.corrupted,
+              'HEADER_MISMATCH',
+              'Extracted bytes exceeded declared size for ${entry.path}',
+            );
+          }
+          if (entry.path == 'manifest.json' &&
+              entry.compressionMethod == 8 &&
+              ((entry.compressedBytes == 0 && entryWritten > 0) ||
+                  entryWritten >
+                      entry.compressedBytes *
+                          RehearsalLimitsV1.maxCompressionRatio ||
+                  entryWritten > RehearsalLimitsV1.maxManifestBytes)) {
+            throw const _ValidationAbort(
+              RehearsalValidationStatus.corrupted,
+              'ZIP_BOMB_RATIO_EXCEEDED',
+              'manifest.json inflate stream exceeded safety limits during extraction',
+            );
+          }
+          crc.update(bytes);
+          sha.update(bytes);
+          sink.add(bytes);
+          extractedBytes += bytes.length;
+          onExtractProgress?.call(extractedBytes, totalExtractBytes);
+        }
+
+        if (zipEntry.compressionMethod == 0) {
+          var off = 0;
+          while (off < zipEntry.compressedSize) {
+            if (token != null && token.isCancelled) {
+              throw const _CancelledException();
+            }
+            final take = math.min(maxChunkBytes, zipEntry.compressedSize - off);
+            final chunk = await readBounded(zipEntry.dataOffset + off, take);
+            recordAndWriteChunk(chunk);
+            off += chunk.length;
+          }
+        } else if (entry.path == 'manifest.json' &&
+            zipEntry.compressionMethod == 8) {
+          final inflater = RawZLibFilter.inflateFilter(raw: true);
+          final deflateSliceBytes = math.min(4096, maxChunkBytes);
+
+          void feedInflate(List<int> input) {
+            try {
+              inflater.process(input, 0, input.length);
+            } on FormatException {
+              throw const _ValidationAbort(
+                RehearsalValidationStatus.corrupted,
+                'INVALID_ZIP_ARCHIVE',
+                'Corrupted DEFLATE stream in manifest.json during extraction',
+              );
+            } on IOException {
+              throw const _ValidationAbort(
+                RehearsalValidationStatus.corrupted,
+                'INVALID_ZIP_ARCHIVE',
+                'Corrupted DEFLATE stream in manifest.json during extraction',
+              );
+            }
+          }
+
+          List<int>? pullInflate({required bool flush}) {
+            try {
+              return inflater.processed(flush: flush);
+            } on FormatException {
+              throw const _ValidationAbort(
+                RehearsalValidationStatus.corrupted,
+                'INVALID_ZIP_ARCHIVE',
+                'Corrupted DEFLATE stream in manifest.json during extraction',
+              );
+            } on IOException {
+              throw const _ValidationAbort(
+                RehearsalValidationStatus.corrupted,
+                'INVALID_ZIP_ARCHIVE',
+                'Corrupted DEFLATE stream in manifest.json during extraction',
+              );
+            }
+          }
+
+          var off = 0;
+          while (off < zipEntry.compressedSize) {
+            if (token != null && token.isCancelled) {
+              throw const _CancelledException();
+            }
+            final take = math.min(
+              deflateSliceBytes,
+              zipEntry.compressedSize - off,
+            );
+            final chunk = await readBounded(zipEntry.dataOffset + off, take);
+            feedInflate(chunk);
+            while (true) {
+              if (token != null && token.isCancelled) {
+                throw const _CancelledException();
+              }
+              final out = pullInflate(flush: false);
+              if (out == null) break;
+              recordAndWriteChunk(out);
+            }
+            off += chunk.length;
+          }
+          while (true) {
+            if (token != null && token.isCancelled) {
+              throw const _CancelledException();
+            }
+            final out = pullInflate(flush: true);
+            if (out == null) break;
+            recordAndWriteChunk(out);
+          }
+        } else {
+          return failExtraction(
+            RehearsalValidationStatus.unsupported,
+            'UNSUPPORTED_COMPRESSION_METHOD',
+            'Unsupported compression method ${zipEntry.compressionMethod} for ${entry.path}',
+          );
+        }
+
+        if (entryWritten != entry.uncompressedBytes) {
+          return failExtraction(
+            RehearsalValidationStatus.corrupted,
+            'HEADER_MISMATCH',
+            'Extracted byte count mismatch for ${entry.path}',
+          );
+        }
+        if (crc.finalize() != entry.crc32) {
+          return failExtraction(
+            RehearsalValidationStatus.corrupted,
+            'CRC_MISMATCH',
+            'CRC-32 mismatch extracting ${entry.path}',
+          );
+        }
+        if (sha.digestHex() != entry.sha256) {
+          return failExtraction(
+            RehearsalValidationStatus.incomplete,
+            'SHA256_MISMATCH',
+            'SHA-256 mismatch extracting ${entry.path}',
+          );
+        }
+
+        await sink.flush();
+        await sink.close();
+        closed = true;
+      } finally {
+        if (!closed) {
+          try {
+            await sink.close();
+          } catch (_) {
+            // Preserve original exception or fail-closed result.
+          }
+        }
+      }
+    }
+
+    return validation;
+  } on _ValidationAbort catch (abort) {
+    return failExtraction(abort.status, abort.errorCode, abort.errorMessage);
+  } on _CancelledException {
+    return failExtraction(
+      RehearsalValidationStatus.cancelled,
+      'VALIDATION_CANCELLED',
+      'Extraction cancelled by caller',
+    );
+  } on _TruncatedException {
+    return failExtraction(
+      RehearsalValidationStatus.corrupted,
+      'TRUNCATED_ARCHIVE',
+      'Unexpected end of byte source during extraction',
+    );
+  }
+}
+
 final class _CancelledException implements Exception {
   const _CancelledException();
 }
@@ -2830,6 +3587,7 @@ Future<_ManifestReadOutcome> _readAndVerifyManifestBytes({
   required int cdSize,
   required bool Function(int bytes) checkMemory,
   required RehearsalCancellationToken? token,
+  void Function(int processedBytes)? onProgress,
 }) async {
   if (token != null && token.isCancelled) {
     return const _ManifestReadOutcome.err((
@@ -2886,6 +3644,7 @@ Future<_ManifestReadOutcome> _readAndVerifyManifestBytes({
     crc.update(chunk);
     sha.update(chunk);
     builder.add(chunk);
+    onProgress?.call(uncompressedTotal);
   }
 
   try {
@@ -3279,6 +4038,45 @@ _ManifestValidationOutcome _validateManifestMap(Map<String, dynamic> map) {
   final defaultTrimInit = alignment['initialTrimFrames'] as int;
   final defaultTrimTrail = alignment['trailingTrimFrames'] as int;
   final perStemAlign = alignment['perStem'];
+  if (perStemAlign != null) {
+    if (perStemAlign is! Map<String, dynamic>) {
+      return const _ManifestValidationOutcome.err((
+        RehearsalValidationStatus.corrupted,
+        'INVALID_MANIFEST_JSON',
+        'manifest.alignment.perStem must be an object',
+      ));
+    }
+    for (final entry in perStemAlign.entries) {
+      final key = entry.key;
+      final value = entry.value;
+      if (!RehearsalLimitsV1.requiredStemIds.contains(key) ||
+          value is! Map<String, dynamic>) {
+        return _ManifestValidationOutcome.err((
+          RehearsalValidationStatus.corrupted,
+          'INVALID_MANIFEST_JSON',
+          'Invalid perStem alignment for $key',
+        ));
+      }
+      for (final subEntry in value.entries) {
+        final subKey = subEntry.key;
+        final subValue = subEntry.value;
+        if (subKey != 'initialTrimFrames' && subKey != 'trailingTrimFrames') {
+          return _ManifestValidationOutcome.err((
+            RehearsalValidationStatus.corrupted,
+            'INVALID_MANIFEST_JSON',
+            'Unknown perStem alignment key "$subKey" for $key',
+          ));
+        }
+        if (subValue is! int || subValue < 0) {
+          return _ManifestValidationOutcome.err((
+            RehearsalValidationStatus.incomplete,
+            'TIMELINE_MISMATCH',
+            'Invalid $subKey for $key',
+          ));
+        }
+      }
+    }
+  }
 
   // Validate practice metadata if present.
   final practice = map['practice'];
