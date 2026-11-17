@@ -86,9 +86,9 @@ Aceite: inversão versus slash bass distinguíveis; empréstimo/dominante secund
 
 Pré-requisitos G1/G3; independente de T3–T5 e da separação. Áreas futuras: `web/src/audio/`, `mobile/lib/features/repertoire/` e canais nativos relevantes, sem editar backend. Arquivos exatos/adaptador dependem do spike, não pressupor nova biblioteca.
 
-- [ ] Testar arquivo sintético/fixture autorizado curto, play/pause/seek/volume e persistência durante navegação.
-- [ ] Avaliar relógio/decoder, orçamento de RAM, interrupções/background separadamente; medir velocidade com pitch preservado.
-- [ ] Decidir adaptador com evidência, mantendo M21 funcional; não integrar mixer ainda.
+- [x] Testar arquivo sintético/fixture autorizado curto, play/pause/seek/volume e persistência durante navegação.
+- [x] Avaliar relógio/decoder, orçamento de RAM, interrupções/background separadamente; medir velocidade com pitch preservado.
+- [x] Decidir adaptador com evidência, mantendo M21 funcional; não integrar mixer ainda.
 
 Aceite: contrato de transporte do ADR comprovado no alvo escolhido; proposta específica de dependência, se necessária, revisada antes de instalação no produto.
 
@@ -268,3 +268,39 @@ Base/HEAD preservado: `f02107e4ca950f8be9e532ce1bfbea3ae19bb254` (T4 publicada),
 - **Validação executada**:
   - Web: 13 suítes (547 testes PASS, incluindo 172 de `theory.test.ts` com 61 casos do corpus T5 e 23 de `ChordPianoDiagram.test.tsx`), `npx tsc --noEmit` (PASS), `npm run build -- --mode test` (PASS).
   - Flutter: 577 testes PASS em core/music, domínio Smart Chords, `chord_piano_diagram_sheet_test.dart` (incluindo layout fluido T5 em 320/360/393/840dp a 1.3x), `chord_lyric_line_test.dart`, `musical_progression_line_test.dart`, `smart_chord_reader_screen_test.dart` e `song_detail_view_test.dart`; `dart analyze` nos arquivos T5 (`No issues found`).
+
+## Execução incremental — T6 (2026-11-17)
+
+Base/HEAD preservado: `2b0c1a3a4a0eb0ce482562edb98b936f4c9e9b99` (T5 publicada), branch `fix/louvaio-audit-remediation-20261113`, worktree `.worktrees/louvaio-audit-remediation`. Nenhuma integração com `SongDetail`, `SongVersion`, `SmartChordReader`, `SchedulesView`, backend, Firestore, M21 ou dependências novas de produto foi realizada.
+
+### Recorte G3 e ambiente real verificado
+
+- **Alvo experimental G3:** Web desktop em `HeadlessChrome/151.0.7922.34` (Playwright `1.62.1`), Windows 10 x64 `10.0.19045`, CPU `Intel(R) Core(TM) i5-3550 CPU @ 3.30GHz` (4 núcleos), 8.079 MB RAM total (~1.709 MB livres no preflight), `jsHeapSizeLimit = 3.76 GB`, zero dependências externas.
+- **Fixture de áudio:** WAV PCM 16-bit estéreo 44.100 Hz gerado sinteticamente em memória por [createSyntheticWavFile](../../../web/src/audio/local-audio-transport.ts) (880 Hz / 440 Hz, uso próprio 100% autorizado, sem binários pesados em Git).
+- **Não homologado neste spike:** Android, iOS, background/lockscreen, mixagem multifaixa (4 stems T12) e codecs comprimidos sob carga VBR real.
+
+### Implementação isolada (Web)
+
+- **Transporte local isolado**: [local-audio-transport.ts](../../../web/src/audio/local-audio-transport.ts) (`LocalAudioTransportController`, máquina de estados `idle -> loading -> ready -> playing -> paused -> idle/error`, comandos `load`, `play`, `pause`, `seek(frame)`, `setRate(rate, { preservesPitch })`, `setMasterGain(gain)`, `setSessionContext`, `stop`, `dispose`). Usa streaming por `URL.createObjectURL(File/Blob)` em `HTMLMediaElement` + `AudioContext` (`MediaElementAudioSourceNode -> GainNode -> destination`, mantendo `audio.volume = 1` para evitar dupla atenuação e fallback para `audio.volume` sem Web Audio), lê apenas slice inicial de até 4 KiB (`WAV_HEADER_SLICE_BYTES = 4096`) para metadados RIFF/WAVE sem decodificar gravações longas em PCM, rejeita URLs remotas (`REMOTE_URL_FORBIDDEN`), arquivos vazios/corrompidos, desabilita autoplay na troca de arquivo e descarta callbacks de gerações obsoletas.
+- **Harness experimental de navegação**: [LocalAudioTransportHarness.tsx](../../../web/src/audio/LocalAudioTransportHarness.tsx), isolado das rotas do LouvAIO, preservando sessão única de transporte durante desmontagem/montagem de telas experimentais (`Detalhe`, `Estante`, `Escala`), troca explícita por `<input type="file">`, troca de arquivo sem autoplay, invalidação imediata ao alterar `accountNamespace` ou `ministryId`, e liberação via `stop`/`dispose`.
+
+### Medições reais em navegador Chromium e testes automatizados
+
+- **Load / Play / Pause (WAV 4s 44,1 kHz estéreo, 880 Hz):** `load` em `276.2 ms` (`noAutoplayVerified: true`, `currentFrame = 0`, `paused = true`), chamada `play()` em `10.3 ms`, avanço para `10.539 frames` (`0.239 s`) após ~350 ms de parede, e `pause()` congelou deterministicamente em `10.550` frames após mais 120 ms.
+- **Precisão de Seek (WAV PCM16):** alvos `22050`, `66150`, `110250`, `0`, `-5000` (clamp `0`) e `9999999` (clamp `176400`) resolveram evento `'seeked'` em `0.4–6.0 ms` com **0 frames (0 ms) de erro**. *Limitação documentada:* precisão sub-frame aplica-se a PCM WAV; MP3/AAC/Opus com priming delay e sincronização multi-stem continuam não comprovados até T7/T12.
+- **Master Gain (`GainNode` + `AnalyserNode` em 880 Hz):** `gain 1.0 -> RMS 0.3533`, `0.5 -> RMS 0.1768`, `0.1 -> RMS 0.0354`, `0.0 -> RMS 0.0` (elemento mantido em `volume = 1`). Não controla volume do hardware/SO.
+- **Velocidade (0,5×–1,5×) e tonalidade (`AnalyserNode` em 880 Hz):** com `preservesPitch = true`, manteve `880 Hz` exatos em todas as marchas (`0.5×` -> `0.44×` medido na janela; `0.75×` -> `0.69×`; `1.0×` -> `1.00×`; `1.25×` -> `1.21×`; `1.5×` -> `1.44×`). Com `preservesPitch = false` (varispeed), deslocou para `440 Hz` em `0.5×` (`0.50×`) e `1320.2 Hz` em `1.5×` (`1.47×`). Pitch-shifting independente de velocidade (`pitchShiftSemitonesSupported`) é `false` neste backend nativo; time-stretching nativo WSOLA do navegador pode apresentar artefatos/phasiness em música complexa abaixo de ~0,6×.
+- **Orçamento de memória e limpeza:** leitura restrita a slice <= `4.096` bytes mesmo com cabeçalho simulado de 5 min (`13.230.000` frames, cujo decode Float32 integral exigiria `105.840.000` bytes). Em Chromium, `performance.memory.usedJSHeapSize` manteve-se no bucket quantizado mínimo de `10.000.000` bytes antes do load, após o load e após `dispose`, com `2/2` blob URLs criadas devidamente revogadas (`liveUrlsAfterDispose = 0`).
+- **Autoplay e persistência em navegação React real:** troca de telas no Chromium real manteve áudio tocando (`Frames: 8576/132300` em Estante -> `32768/132300` em Escala); troca para fixture 440 Hz entrou em `ready` (`Geração: 2`, sem autoplay); `<input type="file">` rejeitou WAV inválido com `UNSUPPORTED_OR_CORRUPT_HEADER` e carregou/tocou/descartou WAV válido sem erros de console. Em contexto Chromium headless padrão sem `--autoplay-policy`, `play()` programático também iniciou, porém navegadores desktop/mobile interativos bloqueiam autoplay sem gesto (`PLAYBACK_REJECTED` coberto em unidade com recuperação por clique).
+- **Suítes automatizadas, builds e regressão M21:** [local-audio-transport.test.ts](../../../web/src/audio/local-audio-transport.test.ts) (13 testes PASS) + [LocalAudioTransportHarness.test.tsx](../../../web/src/audio/LocalAudioTransportHarness.test.tsx) (4 testes PASS, incluindo ciclo duplo sob `React.StrictMode`) + regressão M21 Web (`VocalExercisePlayer.test.tsx` 7 PASS e `VocalExercisePlayer.m21-final.test.tsx` 16 PASS) -> **40/40 PASS**; `tsc --noEmit` PASS; `npm run build -- --mode test` PASS (1590 módulos). M21 intacto (zero diff em `sampled-piano.ts` e `VocalExercisePlayer.tsx`).
+
+### Matriz técnica de viabilidade multiplataforma (T6)
+
+| Critério | Web Desktop Chromium (Evidência Executada) | Flutter Android (Evidência de Código M21 + Doc; T6 `NOT_EXECUTED`) | Flutter iOS (Evidência de Código M21 + Doc; T6 `NOT_EXECUTED`) |
+| --- | --- | --- | --- |
+| Transporte local (1 faixa) | **PASS:** `HTMLMediaElement` + `URL.createObjectURL` + Web Audio `GainNode` medido em `HeadlessChrome/151` | M21 usa `AudioTrack` (`MODE_STREAM`, PCM 16-bit mono) via `MethodChannel` para síntese piano; para arquivos locais sugere-se Media3/ExoPlayer nativo | M21 usa `IOSVocalAudioPlayer` via `MethodChannel` (`AVFoundation`); para gravações sugere-se `AVPlayer`/`AVAudioEngine` (requer macOS/aparelho real) |
+| Offline local / seleção | **PASS:** `<input type="file">` sem rede/DB; FS Access/OPFS pertencem à T9 | **Hipótese/Doc:** `file_picker` + SAF URI + diretório privado gerenciado (`minSdk >= 23`), sem `READ_EXTERNAL_STORAGE` amplo (a implementar na T8) | **Hipótese/Doc:** `file_picker` + Security-Scoped URL / `FileManager` sandbox (não testado neste host Windows) |
+| Background / Lockscreen | Sessão persiste entre rotas SPA na aba ativa; aba suspensa/OS throttle não homologado em segundo plano | **Não homologado:** `AndroidManifest.xml` não declara `FOREGROUND_SERVICE_MEDIA_PLAYBACK` nem `MediaSession` | **Não homologado:** `Info.plist` não declara `UIBackgroundModes` audio; `AppDelegate.swift` interrompe M21 em `willResignActive`/`didEnterBackground` |
+| Velocidade 0,5×–1,5× c/ pitch preservado | **PASS medido:** `preservesPitch = true` manteve 880 Hz de 0,5× a 1,5×; sem pitch-shift independente (`false`) | **Doc/Hipótese:** `Media3 ExoPlayer` suporta `PlaybackParameters(speed, pitch=1.0f)` via Sonic em API >= 23; sem medição local | **Doc/Hipótese:** `AVPlayer` (`AVAudioTimePitchAlgorithm`) e `AVAudioEngine` + `AVAudioUnitTimePitch` suportam speed + pitch-shift; sem medição local |
+| Seek e multifaixa futuro (T12) | **WAV:** 0 frames erro em seek 1-faixa; **4 stems (T12)** exigirão `AudioWorklet`/buffers curtos sincronizados no `AudioContext`, não múltiplos `<audio>` | 1 faixa: ExoPlayer resolve com codecs (`FLAC`/`Opus`/`AAC`); **4 stems (T12)** exigirão decoder nativo (`MediaExtractor`/`MediaCodec`) + mixer único PCM/Oboe | **Hipótese:** `AVAudioEngine` permite conectar múltiplos `AVAudioPlayerNode` no mesmo grafo/clock, pendente de spike real em hardware Apple |
+| Recomendação de dependências | **Zero novas deps npm** para T6/T10 1-faixa; avaliar WASM/AudioWorklet apenas se DSP/stems na T12 exigirem | **Não instalar pacotes pub/Gradle nesta T6;** validar primeiro canal nativo Kotlin com `media3-exoplayer` em spike Android dedicado | **Sem deps iOS** até existência de ambiente macOS/iOS e gate próprio |
