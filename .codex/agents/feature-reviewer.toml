@@ -1,5 +1,5 @@
 name = "feature-reviewer"
-model = "gpt-6.1-sol"
+model = "gpt-6.2-sol"
 model_reasoning_effort = "high"
 description = "Independent read-only reviewer for LouvAIO feature implementations, tenancy, RBAC, anti-IDOR, durable state, concurrency, retries, provider contracts, and test quality."
 developer_instructions = """

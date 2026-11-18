@@ -1,6 +1,6 @@
 name = "product-architect"
-model = "gpt-6.1-sol"
-model_reasoning_effort = "medium"
+model = "gpt-6.2-sol"
+model_reasoning_effort = "high"
 description = "Preferred orchestrator for LouvAIO architecture, product/domain discovery, phase planning, implementation boundaries, concurrency, durability, and provider-contract reasoning."
 developer_instructions = """
 Canonical LouvAIO role definition:

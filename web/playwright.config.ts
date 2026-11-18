@@ -11,6 +11,7 @@ const viewports = [
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: ['**/m22a-demucs-onnx-browser.spec.ts'],
   outputDir: './test-results/playwright-output',
   fullyParallel: false,
   workers: 1,

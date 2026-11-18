@@ -1,0 +1,371 @@
+{
+  "recordedAt": "2026-11-18T19:55:00.802Z",
+  "modelFileName": "htdemucs_6s_fp16weights.onnx",
+  "measuredModelBytes": 136428532,
+  "measuredModelSha256": "7ce55792e2231c93fbf92de95f5fd5b3a5e6c89f7db690dfd693e8f1dce56869",
+  "modelSha256Verified": true,
+  "ortVersion": "1.21.0",
+  "browserEnv": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+    "hardwareConcurrency": 4,
+    "crossOriginIsolated": false,
+    "hasWebGpu": true
+  },
+  "telemetry": {
+    "modelId": "htdemucs_6s_onnx",
+    "modelVersion": "v4-6s-fp16weights",
+    "executionProvider": "wasm",
+    "ortVersion": "1.21.0",
+    "modelBytes": 136428532,
+    "modelSha256": "7ce55792e2231c93fbf92de95f5fd5b3a5e6c89f7db690dfd693e8f1dce56869",
+    "modelChecksumVerified": true,
+    "sampleRate": 44100,
+    "totalFrames": 374850,
+    "audioDurationSeconds": 8.5,
+    "segmentSamples": 343980,
+    "overlapSamples": 85995,
+    "chunksProcessed": 2,
+    "modelLoadMs": 36859.5,
+    "inferenceMs": 57394,
+    "encodeMs": 350.09999999403954,
+    "totalWallMs": 94740,
+    "rtf": 6.7522352941176464,
+    "jsHeapUsedBytes": 116047430,
+    "jsHeapSnapshotKind": "point_in_time_post_encode",
+    "reconstructionMaxAbsError": 0.21920010110045374,
+    "inputSha256": "97447c581f359d035988ee1aa765c96008b4f56114c299b35026a1dc5d2e04d3"
+  },
+  "stems": [
+    {
+      "id": "vocals",
+      "labelPtBr": "Voz",
+      "byteLength": 1499444,
+      "sha256": "eadf5816f051e66d4a09317801c333870c468376488729e452815c8a7166bf5d",
+      "rms": 0.01518276450399266,
+      "peak": 0.14011022185830985,
+      "totalFrames": 374850
+    },
+    {
+      "id": "drums",
+      "labelPtBr": "Bateria",
+      "byteLength": 1499444,
+      "sha256": "2e3dc702f50fbcd57da642f9bad6bd3ea7bb07b87d4d8afae7355b3f89f68a17",
+      "rms": 0.03469904408092991,
+      "peak": 0.33977600932121277,
+      "totalFrames": 374850
+    },
+    {
+      "id": "bass",
+      "labelPtBr": "Baixo",
+      "byteLength": 1499444,
+      "sha256": "d7650529d1721dfb6aede833fe93e3bc41f68c4dfa03c721a1b7d0a3af01860d",
+      "rms": 0.04608356717492852,
+      "peak": 0.20274275541305542,
+      "totalFrames": 374850
+    },
+    {
+      "id": "guitar",
+      "labelPtBr": "Guitarra",
+      "byteLength": 1499444,
+      "sha256": "dcf8814e349eefb0d07adde2da07fcbb4f6633334e8560e47c10c6809aa30df3",
+      "rms": 0.02458821824623876,
+      "peak": 0.15413036942481995,
+      "totalFrames": 374850
+    },
+    {
+      "id": "piano",
+      "labelPtBr": "Piano",
+      "byteLength": 1499444,
+      "sha256": "108518e60e629cb26e06e0e652d5882739645924030f408f43bd58896e915eae",
+      "rms": 0.02392244952601874,
+      "peak": 0.25886088609695435,
+      "totalFrames": 374850
+    },
+    {
+      "id": "other",
+      "labelPtBr": "Outros",
+      "byteLength": 1499444,
+      "sha256": "aa725c96234d64175c1dd66ce80b1aa259a6b5dffcbeca930d4b3252c0904cb0",
+      "rms": 0.02886435447111379,
+      "peak": 0.14492290975091993,
+      "totalFrames": 374850
+    }
+  ],
+  "verifiedBrowserBlobDigests": [
+    {
+      "id": "vocals",
+      "blobBytes": 1499444,
+      "blobSha256": "eadf5816f051e66d4a09317801c333870c468376488729e452815c8a7166bf5d"
+    },
+    {
+      "id": "drums",
+      "blobBytes": 1499444,
+      "blobSha256": "2e3dc702f50fbcd57da642f9bad6bd3ea7bb07b87d4d8afae7355b3f89f68a17"
+    },
+    {
+      "id": "bass",
+      "blobBytes": 1499444,
+      "blobSha256": "d7650529d1721dfb6aede833fe93e3bc41f68c4dfa03c721a1b7d0a3af01860d"
+    },
+    {
+      "id": "guitar",
+      "blobBytes": 1499444,
+      "blobSha256": "dcf8814e349eefb0d07adde2da07fcbb4f6633334e8560e47c10c6809aa30df3"
+    },
+    {
+      "id": "piano",
+      "blobBytes": 1499444,
+      "blobSha256": "108518e60e629cb26e06e0e652d5882739645924030f408f43bd58896e915eae"
+    },
+    {
+      "id": "other",
+      "blobBytes": 1499444,
+      "blobSha256": "aa725c96234d64175c1dd66ce80b1aa259a6b5dffcbeca930d4b3252c0904cb0"
+    }
+  ],
+  "sampleFilesDirectory": "web/test-results/m22a-audio-samples",
+  "sampleFiles": [
+    {
+      "role": "input_mix",
+      "fileName": "input-mix.wav",
+      "relativePath": "web/test-results/m22a-audio-samples/input-mix.wav",
+      "byteLength": 1499444,
+      "sha256": "97447c581f359d035988ee1aa765c96008b4f56114c299b35026a1dc5d2e04d3"
+    },
+    {
+      "role": "vocals",
+      "fileName": "vocals.wav",
+      "relativePath": "web/test-results/m22a-audio-samples/vocals.wav",
+      "byteLength": 1499444,
+      "sha256": "eadf5816f051e66d4a09317801c333870c468376488729e452815c8a7166bf5d"
+    },
+    {
+      "role": "drums",
+      "fileName": "drums.wav",
+      "relativePath": "web/test-results/m22a-audio-samples/drums.wav",
+      "byteLength": 1499444,
+      "sha256": "2e3dc702f50fbcd57da642f9bad6bd3ea7bb07b87d4d8afae7355b3f89f68a17"
+    },
+    {
+      "role": "bass",
+      "fileName": "bass.wav",
+      "relativePath": "web/test-results/m22a-audio-samples/bass.wav",
+      "byteLength": 1499444,
+      "sha256": "d7650529d1721dfb6aede833fe93e3bc41f68c4dfa03c721a1b7d0a3af01860d"
+    },
+    {
+      "role": "guitar",
+      "fileName": "guitar.wav",
+      "relativePath": "web/test-results/m22a-audio-samples/guitar.wav",
+      "byteLength": 1499444,
+      "sha256": "dcf8814e349eefb0d07adde2da07fcbb4f6633334e8560e47c10c6809aa30df3"
+    },
+    {
+      "role": "piano",
+      "fileName": "piano.wav",
+      "relativePath": "web/test-results/m22a-audio-samples/piano.wav",
+      "byteLength": 1499444,
+      "sha256": "108518e60e629cb26e06e0e652d5882739645924030f408f43bd58896e915eae"
+    },
+    {
+      "role": "other",
+      "fileName": "other.wav",
+      "relativePath": "web/test-results/m22a-audio-samples/other.wav",
+      "byteLength": 1499444,
+      "sha256": "aa725c96234d64175c1dd66ce80b1aa259a6b5dffcbeca930d4b3252c0904cb0"
+    }
+  ],
+  "stemDifferenceAudit": {
+    "pairCount": 15,
+    "bandEstimationMethod": "first_order_time_domain_mono_filter_estimate_250hz_2500hz",
+    "fixtureNature": "cc0_upright_piano_plus_synthesized_layers_without_isolated_reference_stems",
+    "minPairwiseMaxAbsDiff": 0.144805908203125,
+    "maxPairwiseCosineSimilarity": 0.07206910729416577,
+    "maxPairwiseAbsCosineSimilarity": 0.07206910729416577,
+    "perStemProfiles": [
+      {
+        "id": "vocals",
+        "rms": 0.015182543020346911,
+        "peak": 0.140106201171875,
+        "crestFactor": 9.228111587374489,
+        "zeroCrossingRateHz": 1984.3529411764705,
+        "lowEnergyRatio": 0.36570831319808467,
+        "midEnergyRatio": 0.601613171680058,
+        "highEnergyRatio": 0.03267851512185742
+      },
+      {
+        "id": "drums",
+        "rms": 0.034698492735227335,
+        "peak": 0.339752197265625,
+        "crestFactor": 9.791554920214002,
+        "zeroCrossingRateHz": 2092,
+        "lowEnergyRatio": 0.8317810090271832,
+        "midEnergyRatio": 0.15383371280460464,
+        "highEnergyRatio": 0.014385278168212206
+      },
+      {
+        "id": "bass",
+        "rms": 0.04608285588955763,
+        "peak": 0.202728271484375,
+        "crestFactor": 4.399212409279374,
+        "zeroCrossingRateHz": 143.64705882352942,
+        "lowEnergyRatio": 0.9297614539210555,
+        "midEnergyRatio": 0.06911808166441052,
+        "highEnergyRatio": 0.00112046441453402
+      },
+      {
+        "id": "guitar",
+        "rms": 0.02458784279146107,
+        "peak": 0.154144287109375,
+        "crestFactor": 6.269126104991473,
+        "zeroCrossingRateHz": 649.7647058823529,
+        "lowEnergyRatio": 0.5808093622478151,
+        "midEnergyRatio": 0.4043948080253603,
+        "highEnergyRatio": 0.014795829726824635
+      },
+      {
+        "id": "piano",
+        "rms": 0.023922098324454685,
+        "peak": 0.25885009765625,
+        "crestFactor": 10.820543170815288,
+        "zeroCrossingRateHz": 1566.1176470588234,
+        "lowEnergyRatio": 0.4481630328394308,
+        "midEnergyRatio": 0.5182666949960895,
+        "highEnergyRatio": 0.03357027216447982
+      },
+      {
+        "id": "other",
+        "rms": 0.02886392906072587,
+        "peak": 0.144927978515625,
+        "crestFactor": 5.021075897557668,
+        "zeroCrossingRateHz": 1732.4705882352941,
+        "lowEnergyRatio": 0.14150830873155992,
+        "midEnergyRatio": 0.7082689234084755,
+        "highEnergyRatio": 0.15022276785996458
+      }
+    ],
+    "pairs": [
+      {
+        "stemA": "vocals",
+        "stemB": "drums",
+        "rmsDiff": 0.037874429527619775,
+        "maxAbsDiff": 0.339752197265625,
+        "cosineSimilarity": 0.000021448492234571448,
+        "absCosineSimilarity": 0.000021448492234571448
+      },
+      {
+        "stemA": "vocals",
+        "stemB": "bass",
+        "rmsDiff": 0.04851749516746264,
+        "maxAbsDiff": 0.235687255859375,
+        "cosineSimilarity": 0.00013712629335553184,
+        "absCosineSimilarity": 0.00013712629335553184
+      },
+      {
+        "stemA": "vocals",
+        "stemB": "guitar",
+        "rmsDiff": 0.02880725277635117,
+        "maxAbsDiff": 0.175048828125,
+        "cosineSimilarity": 0.006983297144482355,
+        "absCosineSimilarity": 0.006983297144482355
+      },
+      {
+        "stemA": "vocals",
+        "stemB": "piano",
+        "rmsDiff": 0.028234544901328006,
+        "maxAbsDiff": 0.2586669921875,
+        "cosineSimilarity": 0.007691218853759151,
+        "absCosineSimilarity": 0.007691218853759151
+      },
+      {
+        "stemA": "vocals",
+        "stemB": "other",
+        "rmsDiff": 0.032405682266314156,
+        "maxAbsDiff": 0.144805908203125,
+        "cosineSimilarity": 0.015411811920825677,
+        "absCosineSimilarity": 0.015411811920825677
+      },
+      {
+        "stemA": "drums",
+        "stemB": "bass",
+        "rmsDiff": 0.057293490142598054,
+        "maxAbsDiff": 0.352691650390625,
+        "cosineSimilarity": 0.014093443818577687,
+        "absCosineSimilarity": 0.014093443818577687
+      },
+      {
+        "stemA": "drums",
+        "stemB": "guitar",
+        "rmsDiff": 0.04166929508560072,
+        "maxAbsDiff": 0.339324951171875,
+        "cosineSimilarity": 0.042323342928755385,
+        "absCosineSimilarity": 0.042323342928755385
+      },
+      {
+        "stemA": "drums",
+        "stemB": "piano",
+        "rmsDiff": 0.04206989038636022,
+        "maxAbsDiff": 0.357330322265625,
+        "cosineSimilarity": 0.003840989459700894,
+        "absCosineSimilarity": 0.003840989459700894
+      },
+      {
+        "stemA": "drums",
+        "stemB": "other",
+        "rmsDiff": 0.04492305173471504,
+        "maxAbsDiff": 0.38604736328125,
+        "cosineSimilarity": 0.00950102838944678,
+        "absCosineSimilarity": 0.00950102838944678
+      },
+      {
+        "stemA": "bass",
+        "stemB": "guitar",
+        "rmsDiff": 0.05191339109056836,
+        "maxAbsDiff": 0.24359130859375,
+        "cosineSimilarity": 0.014646584385418793,
+        "absCosineSimilarity": 0.014646584385418793
+      },
+      {
+        "stemA": "bass",
+        "stemB": "piano",
+        "rmsDiff": 0.05178913440385054,
+        "maxAbsDiff": 0.365753173828125,
+        "cosineSimilarity": 0.006250893624923905,
+        "absCosineSimilarity": 0.006250893624923905
+      },
+      {
+        "stemA": "bass",
+        "stemB": "other",
+        "rmsDiff": 0.05429603810482101,
+        "maxAbsDiff": 0.2403564453125,
+        "cosineSimilarity": 0.0032689432431954077,
+        "absCosineSimilarity": 0.0032689432431954077
+      },
+      {
+        "stemA": "guitar",
+        "stemB": "piano",
+        "rmsDiff": 0.03358556071008938,
+        "maxAbsDiff": 0.24615478515625,
+        "cosineSimilarity": 0.041516075822074346,
+        "absCosineSimilarity": 0.041516075822074346
+      },
+      {
+        "stemA": "guitar",
+        "stemB": "other",
+        "rmsDiff": 0.03695750355813112,
+        "maxAbsDiff": 0.232421875,
+        "cosineSimilarity": 0.050606712398508044,
+        "absCosineSimilarity": 0.050606712398508044
+      },
+      {
+        "stemA": "piano",
+        "stemB": "other",
+        "rmsDiff": 0.036136792967901184,
+        "maxAbsDiff": 0.258148193359375,
+        "cosineSimilarity": 0.07206910729416577,
+        "absCosineSimilarity": 0.07206910729416577
+      }
+    ]
+  },
+  "auditoryEvaluationNote": "Hashes distintos, estimativas de bandas por filtros mono de 1a ordem, RMS/ZCR e cosseno absoluto entre todos os 15 pares comprovam matematicamente 6 sinais nao silenciosos, nao identicos e nao invertidos que somam proximos a mixagem composta (piano CC0 + camadas sintetizadas, sem stems de referencia); a qualidade perceptual musical requer avaliacao auditiva humana nos WAVs em web/test-results/m22a-audio-samples/."
+}

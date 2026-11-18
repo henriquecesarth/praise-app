@@ -33,7 +33,7 @@
 
 ## Agentes e sessões
 - Codex é o principal; Gemini/Claude são ferramentas opcionais, nunca pré-requisito. Configuração nativa em `.codex/`; seis papéis canônicos preservados em `.agents/agents/`.
-- Papéis: product-architect, feature-engineer, feature-reviewer, billing-engineer, billing-reviewer, sandbox-auditor. Consulte somente as seções do papel pertinentes à tarefa; revisores são separados e somente leitura.
-- Workers rotineiros: modelo menor/esforço baixo suportados pelo CLI; escale contratos complexos, segurança e faturamento para Sol com esforço adequado. Política detalhada: `docs/development/multi-agent-workflow.md`.
+- Papéis: product-architect, feature-engineer, feature-reviewer, billing-engineer, billing-reviewer, sandbox-auditor. Consulte somente as seções do papel pertinentes à tarefa; revisores são separados e somente leitura. Todas as reviews feitas por um agente devem usar o Codex (nativo ou via `codex exec review` / `codex exec -s read-only`) e não o Antigravity; use o Antigravity somente se o Codex estiver comprovadamente indisponível.
+- Modelo no Codex: sempre que usar um modelo no Codex (agente principal ou subagentes dos seis papéis), utilize **Sol 6.2 high** (`-m gpt-6.2-sol -c model_reasoning_effort="high"`). Política detalhada: `docs/development/multi-agent-workflow.md`.
 - Delegue somente trabalho independente útil, com escopo/contrato mínimo, escritor definido e ID/resultado reais. Use contexto separado para tarefas delimitadas; não copie todo o histórico. Respeite o menor limite entre configuração e runtime; não simule agentes nem crie supervisor externo.
 - Mantenha sessão para a mesma tarefa/contexto estável; abra nova sessão para trabalho independente. Compacte só quando necessário para continuar, preservando objetivo, decisões, arquivos, evidências e pendências. Não reinicie nem releia tudo após compactação.
