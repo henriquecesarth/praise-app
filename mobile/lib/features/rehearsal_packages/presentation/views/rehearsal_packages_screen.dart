@@ -736,7 +736,9 @@ class _OutcomeStatusBanner extends StatelessWidget {
     RehearsalUserOutcomeCategory.exported ||
     RehearsalUserOutcomeCategory.deleted ||
     RehearsalUserOutcomeCategory.renamed ||
-    RehearsalUserOutcomeCategory.revalidated => true,
+    RehearsalUserOutcomeCategory.revalidated ||
+    RehearsalUserOutcomeCategory.bound ||
+    RehearsalUserOutcomeCategory.unbound => true,
     _ => false,
   };
 
@@ -1063,8 +1065,14 @@ class _PackageCard extends StatelessWidget {
             const SizedBox(height: 6),
             _StatusPill(
               text: 'Vínculo local: ${_bindingLabel(record.bindingState)}',
-              backgroundColor: theme.colorScheme.surfaceContainerHighest,
-              foregroundColor: theme.colorScheme.onSurfaceVariant,
+              backgroundColor:
+                  record.bindingState == RehearsalPackageBindingState.linked
+                      ? theme.colorScheme.secondaryContainer
+                      : theme.colorScheme.surfaceContainerHighest,
+              foregroundColor:
+                  record.bindingState == RehearsalPackageBindingState.linked
+                      ? theme.colorScheme.onSecondaryContainer
+                      : theme.colorScheme.onSurfaceVariant,
             ),
             const SizedBox(height: 10),
             Wrap(
@@ -1333,6 +1341,7 @@ String _stemDisplayLabel(String stemId) => switch (stemId) {
 
 String _bindingLabel(RehearsalPackageBindingState state) => switch (state) {
   RehearsalPackageBindingState.unlinked => 'Não associado',
+  RehearsalPackageBindingState.linked => 'Associado a música',
 };
 
 String _formatBytes(int bytes) {

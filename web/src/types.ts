@@ -153,7 +153,11 @@ export interface SongLink {
   isCustom?: boolean;
 }
 
+// Local adapter provenance: object spreads preserve it; JSON never sends it to the API.
+export const LOCAL_SONG_VERSION_PROVENANCE = Symbol('localSongVersionProvenance');
+
 export interface SongVersion {
+  [LOCAL_SONG_VERSION_PROVENANCE]?: 'legacy' | 'missing';
   id: string;
   name: string; // Padrão da primeira versão: "Original"
   classificationIds: string[]; // Classificações da versão

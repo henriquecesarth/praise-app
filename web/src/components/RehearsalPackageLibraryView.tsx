@@ -1305,7 +1305,7 @@ export function RehearsalPackageLibraryView({
                       </div>
                     )}
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                      Vínculo local: Não associado
+                      Vínculo local: {record.bindingStatus === 'linked' ? 'Associado' : 'Não associado'}
                     </div>
                   </div>
 
@@ -1516,7 +1516,7 @@ export function RehearsalPackageLibraryView({
                   <strong>Revisão:</strong> {detailsTarget.revision}
                 </div>
                 <div>
-                  <strong>Vínculo local:</strong> Não associado
+                  <strong>Vínculo local:</strong> {detailsTarget.bindingStatus === 'linked' ? 'Associado' : 'Não associado'}
                 </div>
                 <div style={{ overflowWrap: 'anywhere' }}>
                   <strong>Manifest SHA-256:</strong>{' '}

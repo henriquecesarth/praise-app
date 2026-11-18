@@ -1,4 +1,5 @@
 import {
+  LOCAL_SONG_VERSION_PROVENANCE,
   Song,
   SongVersion,
   SongLink,
@@ -475,6 +476,7 @@ const mapSongFromApi = (apiSong: any): Song => {
   }
 
   const defaultVersion: SongVersion = {
+    [LOCAL_SONG_VERSION_PROVENANCE]: 'legacy',
     id: apiSong.id ? `${apiSong.id}_v1` : 'v1',
     name: 'Original',
     classificationIds: apiSong.classification_id ? [apiSong.classification_id] : (apiSong.classification_ids || []),
@@ -486,13 +488,18 @@ const mapSongFromApi = (apiSong: any): Song => {
   };
 
   const versions: SongVersion[] = Array.isArray(apiSong.versions) && apiSong.versions.length > 0
-    ? apiSong.versions.map((v: any, idx: number) => ({
-        ...v,
-        id: v.id || `v_${idx + 1}`,
-        name: v.name || (idx === 0 ? 'Original' : `Versão ${idx + 1}`),
-        ...(v.classificationIds === undefined && v.classificationId ? { classificationIds: [v.classificationId] } : {}),
-        ...(v.key === undefined && v.originalKey ? { key: v.originalKey } : {}),
-      }))
+    ? apiSong.versions.map((entry: any, idx: number) => {
+        const v = entry && typeof entry === 'object' ? entry : {};
+        const id = typeof v.id === 'string' ? v.id.trim() : '';
+        return {
+          ...v,
+          id,
+          ...(!id ? { [LOCAL_SONG_VERSION_PROVENANCE]: 'missing' as const } : {}),
+          name: v.name || (idx === 0 ? 'Original' : `Versão ${idx + 1}`),
+          ...(v.classificationIds === undefined && v.classificationId ? { classificationIds: [v.classificationId] } : {}),
+          ...(v.key === undefined && v.originalKey ? { key: v.originalKey } : {}),
+        };
+      })
     : [defaultVersion];
 
   const resolvedArtistName =

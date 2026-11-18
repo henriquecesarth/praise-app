@@ -143,6 +143,9 @@ void resetAuthenticatedFeatures(
     container.read(rehearsalPackagesNotifierProvider.notifier).reset();
   } catch (_) {}
   try {
+    container.read(songVersionAudioBindingsNotifierProvider.notifier).reset();
+  } catch (_) {}
+  try {
     container.read(rehearsalPackageManagerProvider).invalidateSession();
   } catch (_) {}
 
@@ -173,6 +176,7 @@ void resetAuthenticatedFeatures(
   container.invalidate(smartChordImportNotifierProvider);
   container.invalidate(customVocalExercisesNotifierProvider);
   container.invalidate(rehearsalPackagesNotifierProvider);
+  container.invalidate(songVersionAudioBindingsNotifierProvider);
 
   container.invalidate(unreadNotificationCountProvider);
   container.invalidate(notificationListProvider);

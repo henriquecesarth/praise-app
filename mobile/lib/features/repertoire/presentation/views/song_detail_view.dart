@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,6 +8,7 @@ import '../../../../app/providers.dart';
 import '../../../auth/domain/auth_user.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../ministry_context/presentation/controllers/ministry_context_controller.dart';
+import '../../../rehearsal_packages/domain/rehearsal_package_models.dart';
 import '../../../smart_chords/domain/smart_chord.dart';
 import '../../../smart_chords/domain/smart_chord_parser.dart';
 import '../../../smart_chords/presentation/views/smart_chord_reader_screen.dart';
@@ -210,6 +211,9 @@ class _SongDetailViewState extends ConsumerState<SongDetailView> {
     _isDismissed = true;
     _stopInlineAutoScrollCallback?.call();
     ref.read(songFormNotifierProvider.notifier).invalidateTenant();
+    try {
+      ref.read(songVersionAudioBindingsNotifierProvider.notifier).reset();
+    } catch (_) {}
     if (!mounted) return;
     final navigator = Navigator.of(context);
     if (_isFullscreenOpen && navigator.canPop()) {
@@ -751,11 +755,23 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
   bool _isAutoScrolling = false;
 
   int _selectedVersionIndex = 0;
+  bool _userSelectedExplicitVersion = false;
   int _selectedChordIndex = 0;
   String _readingMode = 'cifra';
   bool _hasSeenChordsForCurrentSong = false;
   bool _isUnlinkingChord = false;
   String? _classifyingChordId;
+
+  void _reconcileLocalBindings({bool silent = false}) {
+    if (!mounted) return;
+    ref
+        .read(songVersionAudioBindingsNotifierProvider.notifier)
+        .loadAndReconcileForSong(
+          ministryId: widget.ministryId,
+          song: widget.song,
+          silent: silent,
+        );
+  }
 
   int _resolveVersionIndex(List<SongVersion> versions, String? versionId) {
     final target = versionId?.trim();
@@ -831,6 +847,7 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _syncSmartChordsForActiveVersion();
+        _reconcileLocalBindings();
       }
     });
   }
@@ -886,6 +903,7 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
         oldWidget.activeSlotKey != widget.activeSlotKey ||
         oldWidget.ministryId != widget.ministryId) {
       _stopAutoScroll(updateState: false);
+      _userSelectedExplicitVersion = false;
       _selectedVersionIndex = _resolveVersionIndex(
         widget.song.effectiveVersions,
         widget.initialVersionId,
@@ -899,12 +917,21 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
             _scrollController.jumpTo(0);
           }
           _syncSmartChordsForActiveVersion(force: false);
+          _reconcileLocalBindings();
         }
       });
     } else {
       final len = widget.song.effectiveVersions.length;
       if (_selectedVersionIndex >= len) {
         _selectedVersionIndex = 0;
+      }
+      if (!listEquals(oldWidget.song.versions, widget.song.versions) ||
+          oldWidget.song.originalKey != widget.song.originalKey) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _reconcileLocalBindings(silent: true);
+          }
+        });
       }
     }
   }
@@ -1165,6 +1192,495 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
     );
   }
 
+  String _bindingDiagnosticMessage(LocalSongVersionAudioBinding binding) {
+    return switch (binding.validityState) {
+      LocalBindingValidityState.packageMissing =>
+        'Pacote local ausente neste dispositivo (package_missing). O pacote foi removido ou não foi encontrado.',
+      LocalBindingValidityState.packageCorrupted =>
+        'Integridade do pacote local comprometida (package_corrupted). Revalide ou substitua o pacote na biblioteca offline.',
+      LocalBindingValidityState.packageReplacedIncompatible =>
+        'O pacote local foi substituído por uma revisão incompatível (package_replaced_incompatible). Desvincule e vincule novamente para atualizar.',
+      LocalBindingValidityState.versionRemoved =>
+        'A versão vinculada foi removida do repertório (version_removed). Desvincule este áudio ou selecione outra versão.',
+      LocalBindingValidityState.unsupportedCodec =>
+        'Formato ou codec de áudio local não suportado neste dispositivo (unsupported_codec).',
+      LocalBindingValidityState.valid => '',
+    };
+  }
+
+  Future<void> _openLocalPackagePickerSheet({
+    required BuildContext context,
+    required SongDetail song,
+    required String ministryId,
+    required CanonicalSongVersion targetVersion,
+  }) async {
+    final notifier = ref.read(songVersionAudioBindingsNotifierProvider.notifier);
+    await notifier.loadAvailablePackages();
+    if (!context.mounted) return;
+
+    String? sheetError;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      isDismissible: true,
+      enableDrag: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            return Consumer(
+              builder: (sheetContext, sheetRef, _) {
+                final theme = Theme.of(sheetContext);
+                final bindingsState = sheetRef.watch(
+                  songVersionAudioBindingsNotifierProvider,
+                );
+                final verified = bindingsState.verifiedPackages;
+                final isSubmitting = bindingsState.isMutating;
+
+                return SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Vincular pacote local (${targetVersion.name})',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Fechar',
+                              constraints: const BoxConstraints(
+                                minWidth: 44,
+                                minHeight: 44,
+                              ),
+                              onPressed: isSubmitting
+                                  ? null
+                                  : () => Navigator.of(sheetContext).pop(),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Selecione um pacote verificado desta conta para vincular apenas à versão "${targetVersion.name}".',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        if (sheetError != null) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            key: const ValueKey(
+                              'song_detail_rehearsal_picker_error',
+                            ),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.errorContainer,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              sheetError!,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onErrorContainer,
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        if (verified.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            child: Text(
+                              'Nenhum pacote local verificado disponível nesta conta. Importe um pacote em Pacotes de Ensaio Offline.',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          )
+                        else
+                          Flexible(
+                            child: ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: verified.length,
+                              separatorBuilder: (_, _) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (_, index) {
+                                final pkg = verified[index];
+                                final hasOriginal = pkg.original != null;
+                                return ListTile(
+                                  key: ValueKey(
+                                    'song_detail_rehearsal_package_option_${pkg.packageId}',
+                                  ),
+                                  minVerticalPadding: 10,
+                                  enabled: !isSubmitting,
+                                  leading: Icon(
+                                    hasOriginal
+                                        ? Icons.audio_file_outlined
+                                        : Icons.multitrack_audio_outlined,
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                  title: Text(pkg.displayName),
+                                  subtitle: Text(
+                                    hasOriginal
+                                        ? 'Faixa original + 4 stems • ${pkg.format} v${pkg.formatVersion}'
+                                        : 'Somente 4 stems (sem faixa original) • ${pkg.format} v${pkg.formatVersion}',
+                                  ),
+                                  trailing: isSubmitting
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.chevron_right),
+                                  onTap: isSubmitting
+                                      ? null
+                                      : () async {
+                                          setSheetState(() {
+                                            sheetError = null;
+                                          });
+                                          final outcome = await notifier
+                                              .bindPackage(
+                                            ministryId: ministryId,
+                                            song: song,
+                                            requestedVersionId:
+                                                targetVersion.id,
+                                            packageId: pkg.packageId,
+                                            songReadVerified: true,
+                                          );
+                                          if (!sheetContext.mounted) return;
+                                          if (outcome.category ==
+                                              RehearsalUserOutcomeCategory
+                                                  .bound) {
+                                            Navigator.of(sheetContext).pop();
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    outcome.message,
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                          } else {
+                                            setSheetState(() {
+                                              sheetError = outcome.message;
+                                            });
+                                          }
+                                        },
+                                );
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _confirmUnbindLocalAudio({
+    required BuildContext context,
+    required SongDetail song,
+    required String ministryId,
+    required LocalSongVersionAudioBinding binding,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Desvincular áudio local?'),
+        content: Text(
+          'Deseja remover o vínculo de "${binding.packageDisplayNameSnapshot}" com a versão "${binding.versionNameSnapshot}"? O pacote local continuará salvo na sua conta.',
+        ),
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const ValueKey('song_detail_rehearsal_confirm_unbind_button'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(44, 44),
+              backgroundColor: Theme.of(dialogCtx).colorScheme.error,
+              foregroundColor: Theme.of(dialogCtx).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Desvincular'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+    final outcome = await ref
+        .read(songVersionAudioBindingsNotifierProvider.notifier)
+        .unbindVersion(
+          ministryId: ministryId,
+          song: song,
+          canonicalVersionId: binding.canonicalVersionId,
+        );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(outcome.message)),
+    );
+  }
+
+  Widget _buildLocalRehearsalBindingCard({
+    required BuildContext context,
+    required ThemeData theme,
+    required SongDetail song,
+    required String ministryId,
+    required String? activeVersionId,
+    required String? currentUserId,
+  }) {
+    final bindingsState = ref.watch(songVersionAudioBindingsNotifierProvider);
+    final hasValidUser = currentUserId != null && currentUserId.isNotEmpty;
+    final bindingsMatchContext =
+        hasValidUser &&
+        bindingsState.boundUserId == currentUserId &&
+        bindingsState.ministryId == ministryId &&
+        bindingsState.songId == song.id;
+
+    final requestedVersionId = _userSelectedExplicitVersion
+        ? activeVersionId
+        : widget.initialVersionId;
+    final versionResolution = resolveCanonicalSongVersion(
+      song,
+      requestedVersionId: requestedVersionId,
+    );
+
+    LocalSongVersionAudioBinding? activeBinding;
+    if (bindingsMatchContext && versionResolution.isResolved) {
+      activeBinding = bindingsState.bindingForVersion(
+        versionResolution.version!.id,
+      );
+    } else if (bindingsMatchContext &&
+        !_userSelectedExplicitVersion &&
+        versionResolution.status ==
+            CanonicalVersionResolutionStatus.versionNotFound) {
+      activeBinding = bindingsState.bindingForVersion(
+        widget.initialVersionId?.trim(),
+      );
+    }
+
+    final resolvedVersion = versionResolution.version;
+    final requiresExplicitSelection =
+        !versionResolution.isResolved && activeBinding == null;
+
+    return Card(
+      key: const ValueKey('song_detail_rehearsal_binding_card'),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: theme.dividerColor.withValues(alpha: 0.2)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.library_music_outlined,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Áudio Local de Ensaio',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                if (resolvedVersion != null)
+                  Text(
+                    resolvedVersion.name,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (bindingsState.errorMessage != null) ...[
+              Text(
+                bindingsState.errorMessage!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            if (!hasValidUser)
+              Text(
+                'Faça login para gerenciar vínculos de áudio locais.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              )
+            else if (requiresExplicitSelection)
+              Text(
+                'Selecione explicitamente uma versão acima para vincular ou carregar áudio local.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              )
+            else if (bindingsState.isLoading && !bindingsMatchContext)
+              const Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text('Verificando vínculo de áudio local...'),
+                  ),
+                ],
+              )
+            else if (activeBinding == null) ...[
+              Text(
+                'Sem áudio local vinculado',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                key: const ValueKey('song_detail_rehearsal_bind_button'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                ),
+                onPressed: bindingsState.isMutating || resolvedVersion == null
+                    ? null
+                    : () => _openLocalPackagePickerSheet(
+                        context: context,
+                        song: song,
+                        ministryId: ministryId,
+                        targetVersion: resolvedVersion,
+                      ),
+                icon: const Icon(Icons.link, size: 18),
+                label: const Text('Vincular pacote local'),
+              ),
+            ] else ...[
+              Text(
+                activeBinding.packageDisplayNameSnapshot.isNotEmpty
+                    ? activeBinding.packageDisplayNameSnapshot
+                    : activeBinding.packageId,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              if (activeBinding.validityState != LocalBindingValidityState.valid)
+                Text(
+                  _bindingDiagnosticMessage(activeBinding),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                    fontWeight: FontWeight.w500,
+                  ),
+                )
+              else if (activeBinding.assetId == RehearsalAssetId.stemsBundleV1) ...[
+                Text(
+                  'Pacote de 4 stems vinculado (para uso futuro no Mixer T12 — não reproduzível como mixagem completa nesta etapa).',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Reprodução nativa local indisponível no Android nesta etapa (vínculo salvo localmente; reprodução aguarda adaptador de transporte nativo dedicado sem reutilizar o canal vocal M21).',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ] else ...[
+                Text(
+                  'Faixa original vinculada (pronta para transporte nativo futuro).',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Reprodução nativa local indisponível no Android nesta etapa (vínculo salvo localmente; reprodução aguarda adaptador de transporte nativo dedicado sem reutilizar o canal vocal M21).',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (activeBinding.validityState !=
+                          LocalBindingValidityState.valid &&
+                      resolvedVersion != null)
+                    OutlinedButton.icon(
+                      key: const ValueKey('song_detail_rehearsal_bind_button'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(44, 44),
+                      ),
+                      onPressed: bindingsState.isMutating
+                          ? null
+                          : () => _openLocalPackagePickerSheet(
+                              context: context,
+                              song: song,
+                              ministryId: ministryId,
+                              targetVersion: resolvedVersion,
+                            ),
+                      icon: const Icon(Icons.link, size: 18),
+                      label: const Text('Vincular pacote local'),
+                    ),
+                  OutlinedButton.icon(
+                    key: const ValueKey('song_detail_rehearsal_unbind_button'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(44, 44),
+                      foregroundColor: theme.colorScheme.error,
+                    ),
+                    onPressed: bindingsState.isMutating
+                        ? null
+                        : () => _confirmUnbindLocalAudio(
+                            context: context,
+                            song: song,
+                            ministryId: ministryId,
+                            binding: activeBinding!,
+                          ),
+                    icon: const Icon(Icons.link_off, size: 18),
+                    label: const Text('Desvincular'),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final song = widget.song;
@@ -1299,28 +1815,37 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                       label: Text(versions[i].name),
                       selected: activeIndex == i,
                       onSelected: (_) {
-                        if (activeIndex == i) return;
+                        if (activeIndex == i && _userSelectedExplicitVersion) {
+                          return;
+                        }
                         final selectedVerId = versions[i].id?.trim();
                         final normalizedVerId =
                             (selectedVerId != null && selectedVerId.isNotEmpty)
                                 ? selectedVerId
                                 : null;
+                        final changedIndex = activeIndex != i;
                         _stopAutoScroll(updateState: false);
                         setState(() {
                           _isAutoScrolling = false;
+                          _userSelectedExplicitVersion = true;
                           _selectedVersionIndex = i;
-                          _selectedChordIndex = 0;
+                          if (changedIndex) {
+                            _selectedChordIndex = 0;
+                          }
                         });
-                        widget.onSemitonesChanged(0);
-                        ref
-                            .read(songSmartChordsNotifierProvider.notifier)
-                            .load(
-                              song.id,
-                              ministryId: ministryId,
-                              versionId: normalizedVerId,
-                              force: false,
-                              includePending: canManageMinistryChords,
-                            );
+                        if (changedIndex) {
+                          widget.onSemitonesChanged(0);
+                          ref
+                              .read(songSmartChordsNotifierProvider.notifier)
+                              .load(
+                                song.id,
+                                ministryId: ministryId,
+                                versionId: normalizedVerId,
+                                force: false,
+                                includePending: canManageMinistryChords,
+                              );
+                        }
+                        _reconcileLocalBindings(silent: true);
                       },
                     ),
                   ],
@@ -2314,6 +2839,17 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
               );
             },
           ),
+
+          // Local Rehearsal Audio Binding Card (T10)
+          _buildLocalRehearsalBindingCard(
+            context: context,
+            theme: theme,
+            song: song,
+            ministryId: ministryId,
+            activeVersionId: activeVersionId,
+            currentUserId: currentUserId,
+          ),
+          const SizedBox(height: 20),
 
           // General Song Notes Section
           if (song.hasNotes) ...[

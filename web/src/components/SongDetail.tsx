@@ -15,9 +15,14 @@ import { parseNotation, transposeNotationChord } from '../utils/smart_chord_nota
 import { extractMusicalInstructions } from '../utils/smart_chord_annotation_semantics';
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Disc3,
   Edit2,
   Play,
+  Pause,
   Headphones,
+  HardDrive,
   Music,
   FileText,
   Globe,
@@ -30,6 +35,23 @@ import {
   X,
   RefreshCw,
 } from 'lucide-react';
+import {
+  getDefaultRehearsalPackageLibraryManager,
+  type LocalSongVersionAudioBinding,
+  type LocalWebRehearsalPackageRecord,
+  type RehearsalPackageLibraryManager,
+} from '../audio/rehearsal-package-library';
+import {
+  bindSongVersion,
+  getDefaultGlobalRehearsalAudioSessionController,
+  reconcileSongVersionBindings,
+  resolveCanonicalSongVersion,
+  unbindSongVersion,
+  type CanonicalSongVersion,
+  type GlobalRehearsalAudioSessionController,
+  type GlobalRehearsalAudioSessionSnapshot,
+} from '../audio/song-version-audio-binding';
+import { useRepertoireDialog } from './useRepertoireDialog';
 import '../styles/repertoire.css';
 
 function resolveEffectiveFont(preferred?: string): string {
@@ -95,6 +117,22 @@ function resolveVersionIndexById(versions: SongVersion[], targetVersionId?: stri
   return idx >= 0 ? idx : 0;
 }
 
+export interface ScheduleSequenceItem {
+  slotIndex: number;
+  songId: string;
+  title: string;
+  versionId?: string;
+  versionName?: string;
+}
+
+export interface ScheduleSequenceContext {
+  scheduleId: string;
+  scheduleTitle?: string;
+  currentIndex: number;
+  items: ScheduleSequenceItem[];
+  onSelectSlot: (slotIndex: number) => void;
+}
+
 interface SongDetailProps {
   song: Song;
   ministryId?: string;
@@ -108,6 +146,12 @@ interface SongDetailProps {
   onEdit?: () => void;
   onDelete?: () => void;
   onOpenSmartChord?: (chordId: string) => void;
+  scheduleSequence?: ScheduleSequenceContext;
+  rehearsalManager?: RehearsalPackageLibraryManager;
+  rehearsalSession?: GlobalRehearsalAudioSessionController;
+  isOnline?: boolean;
+  songReadVerified?: boolean;
+  onNavigateToRehearsalPackages?: () => void;
 }
 
 export const SongDetail: React.FC<SongDetailProps> = ({
@@ -123,6 +167,12 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   onEdit,
   onDelete,
   onOpenSmartChord,
+  scheduleSequence,
+  rehearsalManager,
+  rehearsalSession,
+  isOnline,
+  songReadVerified,
+  onNavigateToRehearsalPackages,
 }) => {
   const effectiveMinistryId = ministryId || song.ministryId;
   const canManageRepertoire = userRole === 'admin';
@@ -302,7 +352,38 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     songId: song.id,
     session: sessionToken,
     initialVersionId,
+    scheduleSlot: scheduleSequence?.currentIndex,
   });
+
+  // Rehearsal local audio binding & session state (T10)
+  const effectiveManager =
+    rehearsalManager ??
+    (effectiveMinistryId && currentUserId ? getDefaultRehearsalPackageLibraryManager() : undefined);
+  const effectiveSession =
+    rehearsalSession ??
+    (effectiveMinistryId && currentUserId
+      ? getDefaultGlobalRehearsalAudioSessionController()
+      : undefined);
+
+  const [userSelectedExplicitly, setUserSelectedExplicitly] = useState(false);
+  const [songBindings, setSongBindings] = useState<LocalSongVersionAudioBinding[]>([]);
+  const [loadingBindings, setLoadingBindings] = useState(false);
+  const [reconcileNonce, setReconcileNonce] = useState(0);
+  const [rehearsalActionError, setRehearsalActionError] = useState<string | null>(null);
+  const [isRehearsalPickerOpen, setIsRehearsalPickerOpen] = useState(false);
+  const [pickerPackages, setPickerPackages] = useState<LocalWebRehearsalPackageRecord[]>([]);
+  const [loadingPickerPackages, setLoadingPickerPackages] = useState(false);
+  const [pickerLoadError, setPickerLoadError] = useState<string | null>(null);
+  const [isBindingPackage, setIsBindingPackage] = useState(false);
+  const [isUnbindingPackage, setIsUnbindingPackage] = useState(false);
+  const [sessionSnapshot, setSessionSnapshot] =
+    useState<GlobalRehearsalAudioSessionSnapshot | null>(() =>
+      effectiveSession ? effectiveSession.getSnapshot() : null,
+    );
+
+  const bindingGenRef = useRef<number>(0);
+  const pickerGenRef = useRef<number>(0);
+  const rehearsalPickerRef = useRef<HTMLDivElement>(null);
 
   // Context ref for asynchronous stale response and mutation fencing (F02, F03, R2-01, R2-02, R3)
   const requestContextRef = useRef<{
@@ -325,9 +406,14 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     prevContext.ministryId !== effectiveMinistryId ||
     prevContext.songId !== song.id ||
     prevContext.session !== sessionToken ||
-    prevContext.initialVersionId !== initialVersionId;
+    prevContext.initialVersionId !== initialVersionId ||
+    prevContext.scheduleSlot !== scheduleSequence?.currentIndex;
 
   if (contextChanged) {
+    const songOrTenantChanged =
+      prevContext.ministryId !== effectiveMinistryId ||
+      prevContext.songId !== song.id ||
+      prevContext.session !== sessionToken;
     const nextVersionIndex = resolveVersionIndexById(versions, initialVersionId);
     const nextActiveVersion = versions[nextVersionIndex] || versions[0];
     setPrevContext({
@@ -335,6 +421,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
       songId: song.id,
       session: sessionToken,
       initialVersionId,
+      scheduleSlot: scheduleSequence?.currentIndex,
     });
     requestContextRef.current = {
       ministryId: effectiveMinistryId || '',
@@ -344,6 +431,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
       generation: requestContextRef.current.generation + 1,
     };
     modalGenerationRef.current += 1;
+    pickerGenRef.current += 1;
 
     // Immediately clear loaded chords, active selection and errors upon context switch
     setLinkedChords([]);
@@ -351,6 +439,18 @@ export const SongDetail: React.FC<SongDetailProps> = ({
     setClassifyingChordId(null);
     setSelectedChordIndex(0);
     setSelectedVersionIndex(nextVersionIndex);
+    setUserSelectedExplicitly(false);
+    if (songOrTenantChanged) {
+      bindingGenRef.current += 1;
+      setSongBindings([]);
+    }
+    setRehearsalActionError(null);
+    setIsRehearsalPickerOpen(false);
+    setPickerPackages([]);
+    setPickerLoadError(null);
+    setLoadingPickerPackages(false);
+    setIsBindingPackage(false);
+    setIsUnbindingPackage(false);
     setChordsError(null);
     setSemitones(0);
 
@@ -438,6 +538,273 @@ export const SongDetail: React.FC<SongDetailProps> = ({
       setPendingChords([]);
     }
   }, [canManageRepertoire]);
+
+  // Subscribe to GlobalRehearsalAudioSessionController snapshot
+  useEffect(() => {
+    if (!effectiveSession) {
+      setSessionSnapshot(null);
+      return;
+    }
+    setSessionSnapshot(effectiveSession.getSnapshot());
+    return effectiveSession.subscribe(setSessionSnapshot);
+  }, [effectiveSession]);
+
+  // Subscribe to package invalidations so SongDetail re-reconciles immediately
+  useEffect(() => {
+    if (!effectiveManager) return;
+    return effectiveManager.subscribePackageInvalidation(() => {
+      setReconcileNonce((n) => n + 1);
+    });
+  }, [effectiveManager]);
+
+  // Reconcile persisted local audio bindings for this song and current canonical versions
+  useEffect(() => {
+    if (!effectiveManager || !effectiveMinistryId || !currentUserId || !song.id) {
+      setSongBindings([]);
+      setLoadingBindings(false);
+      return;
+    }
+    let active = true;
+    const myGen = ++bindingGenRef.current;
+    const targetUserId = currentUserId;
+    const targetMinistryId = effectiveMinistryId;
+    const targetSongId = song.id;
+
+    setLoadingBindings(true);
+    reconcileSongVersionBindings(effectiveManager, {
+      userId: targetUserId,
+      ministryId: targetMinistryId,
+      song,
+    })
+      .then((res) => {
+        if (!active || bindingGenRef.current !== myGen) return;
+        setSongBindings(res.bindings);
+        if (effectiveSession) {
+          for (const b of res.bindings) {
+            if (b.validityState === 'version_removed') {
+              effectiveSession.notifyBindingRemoved({
+                ministryId: targetMinistryId,
+                songId: targetSongId,
+                canonicalVersionId: b.canonicalVersionId,
+              });
+            }
+          }
+        }
+      })
+      .catch(() => {
+        if (!active || bindingGenRef.current !== myGen) return;
+        setSongBindings([]);
+      })
+      .finally(() => {
+        if (active && bindingGenRef.current === myGen) {
+          setLoadingBindings(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [effectiveManager, effectiveSession, effectiveMinistryId, currentUserId, song, sessionToken, reconcileNonce]);
+
+  const initialResolution = React.useMemo(
+    () => resolveCanonicalSongVersion(song, initialVersionId),
+    [song, initialVersionId],
+  );
+  const activeCanonicalResolution = React.useMemo(
+    () => resolveCanonicalSongVersion(song, activeVersion?.id),
+    [song, activeVersion?.id],
+  );
+
+  const resolvedCanonicalVersion: CanonicalSongVersion | null = userSelectedExplicitly
+    ? activeCanonicalResolution.status === 'resolved'
+      ? activeCanonicalResolution.version
+      : null
+    : initialResolution.status === 'resolved'
+      ? initialResolution.version
+      : null;
+
+  const isVersionAmbiguousOrMissing = resolvedCanonicalVersion === null;
+
+  const rehearsalViewIdentityRef = useRef({
+    ministryId: effectiveMinistryId ?? null,
+    songId: song.id,
+    versionId: resolvedCanonicalVersion?.id ?? null,
+    sessionToken,
+    generation: requestContextRef.current.generation,
+  });
+  rehearsalViewIdentityRef.current = {
+    ministryId: effectiveMinistryId ?? null,
+    songId: song.id,
+    versionId: resolvedCanonicalVersion?.id ?? null,
+    sessionToken,
+    generation: requestContextRef.current.generation,
+  };
+
+  const activeRehearsalBinding = resolvedCanonicalVersion
+    ? songBindings.find((b) => b.canonicalVersionId === resolvedCanonicalVersion.id) ?? null
+    : null;
+
+  const removedVersionBindings = songBindings.filter(
+    (b) =>
+      b.validityState === 'version_removed' &&
+      (!resolvedCanonicalVersion || b.canonicalVersionId !== resolvedCanonicalVersion.id),
+  );
+
+  const handleCloseRehearsalPicker = () => {
+    if (isBindingPackage) return;
+    pickerGenRef.current += 1;
+    setIsRehearsalPickerOpen(false);
+    setPickerLoadError(null);
+  };
+
+  useRepertoireDialog(rehearsalPickerRef, isRehearsalPickerOpen, handleCloseRehearsalPicker);
+
+  const loadRehearsalPickerLibrary = async () => {
+    if (!effectiveManager || !currentUserId) return;
+    const myGen = ++pickerGenRef.current;
+    setLoadingPickerPackages(true);
+    setPickerLoadError(null);
+    try {
+      const snapshot = await effectiveManager.loadLibrary({ userId: currentUserId });
+      if (pickerGenRef.current !== myGen) return;
+      setPickerPackages(snapshot.packages);
+    } catch (err) {
+      if (pickerGenRef.current !== myGen) return;
+      setPickerLoadError(
+        err instanceof Error && err.message
+          ? err.message
+          : 'Não foi possível carregar os pacotes locais.',
+      );
+    } finally {
+      if (pickerGenRef.current === myGen) {
+        setLoadingPickerPackages(false);
+      }
+    }
+  };
+
+  const handleOpenRehearsalPicker = () => {
+    if (isVersionAmbiguousOrMissing || !resolvedCanonicalVersion || !effectiveManager || !currentUserId) {
+      return;
+    }
+    setRehearsalActionError(null);
+    setIsRehearsalPickerOpen(true);
+    void loadRehearsalPickerLibrary();
+  };
+
+  const handleSelectPackageForBinding = async (pkg: LocalWebRehearsalPackageRecord) => {
+    if (
+      !effectiveManager ||
+      !currentUserId ||
+      !effectiveMinistryId ||
+      !resolvedCanonicalVersion ||
+      isBindingPackage
+    ) {
+      return;
+    }
+    const myGen = bindingGenRef.current;
+    setIsBindingPackage(true);
+    setRehearsalActionError(null);
+    try {
+      const result = await bindSongVersion(effectiveManager, {
+        userId: currentUserId,
+        ministryId: effectiveMinistryId,
+        song,
+        requestedVersionId: resolvedCanonicalVersion.id,
+        packageId: pkg.packageId,
+        songReadVerified: songReadVerified === true,
+        isOnline,
+        explicitlySelectedByUser: true,
+      });
+      if (bindingGenRef.current !== myGen) return;
+      if (!result.ok) {
+        setRehearsalActionError(result.message);
+        return;
+      }
+      setSongBindings((prev) => [
+        ...prev.filter((b) => b.canonicalVersionId !== result.binding.canonicalVersionId),
+        result.binding,
+      ]);
+      setIsRehearsalPickerOpen(false);
+      setReconcileNonce((n) => n + 1);
+    } catch (err) {
+      if (bindingGenRef.current !== myGen) return;
+      setRehearsalActionError(
+        err instanceof Error ? err.message : 'Falha ao vincular pacote local.',
+      );
+    } finally {
+      if (bindingGenRef.current === myGen) {
+        setIsBindingPackage(false);
+      }
+    }
+  };
+
+  const handleUnbindRehearsalPackage = async (targetVersionId: string) => {
+    if (!effectiveManager || !currentUserId || !effectiveMinistryId || isUnbindingPackage) {
+      return;
+    }
+    const myGen = bindingGenRef.current;
+    setIsUnbindingPackage(true);
+    setRehearsalActionError(null);
+    try {
+      await unbindSongVersion(effectiveManager, {
+        userId: currentUserId,
+        ministryId: effectiveMinistryId,
+        songId: song.id,
+        canonicalVersionId: targetVersionId,
+      });
+      if (bindingGenRef.current !== myGen) return;
+      setSongBindings((prev) => prev.filter((b) => b.canonicalVersionId !== targetVersionId));
+      effectiveSession?.notifyBindingRemoved({
+        ministryId: effectiveMinistryId,
+        songId: song.id,
+        canonicalVersionId: targetVersionId,
+      });
+      setReconcileNonce((n) => n + 1);
+    } catch (err) {
+      if (bindingGenRef.current !== myGen) return;
+      setRehearsalActionError(
+        err instanceof Error ? err.message : 'Falha ao desvincular pacote local.',
+      );
+    } finally {
+      if (bindingGenRef.current === myGen) {
+        setIsUnbindingPackage(false);
+      }
+    }
+  };
+
+  const handleLoadBoundVersionAudio = async () => {
+    if (
+      !effectiveSession ||
+      !effectiveManager ||
+      !currentUserId ||
+      !effectiveMinistryId ||
+      !resolvedCanonicalVersion
+    ) {
+      return;
+    }
+    const captured = { ...rehearsalViewIdentityRef.current };
+    setRehearsalActionError(null);
+    const result = await effectiveSession.loadBoundVersionAudio({
+      userId: currentUserId,
+      ministryId: effectiveMinistryId,
+      song,
+      version: resolvedCanonicalVersion,
+      manager: effectiveManager,
+    });
+    const currentView = rehearsalViewIdentityRef.current;
+    if (
+      currentView.ministryId !== captured.ministryId ||
+      currentView.songId !== captured.songId ||
+      currentView.versionId !== captured.versionId ||
+      currentView.sessionToken !== captured.sessionToken ||
+      currentView.generation !== captured.generation
+    ) {
+      return;
+    }
+    if ('message' in result && result.status !== 'stale') {
+      setRehearsalActionError(result.message);
+    }
+  };
 
   const handleCloseLinkModal = () => {
     if (isLinking) return;
@@ -821,6 +1188,102 @@ export const SongDetail: React.FC<SongDetailProps> = ({
         )}
       </header>
 
+      {/* Sequência de músicas da escala (quando aberto a partir de uma escala) */}
+      {scheduleSequence && scheduleSequence.items.length > 0 && (
+        <nav
+          data-testid="schedule-sequence-bar"
+          aria-label="Sequência da escala"
+          className="no-print"
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px 12px',
+            padding: '10px 14px',
+            marginBottom: '12px',
+            borderRadius: '12px',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)',
+            maxWidth: '100%',
+            minWidth: 0,
+            boxSizing: 'border-box',
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+              {scheduleSequence.scheduleTitle ? `Escala: ${scheduleSequence.scheduleTitle}` : 'Sequência da escala'}
+            </span>
+            <strong data-testid="schedule-sequence-counter" style={{ fontSize: '0.88rem' }}>
+              {scheduleSequence.currentIndex + 1} / {scheduleSequence.items.length}
+            </strong>
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: '6px',
+              minWidth: 0,
+              maxWidth: '100%',
+            }}
+          >
+            <button
+              type="button"
+              className="btn btn-secondary"
+              data-testid="schedule-sequence-prev-btn"
+              disabled={scheduleSequence.currentIndex <= 0}
+              onClick={() => scheduleSequence.onSelectSlot(scheduleSequence.currentIndex - 1)}
+              style={{ minHeight: '44px', padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+            >
+              <ChevronLeft size={16} aria-hidden="true" />
+              <span>Anterior</span>
+            </button>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', minWidth: 0 }}>
+              {scheduleSequence.items.map((item) => {
+                const isActiveSlot = item.slotIndex === scheduleSequence.currentIndex;
+                return (
+                  <button
+                    key={`${item.slotIndex}-${item.songId}-${item.versionId ?? 'none'}`}
+                    type="button"
+                    data-testid={`schedule-sequence-slot-${item.slotIndex}`}
+                    aria-current={isActiveSlot ? 'step' : undefined}
+                    className={isActiveSlot ? 'btn btn-primary' : 'btn btn-secondary'}
+                    onClick={() => scheduleSequence.onSelectSlot(item.slotIndex)}
+                    style={{
+                      minHeight: '44px',
+                      padding: '6px 10px',
+                      fontSize: '0.8rem',
+                      maxWidth: '100%',
+                      whiteSpace: 'normal',
+                      overflowWrap: 'anywhere',
+                      textAlign: 'left',
+                    }}
+                  >
+                    {item.slotIndex + 1}. {item.title}
+                    {item.versionName ? ` (${item.versionName})` : ''}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-secondary"
+              data-testid="schedule-sequence-next-btn"
+              disabled={scheduleSequence.currentIndex >= scheduleSequence.items.length - 1}
+              onClick={() => scheduleSequence.onSelectSlot(scheduleSequence.currentIndex + 1)}
+              style={{ minHeight: '44px', padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+            >
+              <span>Próxima</span>
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
+          </div>
+        </nav>
+      )}
+
       {/* 2. Barra Contextual Musical Unificada (Music Stand Bar) */}
       <section
         className="music-stand-bar no-print"
@@ -855,6 +1318,8 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                         setSelectedChordIndex(0);
                         setChordsError(null);
                       }
+                      setUserSelectedExplicitly(true);
+                      setRehearsalActionError(null);
                       setSelectedVersionIndex(idx);
                       setSemitones(0);
                     }}
@@ -1232,6 +1697,412 @@ export const SongDetail: React.FC<SongDetailProps> = ({
           </div>
         )}
       </section>
+
+      {/* Áudio Local da Versão (T10) */}
+      {effectiveMinistryId && currentUserId && effectiveManager && effectiveSession && (
+        <section
+          data-testid="song-version-rehearsal-audio-card"
+          aria-label="Áudio local da versão"
+          className="song-detail-sidebar-card no-print"
+          style={{
+            marginBottom: '16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+            minWidth: 0,
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '8px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+              <HardDrive size={17} aria-hidden="true" style={{ color: 'var(--action-primary-bg)', flexShrink: 0 }} />
+              <h2 className="song-detail-sidebar-title" style={{ margin: 0 }}>
+                <span>Áudio local da versão</span>
+              </h2>
+            </div>
+
+            {resolvedCanonicalVersion && (
+              <span
+                data-testid="rehearsal-selected-version-label"
+                className="music-stand-bar__badge"
+                style={{ overflowWrap: 'anywhere' }}
+              >
+                Versão: <strong style={{ marginLeft: '4px' }}>{resolvedCanonicalVersion.name}</strong> ({resolvedCanonicalVersion.id})
+              </span>
+            )}
+          </div>
+
+          {(() => {
+            const loadedMedia = sessionSnapshot?.loadedMedia ?? null;
+            const isSessionMismatch = Boolean(
+              loadedMedia &&
+                (loadedMedia.ministryId !== effectiveMinistryId ||
+                  loadedMedia.songId !== song.id ||
+                  !resolvedCanonicalVersion ||
+                  loadedMedia.canonicalVersionId !== resolvedCanonicalVersion.id),
+            );
+            if (!isSessionMismatch || !loadedMedia) return null;
+            return (
+              <div
+                data-testid="active-session-mismatch-notice"
+                role="status"
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--status-info-border)',
+                  backgroundColor: 'var(--status-info-bg)',
+                  color: 'var(--status-info-text)',
+                  fontSize: '0.84rem',
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                No player agora: <strong>{loadedMedia.songTitle}</strong> —{' '}
+                <strong>{loadedMedia.versionName}</strong> (não pertence a esta versão)
+              </div>
+            );
+          })()}
+
+          {rehearsalActionError && (
+            <div
+              role="alert"
+              data-testid="rehearsal-card-error"
+              style={{
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--status-danger-border)',
+                backgroundColor: 'var(--status-danger-bg)',
+                color: 'var(--status-danger-text)',
+                fontSize: '0.84rem',
+                overflowWrap: 'anywhere',
+              }}
+            >
+              {rehearsalActionError}
+            </div>
+          )}
+
+          {isVersionAmbiguousOrMissing ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div
+                role="status"
+                data-testid="rehearsal-version-required-notice"
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--status-warning-border)',
+                  backgroundColor: 'var(--status-warning-bg)',
+                  color: 'var(--status-warning-text)',
+                  fontSize: '0.85rem',
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                Versão ambígua ou ausente — selecione explicitamente uma versão acima para vincular ou carregar áudio local.
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  data-testid="bind-rehearsal-package-btn"
+                  disabled
+                  style={{ minHeight: '44px' }}
+                >
+                  Vincular pacote local
+                </button>
+                {onNavigateToRehearsalPackages && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    data-testid="manage-rehearsal-packages-btn"
+                    onClick={onNavigateToRehearsalPackages}
+                    style={{ minHeight: '44px' }}
+                  >
+                    Gerenciar pacotes offline
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : loadingBindings && songBindings.length === 0 ? (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              Verificando vínculo de áudio local...
+            </div>
+          ) : !activeRehearsalBinding ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                Sem áudio local vinculado
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  data-testid="bind-rehearsal-package-btn"
+                  onClick={handleOpenRehearsalPicker}
+                  style={{ minHeight: '44px' }}
+                >
+                  Vincular pacote local
+                </button>
+                {onNavigateToRehearsalPackages && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    data-testid="manage-rehearsal-packages-btn"
+                    onClick={onNavigateToRehearsalPackages}
+                    style={{ minHeight: '44px' }}
+                  >
+                    Gerenciar pacotes offline
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : activeRehearsalBinding.validityState !== 'valid' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div
+                role="alert"
+                data-testid="rehearsal-binding-invalid-alert"
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--status-danger-border)',
+                  backgroundColor: 'var(--status-danger-bg)',
+                  color: 'var(--status-danger-text)',
+                  fontSize: '0.85rem',
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                <strong>Vínculo inválido ({activeRehearsalBinding.validityState}):</strong>{' '}
+                {activeRehearsalBinding.validityMessage || 'Pacote local indisponível.'}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  data-testid="unbind-rehearsal-package-btn"
+                  disabled={isUnbindingPackage}
+                  onClick={() => handleUnbindRehearsalPackage(activeRehearsalBinding.canonicalVersionId)}
+                  style={{ minHeight: '44px' }}
+                >
+                  Desvincular
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  data-testid="bind-rehearsal-package-btn"
+                  onClick={handleOpenRehearsalPicker}
+                  style={{ minHeight: '44px' }}
+                >
+                  Vincular outro pacote
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                }}
+              >
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                  <strong data-testid="bound-package-title" style={{ fontSize: '0.94rem', overflowWrap: 'anywhere' }}>
+                    {activeRehearsalBinding.packageTitleSnapshot}
+                  </strong>
+                  <span
+                    data-testid="bound-asset-type-badge"
+                    className="music-stand-bar__badge"
+                  >
+                    {activeRehearsalBinding.assetId === 'original'
+                      ? 'Áudio original'
+                      : '4 stems — requer Mixer T12'}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  data-testid="unbind-rehearsal-package-btn"
+                  disabled={isUnbindingPackage}
+                  onClick={() => handleUnbindRehearsalPackage(activeRehearsalBinding.canonicalVersionId)}
+                  style={{ minHeight: '44px' }}
+                >
+                  <Unlink size={15} aria-hidden="true" />
+                  <span>{isUnbindingPackage ? 'Desvinculando...' : 'Desvincular'}</span>
+                </button>
+              </div>
+
+              {activeRehearsalBinding.assetId === 'stems_bundle_v1' ? (
+                <div
+                  data-testid="rehearsal-stems-only-notice"
+                  role="status"
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--status-info-border)',
+                    backgroundColor: 'var(--status-info-bg)',
+                    color: 'var(--status-info-text)',
+                    fontSize: '0.84rem',
+                    overflowWrap: 'anywhere',
+                  }}
+                >
+                  Pacote com 4 stems vinculado (reprodução mixada requer o Mixer T12 — não reproduz stem isolado como música completa)
+                </div>
+              ) : activeRehearsalBinding.assetContainer.toLowerCase() !== 'wav' ? (
+                <div
+                  data-testid="rehearsal-unsupported-codec-notice"
+                  role="status"
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--status-warning-border)',
+                    backgroundColor: 'var(--status-warning-bg)',
+                    color: 'var(--status-warning-text)',
+                    fontSize: '0.84rem',
+                    overflowWrap: 'anywhere',
+                  }}
+                >
+                  {`Codec não homologado no navegador (${activeRehearsalBinding.assetContainer.toUpperCase()}). Apenas WAV PCM homologado nesta etapa.`}
+                </div>
+              ) : (() => {
+                const loadedMedia = sessionSnapshot?.loadedMedia ?? null;
+                const isCurrentVersionLoaded = Boolean(
+                  loadedMedia &&
+                    resolvedCanonicalVersion &&
+                    loadedMedia.ministryId === effectiveMinistryId &&
+                    loadedMedia.songId === song.id &&
+                    loadedMedia.canonicalVersionId === resolvedCanonicalVersion.id &&
+                    loadedMedia.packageId === activeRehearsalBinding.packageId,
+                );
+                const isPlayingCurrent =
+                  isCurrentVersionLoaded && sessionSnapshot?.transport.state === 'playing';
+                const isLoadingThis = Boolean(
+                  sessionSnapshot?.isLoading &&
+                    sessionSnapshot.loadingMedia?.songId === song.id &&
+                    sessionSnapshot.loadingMedia?.canonicalVersionId === resolvedCanonicalVersion?.id,
+                );
+
+                if (isCurrentVersionLoaded) {
+                  return (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+                      <span
+                        data-testid="version-audio-loaded-badge"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 10px',
+                          borderRadius: '8px',
+                          border: '1px solid var(--status-success-border)',
+                          backgroundColor: 'var(--status-success-bg)',
+                          color: 'var(--status-success-text)',
+                          fontSize: '0.82rem',
+                          fontWeight: 700,
+                        }}
+                      >
+                        <Disc3 size={14} aria-hidden="true" />
+                        <span>Carregado no player global</span>
+                      </span>
+
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        data-testid="version-audio-play-pause-btn"
+                        onClick={() => {
+                          if (isPlayingCurrent) {
+                            effectiveSession.pause();
+                          } else {
+                            void effectiveSession.play();
+                          }
+                        }}
+                        style={{
+                          minHeight: '44px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        {isPlayingCurrent ? <Pause size={16} aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
+                        <span>{isPlayingCurrent ? 'Pausar' : 'Reproduzir'}</span>
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      data-testid="load-version-audio-btn"
+                      disabled={isLoadingThis}
+                      onClick={() => void handleLoadBoundVersionAudio()}
+                      style={{
+                        minHeight: '44px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <Play size={16} aria-hidden="true" />
+                      <span>
+                        {isLoadingThis ? 'Carregando áudio...' : 'Carregar áudio desta versão'}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {removedVersionBindings.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+              {removedVersionBindings.map((removed) => (
+                <div
+                  key={removed.canonicalVersionId}
+                  role="alert"
+                  data-testid={`rehearsal-removed-version-alert-${removed.canonicalVersionId}`}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--status-warning-border)',
+                    backgroundColor: 'var(--status-warning-bg)',
+                    color: 'var(--status-warning-text)',
+                    fontSize: '0.82rem',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '8px',
+                  }}
+                >
+                  <span style={{ overflowWrap: 'anywhere' }}>
+                    Versão <strong>{removed.versionNameSnapshot}</strong> ({removed.canonicalVersionId}):{' '}
+                    {removed.validityMessage || 'A versão vinculada foi removida ou substituída na música.'}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    data-testid={`unbind-removed-version-${removed.canonicalVersionId}`}
+                    disabled={isUnbindingPackage}
+                    onClick={() => handleUnbindRehearsalPackage(removed.canonicalVersionId)}
+                    style={{ minHeight: '44px' }}
+                  >
+                    Desvincular
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* 3. Folha Musical e Ficha Técnica (Assimetria 2.2fr / 1fr no Desktop, Empilhado no Mobile) */}
       <div className="detail-content-layout song-detail-layout">
@@ -1892,6 +2763,221 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 ) : (
                   <span>Confirmar Vínculo</span>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Vincular Pacote Local à Versão (T10) */}
+      {isRehearsalPickerOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={handleCloseRehearsalPicker}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1050,
+            padding: '16px',
+            boxSizing: 'border-box',
+          }}
+        >
+          <div
+            ref={rehearsalPickerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rehearsal-picker-modal-title"
+            data-testid="rehearsal-package-picker-modal"
+            className="modal-content"
+            tabIndex={-1}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+              borderRadius: '12px',
+              border: '1px solid var(--border-subtle)',
+              maxWidth: '520px',
+              width: '100%',
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px 20px',
+                borderBottom: '1px solid var(--border-subtle)',
+                gap: '12px',
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <h2
+                  id="rehearsal-picker-modal-title"
+                  style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}
+                >
+                  <HardDrive size={18} style={{ color: 'var(--action-primary-bg)' }} aria-hidden="true" />
+                  <span>Vincular pacote de ensaio local</span>
+                </h2>
+                {resolvedCanonicalVersion && (
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px', overflowWrap: 'anywhere' }}>
+                    Versão: <strong>{resolvedCanonicalVersion.name}</strong> ({resolvedCanonicalVersion.id})
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="action-icon-btn"
+                onClick={handleCloseRehearsalPicker}
+                disabled={isBindingPackage}
+                aria-label="Fechar seleção de pacote"
+                style={{ minWidth: '44px', minHeight: '44px', width: '44px', height: '44px', flexShrink: 0 }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {rehearsalActionError && (
+                <div
+                  role="alert"
+                  data-testid="rehearsal-bind-error"
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--status-danger-border)',
+                    backgroundColor: 'var(--status-danger-bg)',
+                    color: 'var(--status-danger-text)',
+                    fontSize: '0.84rem',
+                    overflowWrap: 'anywhere',
+                  }}
+                >
+                  {rehearsalActionError}
+                </div>
+              )}
+
+              {loadingPickerPackages ? (
+                <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+                  Carregando pacotes locais da sua conta...
+                </div>
+              ) : pickerLoadError ? (
+                <div role="alert" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <span style={{ color: 'var(--status-danger-text)', fontSize: '0.86rem' }}>{pickerLoadError}</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => void loadRehearsalPickerLibrary()}
+                    style={{ minHeight: '44px', alignSelf: 'flex-start' }}
+                  >
+                    Tentar novamente
+                  </button>
+                </div>
+              ) : pickerPackages.length === 0 ? (
+                <div
+                  data-testid="rehearsal-picker-empty"
+                  style={{
+                    textAlign: 'center',
+                    padding: '24px 16px',
+                    borderRadius: '8px',
+                    border: '1px dashed var(--border-subtle)',
+                    backgroundColor: 'var(--bg-surface-subtle)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                    alignItems: 'center',
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
+                    Nenhum pacote local importado nesta conta.
+                  </p>
+                  {onNavigateToRehearsalPackages && (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => {
+                        setIsRehearsalPickerOpen(false);
+                        onNavigateToRehearsalPackages();
+                      }}
+                      style={{ minHeight: '44px' }}
+                    >
+                      Ir para Pacotes de Ensaio
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {pickerPackages.map((pkg) => {
+                    const isVerified = pkg.integrityState === 'verified' && pkg.isReadyForLocalUse;
+                    const hasOriginal = pkg.original !== null;
+                    return (
+                      <button
+                        key={pkg.packageId}
+                        type="button"
+                        data-testid={`rehearsal-picker-item-${pkg.packageId}`}
+                        disabled={!isVerified || isBindingPackage}
+                        onClick={() => void handleSelectPackageForBinding(pkg)}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          font: 'inherit',
+                          color: 'inherit',
+                          padding: '12px 14px',
+                          minHeight: '44px',
+                          borderRadius: '10px',
+                          border: '1px solid var(--border-subtle)',
+                          backgroundColor: 'var(--bg-surface)',
+                          opacity: isVerified ? 1 : 0.6,
+                          cursor: isVerified && !isBindingPackage ? 'pointer' : 'not-allowed',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '4px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                          <strong style={{ fontSize: '0.92rem', overflowWrap: 'anywhere' }}>{pkg.displayName}</strong>
+                          <span className="music-stand-bar__badge">
+                            {hasOriginal
+                              ? `Com áudio Original (${pkg.original!.container.toUpperCase()})`
+                              : 'Somente 4 stems (uso futuro no Mixer T12)'}
+                          </span>
+                        </div>
+                        {!isVerified && (
+                          <span style={{ fontSize: '0.78rem', color: 'var(--status-danger-text)' }}>
+                            {pkg.integrityMessage || 'Pacote não verificado ou corrompido.'}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                padding: '14px 20px',
+                borderTop: '1px solid var(--border-subtle)',
+              }}
+            >
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={isBindingPackage}
+                onClick={handleCloseRehearsalPicker}
+                style={{ minHeight: '44px' }}
+              >
+                Cancelar
               </button>
             </div>
           </div>

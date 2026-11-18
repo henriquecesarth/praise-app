@@ -1,4 +1,11 @@
-import 'dart:collection' show UnmodifiableMapView;
+import 'dart:collection' show UnmodifiableListView, UnmodifiableMapView;
+
+import '../../repertoire/domain/song_detail.dart';
+
+/// Canonical version ID pattern shared with backend (`SAFE_VERSION_ID_REGEX`)
+/// and Smart Chords: allows legacy spaces while blocking control chars, path
+/// separators, query/fragment delimiters, and HTML brackets (1..150 chars).
+final RegExp safeVersionIdRegex = RegExp(r'^[^\x00-\x1F\x7F/\\?#&%<>]{1,150}$');
 
 /// Integrity verification state of a locally imported rehearsal package.
 enum RehearsalPackageIntegrityState {
@@ -10,10 +17,357 @@ enum RehearsalPackageIntegrityState {
 }
 
 /// Binding state of a local rehearsal package.
-///
-/// Informative only in T8: local rehearsal packages never bind to `SongVersion`.
 enum RehearsalPackageBindingState {
   unlinked,
+  linked,
+}
+
+/// Asset role selected when binding a local rehearsal package to a `SongVersion`.
+enum RehearsalAssetId {
+  original('original'),
+  stemsBundleV1('stems_bundle_v1');
+
+  const RehearsalAssetId(this.wireValue);
+
+  final String wireValue;
+
+  static RehearsalAssetId fromWireValue(String raw) {
+    return switch (raw) {
+      'original' => RehearsalAssetId.original,
+      'stems_bundle_v1' || 'stemsBundleV1' => RehearsalAssetId.stemsBundleV1,
+      _ => throw FormatException('Invalid RehearsalAssetId "$raw"'),
+    };
+  }
+}
+
+/// Lifecycle validity state for an account + ministry-scoped local binding.
+enum LocalBindingValidityState {
+  valid('valid'),
+  packageMissing('package_missing'),
+  packageReplacedIncompatible('package_replaced_incompatible'),
+  packageCorrupted('package_corrupted'),
+  versionRemoved('version_removed'),
+  unsupportedCodec('unsupported_codec');
+
+  const LocalBindingValidityState(this.wireValue);
+
+  final String wireValue;
+
+  static LocalBindingValidityState fromWireValue(String raw) {
+    return switch (raw) {
+      'valid' => LocalBindingValidityState.valid,
+      'package_missing' || 'packageMissing' => LocalBindingValidityState.packageMissing,
+      'package_replaced_incompatible' ||
+      'packageReplacedIncompatible' =>
+        LocalBindingValidityState.packageReplacedIncompatible,
+      'package_corrupted' || 'packageCorrupted' => LocalBindingValidityState.packageCorrupted,
+      'version_removed' || 'versionRemoved' => LocalBindingValidityState.versionRemoved,
+      'unsupported_codec' || 'unsupportedCodec' => LocalBindingValidityState.unsupportedCodec,
+      _ => throw FormatException('Invalid LocalBindingValidityState "$raw"'),
+    };
+  }
+}
+
+/// Status of canonical `SongVersion` resolution.
+enum CanonicalVersionResolutionStatus {
+  resolved,
+  versionRequired,
+  versionNotFound,
+}
+
+/// Canonical representation of an effective `SongVersion` for local bindings.
+final class CanonicalSongVersion {
+  const CanonicalSongVersion({
+    required this.id,
+    required this.name,
+    this.key,
+    required this.isSynthetic,
+  });
+
+  final String id;
+  final String name;
+  final String? key;
+  final bool isSynthetic;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CanonicalSongVersion &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          key == other.key &&
+          isSynthetic == other.isSynthetic;
+
+  @override
+  int get hashCode => Object.hash(id, name, key, isSynthetic);
+}
+
+/// Outcome of resolving a requested version ID against a [SongDetail].
+final class CanonicalSongVersionResolution {
+  CanonicalSongVersionResolution({
+    required this.status,
+    this.version,
+    required List<CanonicalSongVersion> effectiveVersions,
+  }) : effectiveVersions = UnmodifiableListView(effectiveVersions);
+
+  final CanonicalVersionResolutionStatus status;
+  final CanonicalSongVersion? version;
+  final List<CanonicalSongVersion> effectiveVersions;
+
+  String? get versionId => version?.id;
+
+  bool get isResolved =>
+      status == CanonicalVersionResolutionStatus.resolved && version != null;
+}
+
+/// Extracts canonical effective versions from [song], preserving insertion order,
+/// excluding ambiguous IDs, and retaining locally synthesized legacy provenance.
+List<CanonicalSongVersion> extractCanonicalSongVersions(SongDetail song) {
+  if (song.id.trim().isEmpty) return const [];
+  final versions = song.effectiveVersions;
+  final counts = <String, int>{};
+  for (final version in versions) {
+    final id = version.id?.trim() ?? '';
+    counts[id] = (counts[id] ?? 0) + 1;
+  }
+  final explicit = <CanonicalSongVersion>[];
+
+  for (final rawVersion in versions) {
+    final trimmedId = rawVersion.id?.trim() ?? '';
+    if (trimmedId.isEmpty ||
+        !safeVersionIdRegex.hasMatch(trimmedId) ||
+        counts[trimmedId] != 1) {
+      continue;
+    }
+    final trimmedName = rawVersion.name.trim().isNotEmpty
+        ? rawVersion.name.trim()
+        : 'Original';
+    final rawKey = rawVersion.key?.trim();
+    final fallbackKey = song.originalKey?.trim();
+    final resolvedKey = (rawKey != null && rawKey.isNotEmpty)
+        ? rawKey
+        : ((fallbackKey != null && fallbackKey.isNotEmpty)
+              ? fallbackKey
+              : null);
+    explicit.add(
+      CanonicalSongVersion(
+        id: trimmedId,
+        name: trimmedName,
+        key: resolvedKey,
+        isSynthetic: rawVersion.isLegacySynthetic,
+      ),
+    );
+  }
+
+  return List<CanonicalSongVersion>.unmodifiable(explicit);
+}
+
+/// Resolves [requestedVersionId] against [song] using strict TS/Dart parity:
+/// - Never silently falls back to index 0 when ambiguous (`versionRequired`)
+///   or missing (`versionNotFound`).
+/// - Legacy `'v1'` alias resolves ONLY when the song has a single synthetic
+///   version (`isSynthetic == true`).
+CanonicalSongVersionResolution resolveCanonicalSongVersion(
+  SongDetail song, {
+  String? requestedVersionId,
+}) {
+  final effectiveVersions = extractCanonicalSongVersions(song);
+  final trimmedRequested = requestedVersionId?.trim();
+  if (effectiveVersions.isEmpty) {
+    return CanonicalSongVersionResolution(
+      status: CanonicalVersionResolutionStatus.versionNotFound,
+      effectiveVersions: effectiveVersions,
+    );
+  }
+
+  if (trimmedRequested != null && trimmedRequested.isNotEmpty) {
+    if (!safeVersionIdRegex.hasMatch(trimmedRequested)) {
+      return CanonicalSongVersionResolution(
+        status: CanonicalVersionResolutionStatus.versionNotFound,
+        effectiveVersions: effectiveVersions,
+      );
+    }
+
+    for (final candidate in effectiveVersions) {
+      if (candidate.id == trimmedRequested) {
+        if (!safeVersionIdRegex.hasMatch(candidate.id)) {
+          return CanonicalSongVersionResolution(
+            status: CanonicalVersionResolutionStatus.versionNotFound,
+            effectiveVersions: effectiveVersions,
+          );
+        }
+        return CanonicalSongVersionResolution(
+          status: CanonicalVersionResolutionStatus.resolved,
+          version: candidate,
+          effectiveVersions: effectiveVersions,
+        );
+      }
+    }
+
+    if (effectiveVersions.length == 1 &&
+        effectiveVersions.first.isSynthetic &&
+        trimmedRequested == 'v1' &&
+        safeVersionIdRegex.hasMatch(effectiveVersions.first.id)) {
+      return CanonicalSongVersionResolution(
+        status: CanonicalVersionResolutionStatus.resolved,
+        version: effectiveVersions.first,
+        effectiveVersions: effectiveVersions,
+      );
+    }
+
+    return CanonicalSongVersionResolution(
+      status: CanonicalVersionResolutionStatus.versionNotFound,
+      effectiveVersions: effectiveVersions,
+    );
+  }
+
+  if (effectiveVersions.length == 1 && song.versions.length <= 1) {
+    final only = effectiveVersions.first;
+    if (!safeVersionIdRegex.hasMatch(only.id)) {
+      return CanonicalSongVersionResolution(
+        status: CanonicalVersionResolutionStatus.versionNotFound,
+        effectiveVersions: effectiveVersions,
+      );
+    }
+    return CanonicalSongVersionResolution(
+      status: CanonicalVersionResolutionStatus.resolved,
+      version: only,
+      effectiveVersions: effectiveVersions,
+    );
+  }
+
+  return CanonicalSongVersionResolution(
+    status: CanonicalVersionResolutionStatus.versionRequired,
+    effectiveVersions: effectiveVersions,
+  );
+}
+
+/// Account- and ministry-scoped local audio binding linking a canonical
+/// `SongVersion` to an imported rehearsal package inside `index.json`.
+final class LocalSongVersionAudioBinding {
+  const LocalSongVersionAudioBinding({
+    required this.accountNamespaceHash,
+    required this.ministryId,
+    required this.songId,
+    required this.canonicalVersionId,
+    required this.versionNameSnapshot,
+    required this.versionIsSynthetic,
+    required this.packageId,
+    required this.packageDisplayNameSnapshot,
+    required this.assetId,
+    required this.packageCompositeSha256,
+    required this.assetSha256,
+    required this.validityState,
+    this.validityReason,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final String accountNamespaceHash;
+  final String ministryId;
+  final String songId;
+  final String canonicalVersionId;
+  final String versionNameSnapshot;
+  final bool versionIsSynthetic;
+  final String packageId;
+  final String packageDisplayNameSnapshot;
+  final RehearsalAssetId assetId;
+  final String packageCompositeSha256;
+  final String assetSha256;
+  final LocalBindingValidityState validityState;
+  final String? validityReason;
+  final String createdAt;
+  final String updatedAt;
+
+  bool get isValid => validityState == LocalBindingValidityState.valid;
+
+  bool get isPlayableSingleMix =>
+      isValid && assetId == RehearsalAssetId.original;
+
+  LocalSongVersionAudioBinding copyWith({
+    String? versionNameSnapshot,
+    String? packageDisplayNameSnapshot,
+    LocalBindingValidityState? validityState,
+    String? validityReason,
+    bool clearValidityReason = false,
+    String? updatedAt,
+  }) {
+    return LocalSongVersionAudioBinding(
+      accountNamespaceHash: accountNamespaceHash,
+      ministryId: ministryId,
+      songId: songId,
+      canonicalVersionId: canonicalVersionId,
+      versionNameSnapshot: versionNameSnapshot ?? this.versionNameSnapshot,
+      versionIsSynthetic: versionIsSynthetic,
+      packageId: packageId,
+      packageDisplayNameSnapshot:
+          packageDisplayNameSnapshot ?? this.packageDisplayNameSnapshot,
+      assetId: assetId,
+      packageCompositeSha256: packageCompositeSha256,
+      assetSha256: assetSha256,
+      validityState: validityState ?? this.validityState,
+      validityReason: clearValidityReason
+          ? null
+          : (validityReason ?? this.validityReason),
+      createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+        'accountNamespaceHash': accountNamespaceHash,
+        'ministryId': ministryId,
+        'songId': songId,
+        'canonicalVersionId': canonicalVersionId,
+        'versionNameSnapshot': versionNameSnapshot,
+        'versionIsSynthetic': versionIsSynthetic,
+        'packageId': packageId,
+        'packageDisplayNameSnapshot': packageDisplayNameSnapshot,
+        'assetId': assetId.wireValue,
+        'packageCompositeSha256': packageCompositeSha256,
+        'assetSha256': assetSha256,
+        'validityState': validityState.wireValue,
+        'validityReason': validityReason,
+        'createdAt': createdAt,
+        'updatedAt': updatedAt,
+      };
+
+  factory LocalSongVersionAudioBinding.fromJson(Map<String, dynamic> json) {
+    final canonicalVersionId = _requireString(json, 'canonicalVersionId');
+    if (!safeVersionIdRegex.hasMatch(canonicalVersionId)) {
+      throw const FormatException(
+        'Invalid canonicalVersionId in LocalSongVersionAudioBinding',
+      );
+    }
+    final rawSynthetic = json['versionIsSynthetic'];
+    if (rawSynthetic is! bool) {
+      throw const FormatException(
+        'Missing or invalid bool "versionIsSynthetic"',
+      );
+    }
+
+    return LocalSongVersionAudioBinding(
+      accountNamespaceHash: _requireString(json, 'accountNamespaceHash'),
+      ministryId: _requireString(json, 'ministryId'),
+      songId: _requireString(json, 'songId'),
+      canonicalVersionId: canonicalVersionId,
+      versionNameSnapshot: _requireString(json, 'versionNameSnapshot'),
+      versionIsSynthetic: rawSynthetic,
+      packageId: _requireString(json, 'packageId').toLowerCase(),
+      packageDisplayNameSnapshot:
+          (json['packageDisplayNameSnapshot'] as String?) ?? '',
+      assetId: RehearsalAssetId.fromWireValue(_requireString(json, 'assetId')),
+      packageCompositeSha256: _requireString(json, 'packageCompositeSha256'),
+      assetSha256: _requireString(json, 'assetSha256'),
+      validityState: LocalBindingValidityState.fromWireValue(
+        _requireString(json, 'validityState'),
+      ),
+      validityReason: json['validityReason'] as String?,
+      createdAt: _requireString(json, 'createdAt'),
+      updatedAt: _requireString(json, 'updatedAt'),
+    );
+  }
 }
 
 /// Lifecycle phases reported during local rehearsal package operations.
@@ -43,6 +397,8 @@ enum RehearsalUserOutcomeCategory {
   deleted,
   renamed,
   revalidated,
+  bound,
+  unbound,
   recoverableFailure,
 }
 
@@ -190,6 +546,7 @@ final class LocalRehearsalPackageRecord {
     bool clearIntegrityCode = false,
     String? integrityMessage,
     bool clearIntegrityMessage = false,
+    RehearsalPackageBindingState? bindingState,
   }) {
     return LocalRehearsalPackageRecord(
       packageId: packageId,
@@ -222,7 +579,7 @@ final class LocalRehearsalPackageRecord {
       original: original,
       storageLocationLabel: storageLocationLabel,
       relativeDirectory: relativeDirectory,
-      bindingState: bindingState,
+      bindingState: bindingState ?? this.bindingState,
       usageRightsDeclaration: usageRightsDeclaration,
     );
   }
@@ -403,12 +760,14 @@ final class RehearsalStorageSummary {
 final class RehearsalLibrarySnapshot {
   const RehearsalLibrarySnapshot({
     required this.packages,
+    this.bindings = const [],
     required this.storageSummary,
     required this.recoveredOrphanedCount,
     required this.corruptedOrIncompleteCount,
   });
 
   final List<LocalRehearsalPackageRecord> packages;
+  final List<LocalSongVersionAudioBinding> bindings;
   final RehearsalStorageSummary storageSummary;
   final int recoveredOrphanedCount;
   final int corruptedOrIncompleteCount;
@@ -422,6 +781,7 @@ final class RehearsalOperationOutcome {
     required this.message,
     this.errorCode,
     this.record,
+    this.binding,
     this.conflict,
     this.recoveredOrphanedCount = 0,
   });
@@ -431,6 +791,7 @@ final class RehearsalOperationOutcome {
   final String message;
   final String? errorCode;
   final LocalRehearsalPackageRecord? record;
+  final LocalSongVersionAudioBinding? binding;
   final RehearsalConflictDetails? conflict;
   final int recoveredOrphanedCount;
 }

@@ -1234,44 +1234,60 @@ void main() {
       );
     });
 
-    test('concurrent loadLibrary during active in-flight staging does not delete active staging/<txId>.part', () async {
-      safPort.nextPickArchiveBytes = _buildValidPackageZip(
-        packageId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-        displayName: 'Pacote Concorrente',
-      );
-      final accountHash = RehearsalPackageManager.computeAccountNamespaceHash(
-        'user-concurrent',
-      );
-
-      String? observedOpId;
-      bool stagingExistedBeforeLoad = false;
-      bool stagingExistedAfterLoad = false;
-      int? recoveredDuringActiveImport;
-
-      safPort.onPickStarted = (opId) async {
-        observedOpId = opId;
-        final activeStageDir = Directory(
-          '${tempDir.path}/rehearsal_packages/accounts/$accountHash/staging/$opId.part',
+    test(
+      'concurrent loadLibrary during active in-flight staging does not delete active staging/<txId>.part',
+      () async {
+        safPort.nextPickArchiveBytes = _buildValidPackageZip(
+          packageId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          displayName: 'Pacote Concorrente',
         );
-        stagingExistedBeforeLoad = activeStageDir.existsSync();
-        final concurrentSnapshot = await manager.loadLibrary(
-          userId: 'user-concurrent',
+        final accountHash = RehearsalPackageManager.computeAccountNamespaceHash(
+          'user-concurrent',
         );
-        recoveredDuringActiveImport = concurrentSnapshot.recoveredOrphanedCount;
-        stagingExistedAfterLoad = activeStageDir.existsSync();
-      };
 
-      final outcome = await manager.importFromSaf(userId: 'user-concurrent');
-      expect(observedOpId, isNotNull);
-      expect(stagingExistedBeforeLoad, isTrue);
-      expect(stagingExistedAfterLoad, isTrue);
-      expect(recoveredDuringActiveImport, 0);
-      expect(outcome.category, RehearsalUserOutcomeCategory.imported);
-      expect(
-        outcome.record?.packageId,
-        'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
-      );
-    });
+        String? observedOpId;
+        bool stagingExistedBeforeLoad = false;
+        bool stagingExistedAfterLoad = false;
+        final pickerReached = Completer<void>();
+        final releasePicker = Completer<void>();
+
+        safPort.onPickStarted = (opId) async {
+          observedOpId = opId;
+          final activeStageDir = Directory(
+            '${tempDir.path}/rehearsal_packages/accounts/$accountHash/staging/$opId.part',
+          );
+          stagingExistedBeforeLoad = activeStageDir.existsSync();
+          pickerReached.complete();
+          await releasePicker.future;
+          stagingExistedAfterLoad = activeStageDir.existsSync();
+        };
+
+        final importing = manager.importFromSaf(userId: 'user-concurrent');
+        await pickerReached.future;
+        var loadCompleted = false;
+        final loading = manager.loadLibrary(userId: 'user-concurrent').then((
+          snapshot,
+        ) {
+          loadCompleted = true;
+          return snapshot;
+        });
+        await Future<void>.delayed(Duration.zero);
+        expect(loadCompleted, isFalse);
+        releasePicker.complete();
+        final outcome = await importing;
+        final snapshot = await loading;
+        expect(observedOpId, isNotNull);
+        expect(stagingExistedBeforeLoad, isTrue);
+        expect(stagingExistedAfterLoad, isTrue);
+        expect(snapshot.recoveredOrphanedCount, 0);
+        expect(snapshot.packages.single.packageId, outcome.record?.packageId);
+        expect(outcome.category, RehearsalUserOutcomeCategory.imported);
+        expect(
+          outcome.record?.packageId,
+          'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        );
+      },
+    );
 
     test('invalidateSession mid-revalidatePackage returns SESSION_INVALIDATED cleanly without FileSystemException', () async {
       safPort.nextPickArchiveBytes = _buildValidPackageZip(

@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:louvaio_mobile/core/audio/rehearsal_package_validator.dart';
 import 'package:louvaio_mobile/features/rehearsal_packages/data/rehearsal_package_saf_channel.dart';
 import 'package:louvaio_mobile/features/rehearsal_packages/domain/rehearsal_package_models.dart';
+import 'package:louvaio_mobile/features/repertoire/domain/song_detail.dart';
 
 /// Factory used to open an [IOSink] for a validated internal target file.
 ///
@@ -18,10 +19,8 @@ typedef RehearsalSinkFactory = Future<IOSink> Function(File targetFile);
 /// Optional hook invoked right before atomically renaming `index.json.tmp`
 /// onto `index.json`, allowing fault-injection tests to simulate a crash or I/O
 /// failure mid-commit.
-typedef RehearsalBeforeIndexCommitHook = Future<void> Function(
-  File tmpIndexFile,
-  File targetIndexFile,
-);
+typedef RehearsalBeforeIndexCommitHook =
+    Future<void> Function(File tmpIndexFile, File targetIndexFile);
 
 /// Account-scoped transactional manager for local `.louvaio-rehearsal.zip`
 /// packages inside app-private storage.
@@ -46,8 +45,7 @@ final class RehearsalPackageManager {
     RehearsalSinkFactory? sinkFactory,
     DateTime Function()? clock,
     String Function()? transactionIdGenerator,
-    @visibleForTesting
-    RehearsalBeforeIndexCommitHook? debugBeforeIndexCommit,
+    @visibleForTesting RehearsalBeforeIndexCommitHook? debugBeforeIndexCommit,
   }) : _safPort = safPort,
        _sinkFactory = sinkFactory ?? _defaultSinkFactory,
        _clock = clock ?? (() => DateTime.now().toUtc()),
@@ -88,8 +86,62 @@ final class RehearsalPackageManager {
 
   int _sessionGeneration = 0;
   int _txCounter = 0;
+  final Map<String, Future<void>> _accountOperationTails = {};
+  final Object _accountOperationZoneKey = Object();
+
+  /// Serialize the complete read/modify/write and recovery transaction for each
+  /// account, including reads that could otherwise remove a writer's tmp file.
+  /// Private pipeline helpers run inside this transaction and never reacquire it.
+  Future<T> _withAccountOperation<T>(
+    String userId,
+    Future<T> Function() action, {
+    T Function(int generation)? onCancelled,
+  }) async {
+    if (userId.trim().isEmpty) return action();
+    final accountHash = computeAccountNamespaceHash(userId);
+    final parent = Zone.current[_accountOperationZoneKey] as _AccountOperation?;
+    if (parent != null && parent.active && parent.accountHash == accountHash) {
+      throw StateError(
+        'REENTRANT_ACCOUNT_OPERATION: use private transaction helpers',
+      );
+    }
+    final operation = _AccountOperation(_sessionGeneration, accountHash);
+    final previous = _accountOperationTails[accountHash];
+    final completed = Completer<void>();
+    final tail = completed.future;
+    _accountOperationTails[accountHash] = tail;
+    _activeTokens.add(operation.token);
+    try {
+      if (previous != null) await previous;
+      return await runZoned(() async {
+        _ensureCurrentAccountOperation();
+        return action();
+      }, zoneValues: {_accountOperationZoneKey: operation});
+    } on _AccountOperationCancelled {
+      if (onCancelled != null) return onCancelled(operation.generation);
+      rethrow;
+    } finally {
+      operation.active = false;
+      _activeTokens.remove(operation.token);
+      completed.complete();
+      if (identical(_accountOperationTails[accountHash], tail)) {
+        _accountOperationTails.remove(accountHash);
+      }
+    }
+  }
+
+  void _ensureCurrentAccountOperation() {
+    final operation =
+        Zone.current[_accountOperationZoneKey] as _AccountOperation?;
+    if (operation != null &&
+        (operation.generation != _sessionGeneration ||
+            operation.token.isCancelled)) {
+      throw const _AccountOperationCancelled();
+    }
+  }
+
   final Set<RehearsalCancellationToken> _activeTokens = {};
-  final Set<FileRehearsalByteSource> _openByteSources = {};
+  final Map<FileRehearsalByteSource, Future<void>?> _openByteSources = {};
   final Map<String, _PendingConflictEntry> _pendingConflicts = {};
   final Set<String> _activeStagingTxIds = {};
 
@@ -130,7 +182,8 @@ final class RehearsalPackageManager {
     }
     if (entry.role == 'original') {
       final container = entry.audioInfo?.container.toLowerCase();
-      if (container == null || !_allowedOriginalContainers.contains(container)) {
+      if (container == null ||
+          !_allowedOriginalContainers.contains(container)) {
         throw FormatException('Invalid original container: $container');
       }
       return 'original.$container';
@@ -151,8 +204,8 @@ final class RehearsalPackageManager {
     for (final token in List<RehearsalCancellationToken>.from(_activeTokens)) {
       token.cancel();
     }
-    for (final source in List<FileRehearsalByteSource>.from(_openByteSources)) {
-      unawaited(source.close().catchError((_) {}));
+    for (final source in List<FileRehearsalByteSource>.from(_openByteSources.keys)) {
+      unawaited(_closeSourceOnce(source));
     }
     unawaited(_safPort.cancelOperation().catchError((_) => false));
   }
@@ -171,6 +224,19 @@ final class RehearsalPackageManager {
   Future<int> recoverOrphanedTransactions({
     required String userId,
     Set<String> preserveStagingTransactionIds = const {},
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _recoverOrphanedTransactions(
+        userId: userId,
+        preserveStagingTransactionIds: preserveStagingTransactionIds,
+      ),
+    );
+  }
+
+  Future<int> _recoverOrphanedTransactions({
+    required String userId,
+    Set<String> preserveStagingTransactionIds = const {},
   }) async {
     final normalizedUserId = userId.trim();
     if (normalizedUserId.isEmpty) {
@@ -178,6 +244,7 @@ final class RehearsalPackageManager {
     }
 
     final storage = await _safPort.getStorageInfo();
+    _ensureCurrentAccountOperation();
     final accountHash = computeAccountNamespaceHash(normalizedUserId);
     return _recoverOrphanedTransactionsWithStorage(
       filesDirPath: storage.filesDirPath,
@@ -191,6 +258,7 @@ final class RehearsalPackageManager {
     required String accountHash,
     Set<String> preserveStagingTransactionIds = const {},
   }) async {
+    _ensureCurrentAccountOperation();
     final accountDir = _accountDir(filesDirPath, accountHash);
     if (!accountDir.existsSync()) {
       return 0;
@@ -229,7 +297,11 @@ final class RehearsalPackageManager {
     }
 
     // 3. Recover or clean *.backup.part directories inside packages/.
-    final records = _readIndexRecords(accountDir, accountHash);
+    final indexData = _readAccountIndex(accountDir, accountHash);
+    final records = indexData.packages;
+    final bindings = List<LocalSongVersionAudioBinding>.from(
+      indexData.bindings,
+    );
     final indexedById = {for (final r in records) r.packageId: r};
     String? tryHashSmallFile(File f) {
       if (!f.existsSync()) return null;
@@ -293,8 +365,22 @@ final class RehearsalPackageManager {
       updatedRecords.add(reconciled);
     }
 
+    final pkgById = {for (final r in updatedRecords) r.packageId: r};
+    final nowIso = _clock().toIso8601String();
+    final updatedBindings = _reconcileBindingsAgainstPackages(
+      bindings: bindings,
+      pkgById: pkgById,
+      nowIso: nowIso,
+      onChanged: () => indexDirty = true,
+    );
+
     if (indexDirty) {
-      await _writeIndexAtomically(accountDir, accountHash, updatedRecords);
+      await _writeIndexAtomically(
+        accountDir,
+        accountHash,
+        updatedRecords,
+        updatedBindings,
+      );
     }
 
     return recoveredCount;
@@ -302,7 +388,11 @@ final class RehearsalPackageManager {
 
   /// Loads the account-scoped local rehearsal package library after running
   /// startup/pre-operation crash recovery and completeness reconciliation.
-  Future<RehearsalLibrarySnapshot> loadLibrary({
+  Future<RehearsalLibrarySnapshot> loadLibrary({required String userId}) {
+    return _withAccountOperation(userId, () => _loadLibrary(userId: userId));
+  }
+
+  Future<RehearsalLibrarySnapshot> _loadLibrary({
     required String userId,
   }) async {
     final normalizedUserId = userId.trim();
@@ -311,6 +401,7 @@ final class RehearsalPackageManager {
     }
 
     final storage = await _safPort.getStorageInfo();
+    _ensureCurrentAccountOperation();
     final accountHash = computeAccountNamespaceHash(normalizedUserId);
     final activeTxIds = _activePendingTxIdsForAccount(accountHash);
     final recovered = await _recoverOrphanedTransactionsWithStorage(
@@ -320,7 +411,8 @@ final class RehearsalPackageManager {
     );
 
     final accountDir = _accountDir(storage.filesDirPath, accountHash);
-    final records = _readIndexRecords(accountDir, accountHash)
+    final indexData = _readAccountIndex(accountDir, accountHash);
+    final records = List<LocalRehearsalPackageRecord>.from(indexData.packages)
       ..sort((a, b) {
         final cmp = b.importedAt.compareTo(a.importedAt);
         return cmp != 0 ? cmp : a.packageId.compareTo(b.packageId);
@@ -328,11 +420,16 @@ final class RehearsalPackageManager {
 
     final occupiedBytes = _computeAccountPackagesBytes(accountDir);
     final corruptedOrIncompleteCount = records
-        .where((r) => r.integrityState != RehearsalPackageIntegrityState.verified)
+        .where(
+          (r) => r.integrityState != RehearsalPackageIntegrityState.verified,
+        )
         .length;
 
     return RehearsalLibrarySnapshot(
       packages: List<LocalRehearsalPackageRecord>.unmodifiable(records),
+      bindings: List<LocalSongVersionAudioBinding>.unmodifiable(
+        indexData.bindings,
+      ),
       storageSummary: RehearsalStorageSummary(
         accountNamespaceHash: accountHash,
         filesDirPath: storage.filesDirPath,
@@ -352,6 +449,16 @@ final class RehearsalPackageManager {
   Future<LocalRehearsalPackageRecord?> getPackageDetails({
     required String userId,
     required String packageId,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _getPackageDetails(userId: userId, packageId: packageId),
+    );
+  }
+
+  Future<LocalRehearsalPackageRecord?> _getPackageDetails({
+    required String userId,
+    required String packageId,
   }) async {
     final normalizedUserId = userId.trim();
     if (normalizedUserId.isEmpty) {
@@ -363,9 +470,10 @@ final class RehearsalPackageManager {
     }
 
     final storage = await _safPort.getStorageInfo();
+    _ensureCurrentAccountOperation();
     final accountHash = computeAccountNamespaceHash(normalizedUserId);
     final accountDir = _accountDir(storage.filesDirPath, accountHash);
-    final records = _readIndexRecords(accountDir, accountHash);
+    final records = _readAccountIndex(accountDir, accountHash).packages;
     for (final record in records) {
       if (record.packageId == normalizedPkgId) {
         return _reconcileOnDiskCompleteness(accountDir, record);
@@ -376,6 +484,17 @@ final class RehearsalPackageManager {
 
   /// Imports a `.louvaio-rehearsal.zip` package selected via native SAF.
   Future<RehearsalOperationOutcome> importFromSaf({
+    required String userId,
+    void Function(RehearsalOperationProgress)? onProgress,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _importFromSaf(userId: userId, onProgress: onProgress),
+      onCancelled: _sessionOrCancelledOutcome,
+    );
+  }
+
+  Future<RehearsalOperationOutcome> _importFromSaf({
     required String userId,
     void Function(RehearsalOperationProgress)? onProgress,
   }) async {
@@ -427,6 +546,7 @@ final class RehearsalPackageManager {
       late final SafStorageInfo storage;
       try {
         storage = await _safPort.getStorageInfo();
+        _ensureCurrentAccountOperation();
       } on SafChannelException catch (ex) {
         return RehearsalOperationOutcome(
           category: RehearsalUserOutcomeCategory.recoverableFailure,
@@ -444,7 +564,9 @@ final class RehearsalPackageManager {
       final recoveredCount = await _recoverOrphanedTransactionsWithStorage(
         filesDirPath: storage.filesDirPath,
         accountHash: accountHash,
-        preserveStagingTransactionIds: _activePendingTxIdsForAccount(accountHash),
+        preserveStagingTransactionIds: _activePendingTxIdsForAccount(
+          accountHash,
+        ),
       );
 
       if (storage.availableBytes < RehearsalLimitsV1.minFreeSpaceReserveBytes) {
@@ -591,6 +713,22 @@ final class RehearsalPackageManager {
     required String userId,
     required File stagedArchiveFile,
     void Function(RehearsalOperationProgress)? onProgress,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _importStagedArchive(
+        userId: userId,
+        stagedArchiveFile: stagedArchiveFile,
+        onProgress: onProgress,
+      ),
+      onCancelled: _sessionOrCancelledOutcome,
+    );
+  }
+
+  Future<RehearsalOperationOutcome> _importStagedArchive({
+    required String userId,
+    required File stagedArchiveFile,
+    void Function(RehearsalOperationProgress)? onProgress,
   }) async {
     final normalizedUserId = userId.trim();
     if (normalizedUserId.isEmpty) {
@@ -619,6 +757,7 @@ final class RehearsalPackageManager {
     Directory? txDir;
     try {
       final storage = await _safPort.getStorageInfo();
+      _ensureCurrentAccountOperation();
       if (_isSessionStaleOrCancelled(generation, token)) {
         return _sessionOrCancelledOutcome(generation);
       }
@@ -627,7 +766,9 @@ final class RehearsalPackageManager {
       final recoveredCount = await _recoverOrphanedTransactionsWithStorage(
         filesDirPath: storage.filesDirPath,
         accountHash: accountHash,
-        preserveStagingTransactionIds: _activePendingTxIdsForAccount(accountHash),
+        preserveStagingTransactionIds: _activePendingTxIdsForAccount(
+          accountHash,
+        ),
       );
 
       if (storage.availableBytes < RehearsalLimitsV1.minFreeSpaceReserveBytes) {
@@ -720,6 +861,22 @@ final class RehearsalPackageManager {
     required String userId,
     required String pendingTransactionId,
     void Function(RehearsalOperationProgress)? onProgress,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _confirmConflictReplace(
+        userId: userId,
+        pendingTransactionId: pendingTransactionId,
+        onProgress: onProgress,
+      ),
+      onCancelled: _sessionOrCancelledOutcome,
+    );
+  }
+
+  Future<RehearsalOperationOutcome> _confirmConflictReplace({
+    required String userId,
+    required String pendingTransactionId,
+    void Function(RehearsalOperationProgress)? onProgress,
   }) async {
     final normalizedUserId = userId.trim();
     if (normalizedUserId.isEmpty) {
@@ -756,6 +913,7 @@ final class RehearsalPackageManager {
 
     try {
       final storage = await _safPort.getStorageInfo();
+      _ensureCurrentAccountOperation();
       if (_isSessionStaleOrCancelled(generation, token)) {
         _deleteDirectoryQuietly(pending.txDir);
         return _sessionOrCancelledOutcome(generation);
@@ -786,6 +944,19 @@ final class RehearsalPackageManager {
   Future<void> discardPendingConflict({
     required String userId,
     required String pendingTransactionId,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _discardPendingConflict(
+        userId: userId,
+        pendingTransactionId: pendingTransactionId,
+      ),
+    );
+  }
+
+  Future<void> _discardPendingConflict({
+    required String userId,
+    required String pendingTransactionId,
   }) async {
     final normalizedUserId = userId.trim();
     if (normalizedUserId.isEmpty) {
@@ -799,6 +970,7 @@ final class RehearsalPackageManager {
 
     if (_txIdPattern.hasMatch(pendingTransactionId)) {
       final storage = await _safPort.getStorageInfo();
+      _ensureCurrentAccountOperation();
       final accountHash = computeAccountNamespaceHash(normalizedUserId);
       final accountDir = _accountDir(storage.filesDirPath, accountHash);
       final txDir = Directory(
@@ -811,6 +983,22 @@ final class RehearsalPackageManager {
   /// Revalidates all extracted files on disk and the archived `.louvaio-rehearsal.zip`
   /// for [packageId], updating `integrityState` and `lastValidatedAt` in `index.json`.
   Future<RehearsalOperationOutcome> revalidatePackage({
+    required String userId,
+    required String packageId,
+    void Function(RehearsalOperationProgress)? onProgress,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _revalidatePackage(
+        userId: userId,
+        packageId: packageId,
+        onProgress: onProgress,
+      ),
+      onCancelled: _sessionOrCancelledOutcome,
+    );
+  }
+
+  Future<RehearsalOperationOutcome> _revalidatePackage({
     required String userId,
     required String packageId,
     void Function(RehearsalOperationProgress)? onProgress,
@@ -856,9 +1044,13 @@ final class RehearsalPackageManager {
 
     try {
       final storage = await _safPort.getStorageInfo();
+      _ensureCurrentAccountOperation();
       final accountHash = computeAccountNamespaceHash(normalizedUserId);
       final accountDir = _accountDir(storage.filesDirPath, accountHash);
-      final records = _readIndexRecords(accountDir, accountHash);
+      final indexData = _readAccountIndex(accountDir, accountHash);
+      final records = List<LocalRehearsalPackageRecord>.from(
+        indexData.packages,
+      );
       final idx = records.indexWhere((r) => r.packageId == normalizedPkgId);
       if (idx == -1) {
         return const RehearsalOperationOutcome(
@@ -882,7 +1074,19 @@ final class RehearsalPackageManager {
       }
 
       records[idx] = verified.updatedRecord;
-      await _writeIndexAtomically(accountDir, accountHash, records);
+      final pkgById = {for (final r in records) r.packageId: r};
+      final updatedBindings = _reconcileBindingsAgainstPackages(
+        bindings: indexData.bindings,
+        pkgById: pkgById,
+        nowIso: _clock().toIso8601String(),
+        targetPackageId: normalizedPkgId,
+      );
+      await _writeIndexAtomically(
+        accountDir,
+        accountHash,
+        records,
+        updatedBindings,
+      );
 
       if (verified.updatedRecord.integrityState !=
           RehearsalPackageIntegrityState.verified) {
@@ -920,6 +1124,22 @@ final class RehearsalPackageManager {
     required String userId,
     required String packageId,
     required String newLabel,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _renamePackageLabel(
+        userId: userId,
+        packageId: packageId,
+        newLabel: newLabel,
+      ),
+      onCancelled: _sessionOrCancelledOutcome,
+    );
+  }
+
+  Future<RehearsalOperationOutcome> _renamePackageLabel({
+    required String userId,
+    required String packageId,
+    required String newLabel,
   }) async {
     final normalizedUserId = userId.trim();
     if (normalizedUserId.isEmpty) {
@@ -953,13 +1173,15 @@ final class RehearsalPackageManager {
 
     final generation = _sessionGeneration;
     final storage = await _safPort.getStorageInfo();
+    _ensureCurrentAccountOperation();
     if (generation != _sessionGeneration) {
       return _sessionOrCancelledOutcome(generation);
     }
 
     final accountHash = computeAccountNamespaceHash(normalizedUserId);
     final accountDir = _accountDir(storage.filesDirPath, accountHash);
-    final records = _readIndexRecords(accountDir, accountHash);
+    final indexData = _readAccountIndex(accountDir, accountHash);
+    final records = List<LocalRehearsalPackageRecord>.from(indexData.packages);
     final idx = records.indexWhere((r) => r.packageId == normalizedPkgId);
     if (idx == -1) {
       return const RehearsalOperationOutcome(
@@ -972,7 +1194,23 @@ final class RehearsalPackageManager {
 
     final updated = records[idx].copyWith(customLabel: trimmed);
     records[idx] = updated;
-    await _writeIndexAtomically(accountDir, accountHash, records);
+    final nowIso = _clock().toIso8601String();
+    final updatedBindings = indexData.bindings
+        .map(
+          (b) => b.packageId == normalizedPkgId
+              ? b.copyWith(
+                  packageDisplayNameSnapshot: updated.displayName,
+                  updatedAt: nowIso,
+                )
+              : b,
+        )
+        .toList(growable: false);
+    await _writeIndexAtomically(
+      accountDir,
+      accountHash,
+      records,
+      updatedBindings,
+    );
 
     return RehearsalOperationOutcome(
       category: RehearsalUserOutcomeCategory.renamed,
@@ -986,6 +1224,22 @@ final class RehearsalPackageManager {
   ///
   /// Refuses export if the package is `corrupted`, `incomplete`, or `missingFiles`.
   Future<RehearsalOperationOutcome> exportPackage({
+    required String userId,
+    required String packageId,
+    void Function(RehearsalOperationProgress)? onProgress,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _exportPackage(
+        userId: userId,
+        packageId: packageId,
+        onProgress: onProgress,
+      ),
+      onCancelled: _sessionOrCancelledOutcome,
+    );
+  }
+
+  Future<RehearsalOperationOutcome> _exportPackage({
     required String userId,
     required String packageId,
     void Function(RehearsalOperationProgress)? onProgress,
@@ -1018,9 +1272,13 @@ final class RehearsalPackageManager {
 
     try {
       final storage = await _safPort.getStorageInfo();
+      _ensureCurrentAccountOperation();
       final accountHash = computeAccountNamespaceHash(normalizedUserId);
       final accountDir = _accountDir(storage.filesDirPath, accountHash);
-      final records = _readIndexRecords(accountDir, accountHash);
+      final indexData = _readAccountIndex(accountDir, accountHash);
+      final records = List<LocalRehearsalPackageRecord>.from(
+        indexData.packages,
+      );
       final idx = records.indexWhere((r) => r.packageId == normalizedPkgId);
       if (idx == -1) {
         return const RehearsalOperationOutcome(
@@ -1034,7 +1292,8 @@ final class RehearsalPackageManager {
       final record = records[idx];
       if (record.integrityState == RehearsalPackageIntegrityState.corrupted ||
           record.integrityState == RehearsalPackageIntegrityState.incomplete ||
-          record.integrityState == RehearsalPackageIntegrityState.missingFiles) {
+          record.integrityState ==
+              RehearsalPackageIntegrityState.missingFiles) {
         return RehearsalOperationOutcome(
           category: RehearsalUserOutcomeCategory.corrupted,
           title: 'Exportação bloqueada',
@@ -1056,7 +1315,19 @@ final class RehearsalPackageManager {
       }
 
       records[idx] = revalidation.updatedRecord;
-      await _writeIndexAtomically(accountDir, accountHash, records);
+      final pkgById = {for (final r in records) r.packageId: r};
+      final updatedBindings = _reconcileBindingsAgainstPackages(
+        bindings: indexData.bindings,
+        pkgById: pkgById,
+        nowIso: _clock().toIso8601String(),
+        targetPackageId: normalizedPkgId,
+      );
+      await _writeIndexAtomically(
+        accountDir,
+        accountHash,
+        records,
+        updatedBindings,
+      );
 
       if (revalidation.updatedRecord.integrityState !=
           RehearsalPackageIntegrityState.verified) {
@@ -1149,6 +1420,22 @@ final class RehearsalPackageManager {
     required String userId,
     required String packageId,
     required bool confirmedScope,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _deletePackage(
+        userId: userId,
+        packageId: packageId,
+        confirmedScope: confirmedScope,
+      ),
+      onCancelled: _sessionOrCancelledOutcome,
+    );
+  }
+
+  Future<RehearsalOperationOutcome> _deletePackage({
+    required String userId,
+    required String packageId,
+    required bool confirmedScope,
   }) async {
     final normalizedUserId = userId.trim();
     if (normalizedUserId.isEmpty) {
@@ -1181,9 +1468,11 @@ final class RehearsalPackageManager {
     }
 
     final storage = await _safPort.getStorageInfo();
+    _ensureCurrentAccountOperation();
     final accountHash = computeAccountNamespaceHash(normalizedUserId);
     final accountDir = _accountDir(storage.filesDirPath, accountHash);
-    final records = _readIndexRecords(accountDir, accountHash);
+    final indexData = _readAccountIndex(accountDir, accountHash);
+    final records = List<LocalRehearsalPackageRecord>.from(indexData.packages);
     final idx = records.indexWhere((r) => r.packageId == normalizedPkgId);
     if (idx == -1) {
       return const RehearsalOperationOutcome(
@@ -1195,7 +1484,27 @@ final class RehearsalPackageManager {
     }
 
     final removed = records.removeAt(idx);
-    await _writeIndexAtomically(accountDir, accountHash, records);
+    final nowIso = _clock().toIso8601String();
+    final updatedBindings = indexData.bindings
+        .map((b) {
+          if (b.packageId != normalizedPkgId) return b;
+          if (b.validityState == LocalBindingValidityState.versionRemoved) {
+            return b;
+          }
+          return b.copyWith(
+            validityState: LocalBindingValidityState.packageMissing,
+            validityReason:
+                'O pacote local "${removed.displayName}" foi removido deste dispositivo.',
+            updatedAt: nowIso,
+          );
+        })
+        .toList(growable: false);
+    await _writeIndexAtomically(
+      accountDir,
+      accountHash,
+      records,
+      updatedBindings,
+    );
 
     final pkgDir = _packageDir(accountDir, normalizedPkgId);
     _deleteDirectoryQuietly(pkgDir);
@@ -1211,6 +1520,515 @@ final class RehearsalPackageManager {
           'O pacote "${removed.displayName}" foi removido do armazenamento interno do aplicativo. Arquivos externos permanecem intactos.',
       record: removed,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Account & ministry-scoped SongVersion local audio bindings (Fase B & C)
+  // ---------------------------------------------------------------------------
+
+  /// Lists persisted local `SongVersion` bindings inside the active account's
+  /// `index.json`, optionally scoped by [ministryId] and/or [songId].
+  Future<List<LocalSongVersionAudioBinding>> listBindings({
+    required String userId,
+    String? ministryId,
+    String? songId,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () =>
+          _listBindings(userId: userId, ministryId: ministryId, songId: songId),
+    );
+  }
+
+  Future<List<LocalSongVersionAudioBinding>> _listBindings({
+    required String userId,
+    String? ministryId,
+    String? songId,
+  }) async {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty) {
+      throw StateError('UNAUTHENTICATED: userId must not be empty');
+    }
+
+    final normalizedMinistry = ministryId?.trim();
+    if (ministryId != null &&
+        (normalizedMinistry == null || normalizedMinistry.isEmpty)) {
+      return const <LocalSongVersionAudioBinding>[];
+    }
+    final normalizedSong = songId?.trim();
+    if (songId != null && (normalizedSong == null || normalizedSong.isEmpty)) {
+      return const <LocalSongVersionAudioBinding>[];
+    }
+
+    final storage = await _safPort.getStorageInfo();
+    _ensureCurrentAccountOperation();
+    final accountHash = computeAccountNamespaceHash(normalizedUserId);
+    final accountDir = _accountDir(storage.filesDirPath, accountHash);
+    final indexData = _readAccountIndex(accountDir, accountHash);
+
+    final filtered = indexData.bindings
+        .where((b) {
+          if (normalizedMinistry != null &&
+              b.ministryId != normalizedMinistry) {
+            return false;
+          }
+          if (normalizedSong != null && b.songId != normalizedSong) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
+
+    return List<LocalSongVersionAudioBinding>.unmodifiable(filtered);
+  }
+
+  /// Creates or replaces a local binding between a canonical `SongVersion` of
+  /// [song] (within [ministryId]) and a verified local package [packageId] in
+  /// the authenticated user's account namespace.
+  ///
+  /// Fails closed when unauthenticated, offline, missing verified song read
+  /// authorization, ambiguous/missing version, or unverified/missing package.
+  Future<RehearsalOperationOutcome> bindSongVersion({
+    required String userId,
+    required String ministryId,
+    required SongDetail song,
+    String? requestedVersionId,
+    required String packageId,
+    required bool songReadVerified,
+    bool isOnline = true,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _bindSongVersion(
+        userId: userId,
+        ministryId: ministryId,
+        song: song,
+        requestedVersionId: requestedVersionId,
+        packageId: packageId,
+        songReadVerified: songReadVerified,
+        isOnline: isOnline,
+      ),
+      onCancelled: _sessionOrCancelledOutcome,
+    );
+  }
+
+  Future<RehearsalOperationOutcome> _bindSongVersion({
+    required String userId,
+    required String ministryId,
+    required SongDetail song,
+    String? requestedVersionId,
+    required String packageId,
+    required bool songReadVerified,
+    bool isOnline = true,
+  }) async {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Sessão indisponível',
+        message: 'Faça login para vincular pacotes de ensaio locais.',
+        errorCode: 'UNAUTHENTICATED',
+      );
+    }
+
+    final normalizedMinistryId = ministryId.trim();
+    if (normalizedMinistryId.isEmpty) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Ministério inválido',
+        message: 'Selecione um ministério válido para vincular o áudio.',
+        errorCode: 'INVALID_MINISTRY_ID',
+      );
+    }
+
+    final normalizedSongId = song.id.trim();
+    if (normalizedSongId.isEmpty) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Música inválida',
+        message: 'Identificador da música inválido para vínculo local.',
+        errorCode: 'INVALID_SONG_ID',
+      );
+    }
+
+    if (song.ministryId.trim().isNotEmpty &&
+        song.ministryId.trim() != normalizedMinistryId) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Isolamento de ministério',
+        message: 'A música não pertence ao ministério selecionado.',
+        errorCode: 'TENANT_MISMATCH',
+      );
+    }
+
+    if (!songReadVerified) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Leitura da música não verificada',
+        message:
+            'Não foi possível confirmar o acesso autorizado à música neste ministério.',
+        errorCode: 'SONG_READ_NOT_VERIFIED',
+      );
+    }
+
+    if (!isOnline) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Conexão necessária para vincular',
+        message:
+            'É necessário estar online para validar a música no ministério antes de criar um novo vínculo local.',
+        errorCode: 'OFFLINE_BIND_DENIED',
+      );
+    }
+
+    final resolution = resolveCanonicalSongVersion(
+      song,
+      requestedVersionId: requestedVersionId,
+    );
+    if (resolution.status == CanonicalVersionResolutionStatus.versionRequired) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Selecione uma versão',
+        message:
+            'Esta música possui múltiplas versões. Escolha explicitamente uma versão antes de vincular.',
+        errorCode: 'VERSION_REQUIRED',
+      );
+    }
+    if (resolution.status == CanonicalVersionResolutionStatus.versionNotFound ||
+        resolution.version == null) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Versão não encontrada',
+        message: 'A versão solicitada não existe nesta música.',
+        errorCode: 'VERSION_NOT_FOUND',
+      );
+    }
+
+    final normalizedPkgId = packageId.trim().toLowerCase();
+    if (!_uuidPattern.hasMatch(normalizedPkgId)) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Pacote inválido',
+        message: 'Identificador de pacote inválido.',
+        errorCode: 'INVALID_PACKAGE_ID',
+      );
+    }
+
+    final storage = await _safPort.getStorageInfo();
+    _ensureCurrentAccountOperation();
+    final accountHash = computeAccountNamespaceHash(normalizedUserId);
+    final accountDir = _accountDir(storage.filesDirPath, accountHash);
+    final indexData = _readAccountIndex(accountDir, accountHash);
+    final records = List<LocalRehearsalPackageRecord>.from(indexData.packages);
+    final pkgIdx = records.indexWhere((r) => r.packageId == normalizedPkgId);
+    if (pkgIdx == -1) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Pacote não encontrado',
+        message: 'O pacote selecionado não existe nesta conta.',
+        errorCode: 'PACKAGE_NOT_FOUND',
+      );
+    }
+
+    final reconciledPkg = _reconcileOnDiskCompleteness(
+      accountDir,
+      records[pkgIdx],
+    );
+    records[pkgIdx] = reconciledPkg;
+    if (reconciledPkg.integrityState !=
+        RehearsalPackageIntegrityState.verified) {
+      return RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.corrupted,
+        title: 'Pacote não verificado',
+        message:
+            reconciledPkg.integrityMessage ??
+            'O pacote precisa estar verificado e íntegro antes de ser vinculado.',
+        errorCode: reconciledPkg.integrityCode ?? 'PACKAGE_NOT_VERIFIED',
+        record: reconciledPkg,
+      );
+    }
+
+    if (reconciledPkg.original != null &&
+        !_allowedOriginalContainers.contains(
+          reconciledPkg.original!.container.toLowerCase(),
+        )) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.incompatible,
+        title: 'Formato não suportado',
+        message: 'O codec/contêiner da faixa original não é suportado.',
+        errorCode: 'UNSUPPORTED_CODEC',
+      );
+    }
+
+    final canonicalVersion = resolution.version!;
+    final assetId = reconciledPkg.original != null
+        ? RehearsalAssetId.original
+        : RehearsalAssetId.stemsBundleV1;
+    final assetSha256 = reconciledPkg.original != null
+        ? reconciledPkg.original!.sha256
+        : _computeStemsSignature(reconciledPkg);
+
+    final nowIso = _clock().toIso8601String();
+    final newBinding = LocalSongVersionAudioBinding(
+      accountNamespaceHash: accountHash,
+      ministryId: normalizedMinistryId,
+      songId: normalizedSongId,
+      canonicalVersionId: canonicalVersion.id,
+      versionNameSnapshot: canonicalVersion.name,
+      versionIsSynthetic: canonicalVersion.isSynthetic,
+      packageId: reconciledPkg.packageId,
+      packageDisplayNameSnapshot: reconciledPkg.displayName,
+      assetId: assetId,
+      packageCompositeSha256: reconciledPkg.compositeSha256,
+      assetSha256: assetSha256,
+      validityState: LocalBindingValidityState.valid,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    );
+
+    final updatedBindings = [
+      ...indexData.bindings.where(
+        (b) =>
+            !(b.ministryId == normalizedMinistryId &&
+                b.songId == normalizedSongId &&
+                b.canonicalVersionId == canonicalVersion.id),
+      ),
+      newBinding,
+    ];
+
+    await _writeIndexAtomically(
+      accountDir,
+      accountHash,
+      records,
+      updatedBindings,
+    );
+
+    final linkedRecord = reconciledPkg.copyWith(
+      bindingState: RehearsalPackageBindingState.linked,
+    );
+
+    return RehearsalOperationOutcome(
+      category: RehearsalUserOutcomeCategory.bound,
+      title: 'Pacote vinculado',
+      message:
+          'O pacote "${linkedRecord.displayName}" foi vinculado à versão "${canonicalVersion.name}".',
+      record: linkedRecord,
+      binding: newBinding,
+    );
+  }
+
+  /// Removes the local binding for `(ministryId, songId, canonicalVersionId)`
+  /// without deleting the personal rehearsal package from disk.
+  Future<RehearsalOperationOutcome> unbindSongVersion({
+    required String userId,
+    required String ministryId,
+    required String songId,
+    required String canonicalVersionId,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _unbindSongVersion(
+        userId: userId,
+        ministryId: ministryId,
+        songId: songId,
+        canonicalVersionId: canonicalVersionId,
+      ),
+      onCancelled: _sessionOrCancelledOutcome,
+    );
+  }
+
+  Future<RehearsalOperationOutcome> _unbindSongVersion({
+    required String userId,
+    required String ministryId,
+    required String songId,
+    required String canonicalVersionId,
+  }) async {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Sessão indisponível',
+        message: 'Faça login para desvincular áudios locais.',
+        errorCode: 'UNAUTHENTICATED',
+      );
+    }
+
+    final normalizedMinistryId = ministryId.trim();
+    final normalizedSongId = songId.trim();
+    final normalizedVersionId = canonicalVersionId.trim();
+    if (normalizedMinistryId.isEmpty ||
+        normalizedSongId.isEmpty ||
+        normalizedVersionId.isEmpty) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Dados de vínculo inválidos',
+        message: 'Parâmetros obrigatórios ausentes para desvincular.',
+        errorCode: 'INVALID_BINDING_KEY',
+      );
+    }
+
+    final storage = await _safPort.getStorageInfo();
+    _ensureCurrentAccountOperation();
+    final accountHash = computeAccountNamespaceHash(normalizedUserId);
+    final accountDir = _accountDir(storage.filesDirPath, accountHash);
+    final indexData = _readAccountIndex(accountDir, accountHash);
+
+    LocalSongVersionAudioBinding? removed;
+    final remaining = <LocalSongVersionAudioBinding>[];
+    for (final b in indexData.bindings) {
+      if (b.ministryId == normalizedMinistryId &&
+          b.songId == normalizedSongId &&
+          b.canonicalVersionId == normalizedVersionId) {
+        removed = b;
+      } else {
+        remaining.add(b);
+      }
+    }
+
+    if (removed == null) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.unbound,
+        title: 'Nenhum vínculo ativo',
+        message: 'Não havia pacote vinculado para esta versão.',
+      );
+    }
+
+    await _writeIndexAtomically(
+      accountDir,
+      accountHash,
+      indexData.packages,
+      remaining,
+    );
+
+    return RehearsalOperationOutcome(
+      category: RehearsalUserOutcomeCategory.unbound,
+      title: 'Vínculo removido',
+      message:
+          'O vínculo com "${removed.packageDisplayNameSnapshot}" foi removido. O pacote local permanece salvo em sua conta.',
+      binding: removed,
+    );
+  }
+
+  /// Reconciles all persisted local bindings for `(ministryId, song)` against
+  /// the current canonical versions of [song] and current on-disk package state.
+  ///
+  /// Sticky tombstone note (backend limitation): Firestore/backend `SongVersion`
+  /// IDs do not carry a monotonic generation/tombstone token, so deleting a
+  /// version and recreating one with the same ID cannot be distinguished by ID
+  /// alone. Once a binding enters [LocalBindingValidityState.versionRemoved], it
+  /// stays `version_removed` until the user explicitly rebinds or unbinds it.
+  Future<List<LocalSongVersionAudioBinding>> reconcileSongVersionBindings({
+    required String userId,
+    required String ministryId,
+    required SongDetail song,
+  }) {
+    return _withAccountOperation(
+      userId,
+      () => _reconcileSongVersionBindings(
+        userId: userId,
+        ministryId: ministryId,
+        song: song,
+      ),
+    );
+  }
+
+  Future<List<LocalSongVersionAudioBinding>> _reconcileSongVersionBindings({
+    required String userId,
+    required String ministryId,
+    required SongDetail song,
+  }) async {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty) {
+      throw StateError('UNAUTHENTICATED: userId must not be empty');
+    }
+
+    final normalizedMinistryId = ministryId.trim();
+    final normalizedSongId = song.id.trim();
+    if (normalizedMinistryId.isEmpty || normalizedSongId.isEmpty) {
+      return const <LocalSongVersionAudioBinding>[];
+    }
+
+    final storage = await _safPort.getStorageInfo();
+    _ensureCurrentAccountOperation();
+    final accountHash = computeAccountNamespaceHash(normalizedUserId);
+    final accountDir = _accountDir(storage.filesDirPath, accountHash);
+    final indexData = _readAccountIndex(accountDir, accountHash);
+
+    final targetIndices = <int>[];
+    for (var i = 0; i < indexData.bindings.length; i++) {
+      final b = indexData.bindings[i];
+      if (b.ministryId == normalizedMinistryId &&
+          b.songId == normalizedSongId) {
+        targetIndices.add(i);
+      }
+    }
+    if (targetIndices.isEmpty) {
+      return const <LocalSongVersionAudioBinding>[];
+    }
+
+    final currentVersions = extractCanonicalSongVersions(song);
+    final currentById = {for (final v in currentVersions) v.id: v};
+    final pkgById = <String, LocalRehearsalPackageRecord>{};
+    final updatedRecords = <LocalRehearsalPackageRecord>[];
+    var indexDirty = false;
+
+    for (final record in indexData.packages) {
+      final reconciledPkg = _reconcileOnDiskCompleteness(accountDir, record);
+      if (!identical(reconciledPkg, record)) {
+        indexDirty = true;
+      }
+      updatedRecords.add(reconciledPkg);
+      pkgById[reconciledPkg.packageId] = reconciledPkg;
+    }
+
+    final nowIso = _clock().toIso8601String();
+    final updatedBindings = List<LocalSongVersionAudioBinding>.from(
+      indexData.bindings,
+    );
+
+    for (final i in targetIndices) {
+      final b = updatedBindings[i];
+      // Sticky tombstone: preserve versionRemoved even if a version with the
+      // same ID is recreated later, until user explicitly rebinds/unbinds.
+      if (b.validityState == LocalBindingValidityState.versionRemoved) {
+        continue;
+      }
+
+      final matchedVersion = currentById[b.canonicalVersionId];
+      if (matchedVersion == null ||
+          b.versionIsSynthetic != matchedVersion.isSynthetic) {
+        updatedBindings[i] = b.copyWith(
+          validityState: LocalBindingValidityState.versionRemoved,
+          validityReason:
+              'A versão "${b.versionNameSnapshot}" foi removida ou substituída no repertório.',
+          updatedAt: nowIso,
+        );
+        indexDirty = true;
+        continue;
+      }
+
+      final reconciled = _reconcileSingleBindingAgainstPackage(
+        binding: b,
+        pkg: pkgById[b.packageId],
+        nowIso: nowIso,
+      );
+      if (!identical(reconciled, b)) {
+        updatedBindings[i] = reconciled;
+        indexDirty = true;
+      }
+    }
+
+    if (indexDirty) {
+      await _writeIndexAtomically(
+        accountDir,
+        accountHash,
+        updatedRecords,
+        updatedBindings,
+      );
+    }
+
+    final songBindings = [for (final i in targetIndices) updatedBindings[i]];
+    return List<LocalSongVersionAudioBinding>.unmodifiable(songBindings);
   }
 
   // ---------------------------------------------------------------------------
@@ -1260,6 +2078,7 @@ final class RehearsalPackageManager {
       );
 
       final storage = await _safPort.getStorageInfo();
+      _ensureCurrentAccountOperation();
       if (_isSessionStaleOrCancelled(generation, token)) {
         _deleteDirectoryQuietly(txDir);
         return _sessionOrCancelledOutcome(
@@ -1268,7 +2087,9 @@ final class RehearsalPackageManager {
         );
       }
 
-      final existingRecords = _readIndexRecords(accountDir, accountHash);
+      final indexData = _readAccountIndex(accountDir, accountHash);
+      final existingRecords = indexData.packages;
+      final existingBindings = indexData.bindings;
       final existingPackagesForValidation = existingRecords
           .where((r) => r.packageId != allowReplacePackageId)
           .map(
@@ -1281,7 +2102,7 @@ final class RehearsalPackageManager {
           .toList(growable: false);
 
       byteSource = FileRehearsalByteSource(stagedZipFile);
-      _openByteSources.add(byteSource);
+      _openByteSources[byteSource] = null;
       await byteSource.open();
 
       emit(
@@ -1710,6 +2531,30 @@ final class RehearsalPackageManager {
         ...existingRecords.where((r) => r.packageId != pkgId),
         committedRecord,
       ];
+      final updatedBindings = existingBindings
+          .map((b) {
+            if (b.packageId != pkgId) return b;
+            // Preserve sticky versionRemoved tombstone across package replacements.
+            if (b.validityState == LocalBindingValidityState.versionRemoved) {
+              return b;
+            }
+            if (allowReplacePackageId == pkgId &&
+                _isReplacementIncompatible(b, committedRecord)) {
+              return b.copyWith(
+                packageDisplayNameSnapshot: committedRecord.displayName,
+                validityState:
+                    LocalBindingValidityState.packageReplacedIncompatible,
+                validityReason:
+                    'O pacote "${committedRecord.displayName}" foi substituído por uma revisão ou áudio incompatível com este vínculo.',
+                updatedAt: nowIso,
+              );
+            }
+            return b.copyWith(
+              packageDisplayNameSnapshot: committedRecord.displayName,
+              updatedAt: nowIso,
+            );
+          })
+          .toList(growable: false);
 
       final commitOutcome = await _atomicDirectoryCommit(
         accountDir: accountDir,
@@ -1717,6 +2562,7 @@ final class RehearsalPackageManager {
         packageId: pkgId,
         txDir: txDir,
         updatedRecords: updatedRecords,
+        updatedBindings: updatedBindings,
         allowReplace: allowReplacePackageId == pkgId,
       );
 
@@ -1757,6 +2603,7 @@ final class RehearsalPackageManager {
     required String packageId,
     required Directory txDir,
     required List<LocalRehearsalPackageRecord> updatedRecords,
+    required List<LocalSongVersionAudioBinding> updatedBindings,
     required bool allowReplace,
   }) async {
     final packagesDir = Directory('${accountDir.path}/packages');
@@ -1789,7 +2636,12 @@ final class RehearsalPackageManager {
         txDir.renameSync(targetDir.path);
         movedTxToTarget = true;
 
-        await _writeIndexAtomically(accountDir, accountHash, updatedRecords);
+        await _writeIndexAtomically(
+          accountDir,
+          accountHash,
+          updatedRecords,
+          updatedBindings,
+        );
         _deleteDirectoryQuietly(backupDir);
         return const _AtomicCommitResult.ok();
       } catch (err) {
@@ -1819,7 +2671,12 @@ final class RehearsalPackageManager {
     try {
       txDir.renameSync(targetDir.path);
       movedTxToTarget = true;
-      await _writeIndexAtomically(accountDir, accountHash, updatedRecords);
+      await _writeIndexAtomically(
+        accountDir,
+        accountHash,
+        updatedRecords,
+        updatedBindings,
+      );
       return const _AtomicCommitResult.ok();
     } catch (err) {
       if (movedTxToTarget && targetDir.existsSync()) {
@@ -1844,7 +2701,8 @@ final class RehearsalPackageManager {
   ) {
     final pkgDir = _packageDir(accountDir, record.packageId);
     if (!pkgDir.existsSync()) {
-      if (record.integrityState == RehearsalPackageIntegrityState.missingFiles) {
+      if (record.integrityState ==
+          RehearsalPackageIntegrityState.missingFiles) {
         return record;
       }
       return record.copyWith(
@@ -1878,13 +2736,15 @@ final class RehearsalPackageManager {
 
     final manifestFile = File('${pkgDir.path}/$manifestFileName');
     if (!manifestFile.existsSync()) {
-      if (record.integrityState == RehearsalPackageIntegrityState.missingFiles) {
+      if (record.integrityState ==
+          RehearsalPackageIntegrityState.missingFiles) {
         return record;
       }
       return record.copyWith(
         integrityState: RehearsalPackageIntegrityState.missingFiles,
         integrityCode: 'MISSING_LOCAL_FILES',
-        integrityMessage: 'Arquivo manifesto local ($manifestFileName) ausente.',
+        integrityMessage:
+            'Arquivo manifesto local ($manifestFileName) ausente.',
       );
     }
 
@@ -1901,14 +2761,14 @@ final class RehearsalPackageManager {
         );
       }
       if (file.lengthSync() != expectedBytes) {
-        if (record.integrityState == RehearsalPackageIntegrityState.incomplete) {
+        if (record.integrityState ==
+            RehearsalPackageIntegrityState.incomplete) {
           return record;
         }
         return record.copyWith(
           integrityState: RehearsalPackageIntegrityState.incomplete,
           integrityCode: 'LOCAL_FILE_SIZE_MISMATCH',
-          integrityMessage:
-              'Arquivo local incompleto ou truncado: $label.',
+          integrityMessage: 'Arquivo local incompleto ou truncado: $label.',
         );
       }
     }
@@ -1981,7 +2841,7 @@ final class RehearsalPackageManager {
 
     final archiveFile = File('${pkgDir.path}/$stagedArchiveFileName');
     final source = FileRehearsalByteSource(archiveFile);
-    _openByteSources.add(source);
+    _openByteSources[source] = null;
     try {
       await source.open();
       final validation = await validateRehearsalPackage(
@@ -2008,8 +2868,8 @@ final class RehearsalPackageManager {
               record.compositeSha256) {
         final nextState =
             validation.status == RehearsalValidationStatus.incomplete
-                ? RehearsalPackageIntegrityState.incomplete
-                : RehearsalPackageIntegrityState.corrupted;
+            ? RehearsalPackageIntegrityState.incomplete
+            : RehearsalPackageIntegrityState.corrupted;
         return _RevalidationOutcome(
           record.copyWith(
             lastValidatedAt: nowIso,
@@ -2051,7 +2911,8 @@ final class RehearsalPackageManager {
       if (manifestBytes == null) {
         return const _ManifestCrossCheckResult.fail(
           errorCode: 'MISSING_MANIFEST',
-          errorMessage: 'manifest.json não localizado na leitura de verificação.',
+          errorMessage:
+              'manifest.json não localizado na leitura de verificação.',
         );
       }
       if (manifestBytes.length > RehearsalLimitsV1.maxManifestBytes) {
@@ -2099,8 +2960,9 @@ final class RehearsalPackageManager {
         );
       }
 
-      final declaration =
-          rights is Map<String, dynamic> ? rights['declaration'] : null;
+      final declaration = rights is Map<String, dynamic>
+          ? rights['declaration']
+          : null;
       if (declaration is! String || declaration.trim().isEmpty) {
         return const _ManifestCrossCheckResult.fail(
           errorCode: 'INVALID_MANIFEST_JSON',
@@ -2305,42 +3167,202 @@ final class RehearsalPackageManager {
   // Index & directory helpers
   // ---------------------------------------------------------------------------
 
-  List<LocalRehearsalPackageRecord> _readIndexRecords(
+  static String _computeStemsSignature(LocalRehearsalPackageRecord record) {
+    final parts = <String>[
+      for (final stemId in LocalRehearsalPackageRecord.requiredStemOrder)
+        '$stemId:${record.stems[stemId]?.sha256 ?? ''}',
+    ];
+    return IncrementalSha256.computeHex(utf8.encode(parts.join('|')));
+  }
+
+  static bool _isReplacementIncompatible(
+    LocalSongVersionAudioBinding binding,
+    LocalRehearsalPackageRecord nextRecord,
+  ) {
+    if (nextRecord.compositeSha256 != binding.packageCompositeSha256) {
+      return true;
+    }
+    if (binding.assetId == RehearsalAssetId.original) {
+      final orig = nextRecord.original;
+      return orig == null || orig.sha256 != binding.assetSha256;
+    }
+    return _computeStemsSignature(nextRecord) != binding.assetSha256;
+  }
+
+  static List<LocalRehearsalPackageRecord> _syncPackageBindingStates(
+    List<LocalRehearsalPackageRecord> records,
+    List<LocalSongVersionAudioBinding> bindings,
+  ) {
+    final linkedPkgIds = bindings
+        .where((b) => b.validityState == LocalBindingValidityState.valid)
+        .map((b) => b.packageId)
+        .toSet();
+    return records
+        .map((r) {
+          final desired = linkedPkgIds.contains(r.packageId)
+              ? RehearsalPackageBindingState.linked
+              : RehearsalPackageBindingState.unlinked;
+          return r.bindingState == desired
+              ? r
+              : r.copyWith(bindingState: desired);
+        })
+        .toList(growable: false);
+  }
+
+  LocalSongVersionAudioBinding _reconcileSingleBindingAgainstPackage({
+    required LocalSongVersionAudioBinding binding,
+    required LocalRehearsalPackageRecord? pkg,
+    required String nowIso,
+  }) {
+    if (binding.validityState == LocalBindingValidityState.versionRemoved) {
+      return binding;
+    }
+    if (pkg == null) {
+      if (binding.validityState == LocalBindingValidityState.packageMissing) {
+        return binding;
+      }
+      return binding.copyWith(
+        validityState: LocalBindingValidityState.packageMissing,
+        validityReason:
+            'O pacote local "${binding.packageDisplayNameSnapshot}" não foi encontrado neste dispositivo.',
+        updatedAt: nowIso,
+      );
+    }
+
+    if (pkg.integrityState != RehearsalPackageIntegrityState.verified) {
+      if (binding.validityState == LocalBindingValidityState.packageCorrupted) {
+        return binding;
+      }
+      return binding.copyWith(
+        packageDisplayNameSnapshot: pkg.displayName,
+        validityState: LocalBindingValidityState.packageCorrupted,
+        validityReason:
+            pkg.integrityMessage ??
+            'A integridade do pacote local "${pkg.displayName}" está comprometida.',
+        updatedAt: nowIso,
+      );
+    }
+
+    if (_isReplacementIncompatible(binding, pkg)) {
+      if (binding.validityState ==
+          LocalBindingValidityState.packageReplacedIncompatible) {
+        return binding;
+      }
+      return binding.copyWith(
+        packageDisplayNameSnapshot: pkg.displayName,
+        validityState: LocalBindingValidityState.packageReplacedIncompatible,
+        validityReason:
+            'O pacote "${pkg.displayName}" foi substituído por uma revisão ou arquivo incompatível.',
+        updatedAt: nowIso,
+      );
+    }
+
+    if (binding.validityState ==
+        LocalBindingValidityState.packageReplacedIncompatible) {
+      return binding;
+    }
+
+    if (binding.validityState != LocalBindingValidityState.valid ||
+        binding.validityReason != null ||
+        binding.packageDisplayNameSnapshot != pkg.displayName) {
+      return binding.copyWith(
+        packageDisplayNameSnapshot: pkg.displayName,
+        validityState: LocalBindingValidityState.valid,
+        clearValidityReason: true,
+        updatedAt: nowIso,
+      );
+    }
+
+    return binding;
+  }
+
+  List<LocalSongVersionAudioBinding> _reconcileBindingsAgainstPackages({
+    required List<LocalSongVersionAudioBinding> bindings,
+    required Map<String, LocalRehearsalPackageRecord> pkgById,
+    required String nowIso,
+    String? targetPackageId,
+    void Function()? onChanged,
+  }) {
+    if (bindings.isEmpty) return bindings;
+    final out = <LocalSongVersionAudioBinding>[];
+    for (final b in bindings) {
+      if (targetPackageId != null && b.packageId != targetPackageId) {
+        out.add(b);
+        continue;
+      }
+      final reconciled = _reconcileSingleBindingAgainstPackage(
+        binding: b,
+        pkg: pkgById[b.packageId],
+        nowIso: nowIso,
+      );
+      if (!identical(reconciled, b)) {
+        onChanged?.call();
+      }
+      out.add(reconciled);
+    }
+    return out;
+  }
+
+  _AccountIndexData _readAccountIndex(
     Directory accountDir,
     String expectedAccountHash,
   ) {
     final indexFile = File('${accountDir.path}/$indexFileName');
     if (!indexFile.existsSync()) {
-      return <LocalRehearsalPackageRecord>[];
+      return const _AccountIndexData(packages: [], bindings: []);
     }
 
     try {
       final raw = indexFile.readAsStringSync();
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) {
-        return <LocalRehearsalPackageRecord>[];
+        return const _AccountIndexData(packages: [], bindings: []);
       }
       final fileHash = decoded['accountNamespaceHash'];
       if (fileHash is String && fileHash != expectedAccountHash) {
-        return <LocalRehearsalPackageRecord>[];
+        return const _AccountIndexData(packages: [], bindings: []);
       }
       final rawPackages = decoded['packages'];
       if (rawPackages is! List<dynamic>) {
-        return <LocalRehearsalPackageRecord>[];
+        return const _AccountIndexData(packages: [], bindings: []);
       }
-      final out = <LocalRehearsalPackageRecord>[];
+      final packages = <LocalRehearsalPackageRecord>[];
       for (final item in rawPackages) {
         if (item is Map<String, dynamic>) {
           final record = LocalRehearsalPackageRecord.fromJson(item);
           if (record.accountNamespaceHash == expectedAccountHash &&
               _uuidPattern.hasMatch(record.packageId)) {
-            out.add(record);
+            packages.add(record);
           }
         }
       }
-      return out;
+
+      final bindings = <LocalSongVersionAudioBinding>[];
+      final rawBindings = decoded['bindings'];
+      if (rawBindings is List<dynamic>) {
+        for (final item in rawBindings) {
+          if (item is Map<String, dynamic>) {
+            try {
+              final binding = LocalSongVersionAudioBinding.fromJson(item);
+              if (binding.accountNamespaceHash == expectedAccountHash &&
+                  binding.ministryId.trim().isNotEmpty &&
+                  binding.songId.trim().isNotEmpty &&
+                  _uuidPattern.hasMatch(binding.packageId)) {
+                bindings.add(binding);
+              }
+            } catch (_) {
+              // Skip malformed binding entry without invalidating valid index entries.
+            }
+          }
+        }
+      }
+
+      return _AccountIndexData(
+        packages: _syncPackageBindingStates(packages, bindings),
+        bindings: bindings,
+      );
     } catch (_) {
-      return <LocalRehearsalPackageRecord>[];
+      return const _AccountIndexData(packages: [], bindings: []);
     }
   }
 
@@ -2348,41 +3370,54 @@ final class RehearsalPackageManager {
     Directory accountDir,
     String accountHash,
     List<LocalRehearsalPackageRecord> records,
+    List<LocalSongVersionAudioBinding> bindings,
   ) async {
+    _ensureCurrentAccountOperation();
     if (!accountDir.existsSync()) {
       accountDir.createSync(recursive: true);
     }
 
     final tmpFile = File('${accountDir.path}/$indexTmpFileName');
     final targetFile = File('${accountDir.path}/$indexFileName');
+    final syncedRecords = _syncPackageBindingStates(records, bindings);
 
     final payload = jsonEncode({
       'version': 1,
       'accountNamespaceHash': accountHash,
       'updatedAt': _clock().toIso8601String(),
-      'packages': records.map((r) => r.toJson()).toList(growable: false),
+      'packages': syncedRecords.map((r) => r.toJson()).toList(growable: false),
+      'bindings': bindings.map((b) => b.toJson()).toList(growable: false),
     });
 
-    final sink = await _sinkFactory(tmpFile);
-    var closed = false;
     try {
-      sink.write(payload);
-      await sink.flush();
-      await sink.close();
-      closed = true;
-    } finally {
-      if (!closed) {
-        try {
-          await sink.close();
-        } catch (_) {}
+      final sink = await _sinkFactory(tmpFile);
+      var closed = false;
+      try {
+        _ensureCurrentAccountOperation();
+        sink.write(payload);
+        await sink.flush();
+        await sink.close();
+        closed = true;
+      } finally {
+        if (!closed) {
+          try {
+            await sink.close();
+          } catch (_) {}
+        }
       }
-    }
 
-    if (_debugBeforeIndexCommit != null) {
-      await _debugBeforeIndexCommit(tmpFile, targetFile);
-    }
+      if (_debugBeforeIndexCommit != null) {
+        await _debugBeforeIndexCommit(tmpFile, targetFile);
+      }
 
-    tmpFile.renameSync(targetFile.path);
+      // This synchronous rename is the commit linearization point. Cancellation
+      // before it aborts; cancellation after it cannot undo a committed operation.
+      _ensureCurrentAccountOperation();
+      tmpFile.renameSync(targetFile.path);
+    } catch (_) {
+      _deleteFileQuietly(tmpFile);
+      rethrow;
+    }
   }
 
   Directory _accountDir(String filesDirPath, String accountHash) {
@@ -2393,9 +3428,7 @@ final class RehearsalPackageManager {
         'Invalid account namespace hash',
       );
     }
-    return Directory(
-      '$filesDirPath/rehearsal_packages/accounts/$accountHash',
-    );
+    return Directory('$filesDirPath/rehearsal_packages/accounts/$accountHash');
   }
 
   Directory _packageDir(Directory accountDir, String packageId) {
@@ -2482,8 +3515,7 @@ final class RehearsalPackageManager {
   bool _isSessionStaleOrCancelled(
     int capturedGeneration,
     RehearsalCancellationToken token,
-  ) =>
-      capturedGeneration != _sessionGeneration || token.isCancelled;
+  ) => capturedGeneration != _sessionGeneration || token.isCancelled;
 
   RehearsalOperationOutcome _sessionOrCancelledOutcome(
     int capturedGeneration, {
@@ -2615,11 +3647,22 @@ final class RehearsalPackageManager {
     );
   }
 
+  Future<void> _closeSourceOnce(FileRehearsalByteSource source) {
+    final existing = _openByteSources[source];
+    if (existing != null) {
+      return existing;
+    }
+    final closing = source.close().catchError((_) {});
+    _openByteSources[source] = closing;
+    return closing;
+  }
+
   Future<void> _closeAndUntrackSource(FileRehearsalByteSource source) async {
-    _openByteSources.remove(source);
     try {
-      await source.close();
-    } catch (_) {}
+      await _closeSourceOnce(source);
+    } finally {
+      _openByteSources.remove(source);
+    }
   }
 
   Future<void> _closeSinksQuietly(List<IOSink> sinks) async {
@@ -2649,7 +3692,8 @@ final class RehearsalPackageManager {
   bool _isEnospc(Object error) {
     if (error is FileSystemException) {
       if (error.osError?.errorCode == 28) return true;
-      final msg = '${error.message} ${error.osError?.message ?? ''}'.toLowerCase();
+      final msg = '${error.message} ${error.osError?.message ?? ''}'
+          .toLowerCase();
       if (msg.contains('no space left') || msg.contains('enospc')) {
         return true;
       }
@@ -2713,6 +3757,13 @@ final class _RevalidationOutcome {
   final LocalRehearsalPackageRecord updatedRecord;
 }
 
+final class _AccountIndexData {
+  const _AccountIndexData({required this.packages, required this.bindings});
+
+  final List<LocalRehearsalPackageRecord> packages;
+  final List<LocalSongVersionAudioBinding> bindings;
+}
+
 final class _AtomicCommitResult {
   const _AtomicCommitResult.ok()
     : success = true,
@@ -2730,4 +3781,16 @@ final class _AtomicCommitResult {
   final String? errorCode;
   final String? errorMessage;
   final bool isEnospc;
+}
+
+final class _AccountOperation {
+  _AccountOperation(this.generation, this.accountHash);
+  final int generation;
+  final String accountHash;
+  bool active = true;
+  final RehearsalCancellationToken token = RehearsalCancellationToken();
+}
+
+final class _AccountOperationCancelled implements Exception {
+  const _AccountOperationCancelled();
 }

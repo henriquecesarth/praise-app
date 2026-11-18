@@ -37,7 +37,7 @@ interface ScheduleDetailViewProps {
   onEdit?: () => void;
   onDelete?: () => void;
   onUpdateSchedule?: (updatedSchedule: ScheduleItem) => void;
-  onSelectSong?: (song: Song, context?: { versionId?: string; scheduleId?: string }) => void;
+  onSelectSong?: (song: Song, context?: { versionId?: string; scheduleId?: string; slotIndex?: number }) => void;
 }
 
 const formatDate = (dateStr: string, timeStr: string) => {
@@ -533,6 +533,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                       onSelectSong?.(song, {
                         versionId: resolvedVersionId,
                         scheduleId: schedule.id,
+                        ...(schedule.songs.length > 1 ? { slotIndex: idx } : {}),
                       })
                     }
                   >
@@ -598,6 +599,7 @@ export const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({
                             onSelectSong?.(resolvedSong, {
                               versionId: resolvedVersionId,
                               scheduleId: schedule.id,
+                              ...(schedule.songs.length > 1 ? { slotIndex: slotIdx } : {}),
                             })
                           }
                         >

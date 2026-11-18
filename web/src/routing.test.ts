@@ -42,6 +42,18 @@ describe('application routes', () => {
     expect(pathForSong('song 1', { versionId: 'ver-2', fromScheduleId: 'sch-9' })).toBe(
       '/repertorio/song%201?version=ver-2&fromSchedule=sch-9'
     );
+    expect(pathForSong('song 1', { versionId: 'ver-2', fromScheduleId: 'sch-9', slotIndex: 1 })).toBe(
+      '/repertorio/song%201?version=ver-2&fromSchedule=sch-9&slot=1'
+    );
+    expect(parseAppRoute('/repertorio/song%201', '?version=ver-2&fromSchedule=sch-9&slot=2')).toMatchObject({
+      module: 'repertoire',
+      songId: 'song 1',
+      songVersionId: 'ver-2',
+      fromScheduleId: 'sch-9',
+      scheduleSlot: 2,
+    });
+    expect(parseAppRoute('/repertorio/song%201', '?fromSchedule=sch-9&slot=-1').scheduleSlot).toBeUndefined();
+    expect(parseAppRoute('/repertorio/song%201', '?fromSchedule=sch-9&slot=abc').scheduleSlot).toBeUndefined();
     expect(pathForSchedule('schedule/1')).toBe('/escalas/schedule%2F1');
   });
 

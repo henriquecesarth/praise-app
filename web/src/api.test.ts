@@ -1,5 +1,72 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { api, ApiError, getFriendlyErrorMessage, mapAnnouncementFromApi } from './api';
+import { extractCanonicalSongVersions, resolveCanonicalSongVersion } from './audio/song-version-audio-binding';
+
+describe('T10 API song version identity provenance', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  const readSong = async (versions?: unknown[]) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ data: { id: 'legacy', ministry_id: 'min-1', title: 'Song', versions } }),
+    }));
+    return api.getSongById('legacy', 'min-1');
+  };
+
+  it('retains locally synthesized legacy identity and v1 alias through the HTTP adapter', async () => {
+    const song = await readSong();
+    expect(extractCanonicalSongVersions(song)[0].isSynthetic).toBe(true);
+    const resolved = resolveCanonicalSongVersion(song, 'v1');
+    expect(resolved.status).toBe('resolved');
+    if (resolved.status === 'resolved') expect(resolved.version.id).toBe('legacy_v1');
+  });
+
+  it('preserves local provenance in UI object copies and excludes it from create/update payloads', async () => {
+    const song = await readSong();
+    const copied = { ...song, versions: song.versions.map((version) => ({ ...version })) };
+    expect(extractCanonicalSongVersions(copied)[0].isSynthetic).toBe(true);
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ data: { id: 'legacy' } }),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    await api.createSong(copied, 'min-1');
+    await api.updateSong('legacy', copied, 'min-1');
+    for (const [, options] of fetchSpy.mock.calls) {
+      const body = JSON.parse(options.body);
+      expect(body.versions).toEqual(JSON.parse(JSON.stringify(copied.versions)));
+      expect(Object.keys(body.versions[0])).not.toContain('localSongVersionProvenance');
+      expect(Object.keys(body.versions[0])).not.toContain('isSynthetic');
+    }
+  });
+
+  it('ignores payload synthetic claims and preserves real explicit v_1 IDs', async () => {
+    const song = await readSong([{ id: 'v_1', name: 'Studio', isSynthetic: true }]);
+    expect(extractCanonicalSongVersions(song)[0].isSynthetic).toBe(false);
+    expect(resolveCanonicalSongVersion(song, 'v1').status).toBe('version_not_found');
+    expect(resolveCanonicalSongVersion(song, 'v_1').status).toBe('resolved');
+  });
+
+  it('never promotes missing IDs or reordered Studio/Live positions into persisted identities', async () => {
+    for (const versions of [[{ name: 'Studio' }, { name: 'Live' }], [{ name: 'Live' }, { name: 'Studio' }]]) {
+      const song = await readSong(versions);
+      expect(extractCanonicalSongVersions(song)).toEqual([]);
+      expect(resolveCanonicalSongVersion(song, 'v_1').status).toBe('version_not_found');
+      expect(resolveCanonicalSongVersion(song).status).toBe('version_not_found');
+    }
+  });
+
+  it('rejects duplicate IDs and malformed lists without inventing a legacy version or auto-selecting another', async () => {
+    for (const versions of [[{ id: 'dup', name: 'Studio' }, { id: 'dup', name: 'Live' }], [null, 42], [{ name: 'Missing' }]]) {
+      const song = await readSong(versions);
+      expect(extractCanonicalSongVersions(song)).toEqual([]);
+      expect(resolveCanonicalSongVersion(song, 'v1').status).toBe('version_not_found');
+    }
+    const mixed = await readSong([{ name: 'Missing' }, { id: 'real', name: 'Live' }]);
+    expect(resolveCanonicalSongVersion(mixed).status).toBe('version_required');
+    expect(resolveCanonicalSongVersion(mixed, 'real').status).toBe('resolved');
+  });
+});
 
 describe('API Client & Structured Error Handling', () => {
   beforeEach(() => {

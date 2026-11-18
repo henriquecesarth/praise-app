@@ -5,6 +5,7 @@ export interface AppRouteState {
   songId?: string;
   songVersionId?: string;
   fromScheduleId?: string;
+  scheduleSlot?: number;
   folderId?: string;
   scheduleId?: string;
   ministrySection?: string;
@@ -75,11 +76,20 @@ export function parseAppRoute(pathname: string, search: string = ''): AppRouteSt
   if (songMatch) {
     const songVersionId = searchParams.get('version')?.trim() || undefined;
     const fromScheduleId = searchParams.get('fromSchedule')?.trim() || undefined;
+    const rawSlot = searchParams.get('slot')?.trim();
+    let scheduleSlot: number | undefined;
+    if (rawSlot && /^\d+$/.test(rawSlot)) {
+      const parsedSlot = Number(rawSlot);
+      if (Number.isSafeInteger(parsedSlot) && parsedSlot >= 0) {
+        scheduleSlot = parsedSlot;
+      }
+    }
     return {
       module: 'repertoire',
       songId: decodeSegment(songMatch[1]),
       songVersionId,
       fromScheduleId,
+      ...(scheduleSlot !== undefined ? { scheduleSlot } : {}),
       isKnown: true,
     };
   }
@@ -94,7 +104,7 @@ export function parseAppRoute(pathname: string, search: string = ''): AppRouteSt
 
 export function pathForSong(
   songId: string,
-  options?: { versionId?: string; fromScheduleId?: string }
+  options?: { versionId?: string; fromScheduleId?: string; slotIndex?: number }
 ) {
   const base = `/repertorio/${encodeURIComponent(songId)}`;
   const params = new URLSearchParams();
@@ -103,6 +113,13 @@ export function pathForSong(
   }
   if (options?.fromScheduleId?.trim()) {
     params.set('fromSchedule', options.fromScheduleId.trim());
+  }
+  if (
+    options?.slotIndex !== undefined &&
+    Number.isInteger(options.slotIndex) &&
+    options.slotIndex >= 0
+  ) {
+    params.set('slot', String(options.slotIndex));
   }
   const query = params.toString();
   return query ? `${base}?${query}` : base;

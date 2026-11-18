@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app/providers.dart';
+import '../../../repertoire/domain/song_detail.dart';
 import '../../data/rehearsal_package_manager.dart';
 import '../../data/rehearsal_package_saf_channel.dart';
 import '../../domain/rehearsal_package_models.dart';
@@ -305,10 +307,7 @@ class RehearsalPackagesNotifier extends StateNotifier<RehearsalPackagesState> {
   }
 
   /// Deletes only the app-private local copy of [packageId] after confirmation.
-  Future<void> deletePackage(
-    String packageId, {
-    required bool confirmedScope,
-  }) {
+  Future<void> deletePackage(String packageId, {required bool confirmedScope}) {
     return _runOutcomeOperation(
       unauthenticatedMessage: 'Faça login para remover pacotes locais.',
       clearPendingConflictOnStart: false,
@@ -343,10 +342,8 @@ class RehearsalPackagesNotifier extends StateNotifier<RehearsalPackagesState> {
   Future<void> _runOutcomeOperation({
     required String unauthenticatedMessage,
     required bool clearPendingConflictOnStart,
-    required Future<RehearsalOperationOutcome> Function(
-      String userId,
-      int gen,
-    ) action,
+    required Future<RehearsalOperationOutcome> Function(String userId, int gen)
+    action,
   }) async {
     final userId = _currentUserIdReader()?.trim() ?? '';
     if (userId.isEmpty) {
@@ -480,5 +477,530 @@ final rehearsalPackagesNotifierProvider =
       return RehearsalPackagesNotifier(
         manager: manager,
         currentUserIdReader: () => ref.read(authNotifierProvider).user?.id,
+      );
+    });
+
+/// Overridable connectivity flag used when validating online-only bind creation.
+final rehearsalOnlineCheckProvider = Provider<bool>((ref) => true);
+
+/// Immutable state for account- and ministry-scoped local audio bindings
+/// displayed on `SongDetailView`.
+final class SongVersionAudioBindingsState {
+  const SongVersionAudioBindingsState({
+    this.isLoading = false,
+    this.isMutating = false,
+    this.boundUserId,
+    this.ministryId,
+    this.songId,
+    this.bindings = const [],
+    this.availablePackages = const [],
+    this.errorMessage,
+    this.lastOutcome,
+  });
+
+  final bool isLoading;
+  final bool isMutating;
+  final String? boundUserId;
+  final String? ministryId;
+  final String? songId;
+  final List<LocalSongVersionAudioBinding> bindings;
+  final List<LocalRehearsalPackageRecord> availablePackages;
+  final String? errorMessage;
+  final RehearsalOperationOutcome? lastOutcome;
+
+  List<LocalRehearsalPackageRecord> get verifiedPackages => availablePackages
+      .where((p) => p.isReadyForLocalUse)
+      .toList(growable: false);
+
+  LocalSongVersionAudioBinding? bindingForVersion(String? canonicalVersionId) {
+    final target = canonicalVersionId?.trim();
+    if (target == null || target.isEmpty) return null;
+    for (final b in bindings) {
+      if (b.canonicalVersionId == target) return b;
+    }
+    return null;
+  }
+
+  SongVersionAudioBindingsState copyWith({
+    bool? isLoading,
+    bool? isMutating,
+    String? boundUserId,
+    bool clearBoundUserId = false,
+    String? ministryId,
+    bool clearMinistryId = false,
+    String? songId,
+    bool clearSongId = false,
+    List<LocalSongVersionAudioBinding>? bindings,
+    List<LocalRehearsalPackageRecord>? availablePackages,
+    String? errorMessage,
+    bool clearErrorMessage = false,
+    RehearsalOperationOutcome? lastOutcome,
+    bool clearLastOutcome = false,
+  }) {
+    return SongVersionAudioBindingsState(
+      isLoading: isLoading ?? this.isLoading,
+      isMutating: isMutating ?? this.isMutating,
+      boundUserId: clearBoundUserId ? null : (boundUserId ?? this.boundUserId),
+      ministryId: clearMinistryId ? null : (ministryId ?? this.ministryId),
+      songId: clearSongId ? null : (songId ?? this.songId),
+      bindings: bindings ?? this.bindings,
+      availablePackages: availablePackages ?? this.availablePackages,
+      errorMessage: clearErrorMessage
+          ? null
+          : (errorMessage ?? this.errorMessage),
+      lastOutcome: clearLastOutcome ? null : (lastOutcome ?? this.lastOutcome),
+    );
+  }
+}
+
+/// Manages account- and ministry-scoped local audio bindings for `SongDetailView`,
+/// discarding stale async responses across user, ministry, or song switches.
+class SongVersionAudioBindingsNotifier
+    extends StateNotifier<SongVersionAudioBindingsState> {
+  SongVersionAudioBindingsNotifier({
+    required RehearsalPackageManager manager,
+    required String? Function() currentUserIdReader,
+    required bool Function() onlineReader,
+  }) : _manager = manager,
+       _currentUserIdReader = currentUserIdReader,
+       _onlineReader = onlineReader,
+       super(const SongVersionAudioBindingsState());
+
+  final RehearsalPackageManager _manager;
+  final String? Function() _currentUserIdReader;
+  final bool Function() _onlineReader;
+  int _opGeneration = 0;
+  Object? _activeMutation;
+
+  bool _isStale(
+    int gen,
+    String userId, {
+    required String ministryId,
+    required String songId,
+  }) {
+    return !mounted ||
+        gen != _opGeneration ||
+        (_currentUserIdReader()?.trim() ?? '') != userId ||
+        state.ministryId != ministryId ||
+        state.songId != songId;
+  }
+
+  /// Reconciles and loads local bindings for `(ministryId, song)` inside the
+  /// active user's account namespace.
+  Future<void> loadAndReconcileForSong({
+    required String ministryId,
+    required SongDetail song,
+    bool silent = false,
+  }) async {
+    final userId = _currentUserIdReader()?.trim() ?? '';
+    final normalizedMinistry = ministryId.trim();
+    final normalizedSongId = song.id.trim();
+
+    if (userId.isEmpty ||
+        normalizedMinistry.isEmpty ||
+        normalizedSongId.isEmpty) {
+      if (!mounted) return;
+      _opGeneration++;
+      _activeMutation = null;
+      state = const SongVersionAudioBindingsState();
+      return;
+    }
+
+    final gen = ++_opGeneration;
+    final contextChanged =
+        state.boundUserId != userId ||
+        state.ministryId != normalizedMinistry ||
+        state.songId != normalizedSongId;
+
+    if (contextChanged) _activeMutation = null;
+    state = state.copyWith(
+      isMutating: contextChanged ? false : state.isMutating,
+      isLoading: contextChanged || !silent,
+      boundUserId: userId,
+      ministryId: normalizedMinistry,
+      songId: normalizedSongId,
+      bindings: contextChanged ? const [] : state.bindings,
+      availablePackages: state.boundUserId != userId
+          ? const []
+          : state.availablePackages,
+      clearErrorMessage: true,
+      clearLastOutcome: contextChanged,
+    );
+
+    try {
+      final reconciled = await _manager.reconcileSongVersionBindings(
+        userId: userId,
+        ministryId: normalizedMinistry,
+        song: song,
+      );
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return;
+      }
+
+      final snapshot = await _manager.loadLibrary(userId: userId);
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return;
+      }
+
+      state = state.copyWith(
+        isLoading: false,
+        boundUserId: userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+        bindings: reconciled,
+        availablePackages: snapshot.packages,
+        clearErrorMessage: true,
+      );
+    } on MissingPluginException {
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return;
+      }
+      state = state.copyWith(
+        isLoading: false,
+        bindings: const [],
+        availablePackages: const [],
+        clearErrorMessage: true,
+      );
+    } on SafChannelException catch (ex) {
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return;
+      }
+      state = state.copyWith(isLoading: false, errorMessage: ex.message);
+    } catch (_) {
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return;
+      }
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: 'Não foi possível verificar vínculos de áudio locais.',
+      );
+    }
+  }
+
+  /// Refreshes the list of local packages available in the active account.
+  Future<List<LocalRehearsalPackageRecord>> loadAvailablePackages() async {
+    final userId = _currentUserIdReader()?.trim() ?? '';
+    if (userId.isEmpty) {
+      return const <LocalRehearsalPackageRecord>[];
+    }
+    final gen = _opGeneration;
+    try {
+      final snapshot = await _manager.loadLibrary(userId: userId);
+      if (!mounted ||
+          gen != _opGeneration ||
+          (_currentUserIdReader()?.trim() ?? '') != userId) {
+        return const <LocalRehearsalPackageRecord>[];
+      }
+      state = state.copyWith(
+        boundUserId: userId,
+        availablePackages: snapshot.packages,
+      );
+      return snapshot.packages;
+    } on MissingPluginException {
+      return const <LocalRehearsalPackageRecord>[];
+    } catch (_) {
+      if (!mounted ||
+          gen != _opGeneration ||
+          (_currentUserIdReader()?.trim() ?? '') != userId) {
+        return const <LocalRehearsalPackageRecord>[];
+      }
+      return state.availablePackages;
+    }
+  }
+
+  /// Binds a verified local package to a canonical version of [song].
+  Future<RehearsalOperationOutcome> bindPackage({
+    required String ministryId,
+    required SongDetail song,
+    String? requestedVersionId,
+    required String packageId,
+    required bool songReadVerified,
+    bool? isOnline,
+  }) async {
+    final userId = _currentUserIdReader()?.trim() ?? '';
+    if (userId.isEmpty) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Sessão indisponível',
+        message: 'Faça login para vincular pacotes de ensaio locais.',
+        errorCode: 'UNAUTHENTICATED',
+      );
+    }
+    if (state.isMutating) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Operação em andamento',
+        message: 'Aguarde a conclusão da operação atual.',
+        errorCode: 'OPERATION_IN_PROGRESS',
+      );
+    }
+
+    final normalizedMinistry = ministryId.trim();
+    final normalizedSongId = song.id.trim();
+    final gen = ++_opGeneration;
+    final mutation = Object();
+    _activeMutation = mutation;
+
+    state = state.copyWith(
+      isMutating: true,
+      boundUserId: userId,
+      ministryId: normalizedMinistry,
+      songId: normalizedSongId,
+      clearErrorMessage: true,
+      clearLastOutcome: true,
+    );
+
+    try {
+      final outcome = await _manager.bindSongVersion(
+        userId: userId,
+        ministryId: normalizedMinistry,
+        song: song,
+        requestedVersionId: requestedVersionId,
+        packageId: packageId,
+        songReadVerified: songReadVerified,
+        isOnline: isOnline ?? _onlineReader(),
+      );
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return outcome;
+      }
+
+      final reconciled = await _manager.reconcileSongVersionBindings(
+        userId: userId,
+        ministryId: normalizedMinistry,
+        song: song,
+      );
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return outcome;
+      }
+      final snapshot = await _manager.loadLibrary(userId: userId);
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return outcome;
+      }
+
+      state = state.copyWith(
+        isMutating: false,
+        bindings: reconciled,
+        availablePackages: snapshot.packages,
+        lastOutcome: outcome,
+      );
+      return outcome;
+    } on SafChannelException catch (ex) {
+      if (!_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        state = state.copyWith(isMutating: false, errorMessage: ex.message);
+      }
+      return RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Armazenamento indisponível',
+        message: ex.message,
+        errorCode: ex.code,
+      );
+    } catch (_) {
+      if (!_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        state = state.copyWith(
+          isMutating: false,
+          errorMessage: 'Não foi possível vincular o pacote local.',
+        );
+      }
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Falha ao vincular',
+        message: 'Não foi possível salvar o vínculo local.',
+        errorCode: 'BIND_FAILED',
+      );
+    } finally {
+      // A reload can supersede response generation while this mutation still
+      // owns busy. A newer mutation/context must never be cleared by this one.
+      if (mounted && identical(_activeMutation, mutation)) {
+        _activeMutation = null;
+        state = state.copyWith(isMutating: false);
+      }
+    }
+  }
+
+  /// Unbinds the local package from [canonicalVersionId] without deleting it.
+  Future<RehearsalOperationOutcome> unbindVersion({
+    required String ministryId,
+    required SongDetail song,
+    required String canonicalVersionId,
+  }) async {
+    final userId = _currentUserIdReader()?.trim() ?? '';
+    if (userId.isEmpty) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Sessão indisponível',
+        message: 'Faça login para desvincular áudios locais.',
+        errorCode: 'UNAUTHENTICATED',
+      );
+    }
+    if (state.isMutating) {
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Operação em andamento',
+        message: 'Aguarde a conclusão da operação atual.',
+        errorCode: 'OPERATION_IN_PROGRESS',
+      );
+    }
+
+    final normalizedMinistry = ministryId.trim();
+    final normalizedSongId = song.id.trim();
+    final gen = ++_opGeneration;
+    final mutation = Object();
+    _activeMutation = mutation;
+
+    state = state.copyWith(
+      isMutating: true,
+      boundUserId: userId,
+      ministryId: normalizedMinistry,
+      songId: normalizedSongId,
+      clearErrorMessage: true,
+      clearLastOutcome: true,
+    );
+
+    try {
+      final outcome = await _manager.unbindSongVersion(
+        userId: userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+        canonicalVersionId: canonicalVersionId,
+      );
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return outcome;
+      }
+
+      final reconciled = await _manager.reconcileSongVersionBindings(
+        userId: userId,
+        ministryId: normalizedMinistry,
+        song: song,
+      );
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return outcome;
+      }
+      final snapshot = await _manager.loadLibrary(userId: userId);
+      if (_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        return outcome;
+      }
+
+      state = state.copyWith(
+        isMutating: false,
+        bindings: reconciled,
+        availablePackages: snapshot.packages,
+        lastOutcome: outcome,
+      );
+      return outcome;
+    } catch (_) {
+      if (!_isStale(
+        gen,
+        userId,
+        ministryId: normalizedMinistry,
+        songId: normalizedSongId,
+      )) {
+        state = state.copyWith(
+          isMutating: false,
+          errorMessage: 'Não foi possível desvincular o pacote local.',
+        );
+      }
+      return const RehearsalOperationOutcome(
+        category: RehearsalUserOutcomeCategory.recoverableFailure,
+        title: 'Falha ao desvincular',
+        message: 'Não foi possível remover o vínculo local.',
+        errorCode: 'UNBIND_FAILED',
+      );
+    } finally {
+      // A reload can supersede response generation while this mutation still
+      // owns busy. A newer mutation/context must never be cleared by this one.
+      if (mounted && identical(_activeMutation, mutation)) {
+        _activeMutation = null;
+        state = state.copyWith(isMutating: false);
+      }
+    }
+  }
+
+  /// Clears all in-memory binding state on logout or user switch.
+  void reset() {
+    _opGeneration++;
+    _activeMutation = null;
+    if (mounted) {
+      state = const SongVersionAudioBindingsState();
+    }
+  }
+}
+
+/// StateNotifierProvider for account + ministry-scoped local audio bindings
+/// inside `SongDetailView`.
+final songVersionAudioBindingsNotifierProvider =
+    StateNotifierProvider<
+      SongVersionAudioBindingsNotifier,
+      SongVersionAudioBindingsState
+    >((ref) {
+      final manager = ref.watch(rehearsalPackageManagerProvider);
+      return SongVersionAudioBindingsNotifier(
+        manager: manager,
+        currentUserIdReader: () => ref.read(authNotifierProvider).user?.id,
+        onlineReader: () => ref.read(rehearsalOnlineCheckProvider),
       );
     });

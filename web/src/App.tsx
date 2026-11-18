@@ -9,7 +9,7 @@ import './styles/repertoire.css';
 import { FolderCard } from './components/FolderCard';
 import { ArtistCard } from './components/ArtistCard';
 import { FilterPopover } from './components/FilterPopover';
-import { SongDetail } from './components/SongDetail';
+import { SongDetail, type ScheduleSequenceContext } from './components/SongDetail';
 import { SongFormModal } from './components/SongFormModal';
 import { FolderDetail } from './components/FolderDetail';
 import { RoutedSmartChords } from './components/smart-chords/RoutedSmartChords';
@@ -25,7 +25,15 @@ import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleMo
 import { MinistryView } from './components/MinistryView';
 import { VocalExercisePlayer } from './components/VocalExercisePlayer';
 import { RehearsalPackageLibraryView } from './components/RehearsalPackageLibraryView';
-import { invalidateActiveRehearsalLibrarySession } from './audio/rehearsal-package-library';
+import { GlobalRehearsalAudioMiniPlayer } from './components/GlobalRehearsalAudioMiniPlayer';
+import {
+  getDefaultRehearsalPackageLibraryManager,
+  invalidateActiveRehearsalLibrarySession,
+} from './audio/rehearsal-package-library';
+import {
+  getDefaultGlobalRehearsalAudioSessionController,
+  type LoadedRehearsalMediaIdentity,
+} from './audio/song-version-audio-binding';
 import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
 import { PrivacyPolicyView } from './components/PrivacyPolicyView';
 import { AccountDeletionView } from './components/AccountDeletionView';
@@ -59,6 +67,13 @@ export default function App() {
   const navigate = useNavigate();
   const routeState = parseAppRoute(location.pathname, location.search);
   const mainModule = routeState.module;
+
+  const rehearsalManager = React.useMemo(() => getDefaultRehearsalPackageLibraryManager(), []);
+  const rehearsalSession = React.useMemo(() => getDefaultGlobalRehearsalAudioSessionController(), []);
+
+  useEffect(() => {
+    return rehearsalSession.attachToLibraryManager(rehearsalManager);
+  }, [rehearsalManager, rehearsalSession]);
 
   // Theme state (dark vs light)
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -187,6 +202,14 @@ export default function App() {
   const isLocalOnlyRouteRef = useRef<boolean>(false);
   isLocalOnlyRouteRef.current = Boolean(routeState.isRehearsalPackages || routeState.module === 'vocal');
   const searchTimeoutRef = useRef<number | null>(null);
+  const fetchedScheduleContextRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    rehearsalSession.syncSessionContext({
+      userId: currentUser?.id ?? null,
+      ministryId: activeGroup?.id ?? null,
+    });
+  }, [rehearsalSession, currentUser?.id, activeGroup?.id]);
 
   const clearDetailSelection = () => {
     setSelectedSong(null);
@@ -269,6 +292,20 @@ export default function App() {
     }
   }, [mainModule, activeTab, activeGroup, routeState.isRehearsalPackages]);
 
+  // Carregar escalas quando deep link de música traz ?fromSchedule=... e a escala ainda não está em memória
+  useEffect(() => {
+    if (!activeGroup || !routeState.fromScheduleId) {
+      fetchedScheduleContextRef.current = null;
+      return;
+    }
+    if (schedules.some((s) => s.id === routeState.fromScheduleId)) return;
+    const key = `${activeGroup.id}::${routeState.fromScheduleId}`;
+    if (loadingSchedules || fetchedScheduleContextRef.current === key) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    fetchedScheduleContextRef.current = key;
+    void loadSchedules();
+  }, [activeGroup, routeState.fromScheduleId, schedules, loadingSchedules]);
+
   const loadSubscription = async (minId: string) => {
     const reqId = ++subscriptionRequestRef.current;
     try {
@@ -348,6 +385,8 @@ export default function App() {
 
   const clearClientSession = () => {
     invalidateActiveRehearsalLibrarySession();
+    rehearsalSession.stop();
+    rehearsalSession.syncSessionContext({ userId: null, ministryId: null });
     ++authGenerationRef.current;
     ++groupsRequestRef.current;
     ++songRequestRef.current;
@@ -817,16 +856,34 @@ export default function App() {
 
   const handleSelectSong = async (
     song: Song,
-    context?: { versionId?: string; scheduleId?: string; fromScheduleId?: string }
+    context?: { versionId?: string; scheduleId?: string; fromScheduleId?: string; slotIndex?: number }
   ) => {
     if (!groupId || !song.id) return;
-    setDetailLoading(true);
-    setDetailError(null);
-    setSelectedSong(song);
+    const isSameSongRoute = routeState.songId === song.id && selectedSong?.id === song.id;
+    if (!isSameSongRoute) {
+      setDetailLoading(true);
+      setDetailError(null);
+      setSelectedSong(song);
+    }
     navigate(
       pathForSong(song.id, {
         versionId: context?.versionId || song.versionId,
         fromScheduleId: context?.fromScheduleId || context?.scheduleId,
+        slotIndex: context?.slotIndex,
+      })
+    );
+  };
+
+  const handleOpenLoadedRehearsalSong = (media: LoadedRehearsalMediaIdentity) => {
+    if (!groupId || media.ministryId !== groupId) return;
+    const isSameSongRoute = routeState.songId === media.songId && selectedSong?.id === media.songId;
+    if (!isSameSongRoute) {
+      setDetailLoading(true);
+      setDetailError(null);
+    }
+    navigate(
+      pathForSong(media.songId, {
+        versionId: media.canonicalVersionId,
       })
     );
   };
@@ -907,6 +964,61 @@ export default function App() {
       setDetailLoading(false);
     }
   }, [groupId, loadingSchedules, routeState.scheduleId, schedules]);
+
+  const scheduleSequence = React.useMemo<ScheduleSequenceContext | undefined>(() => {
+    if (!routeState.fromScheduleId || !selectedSong) return undefined;
+    const sourceSchedule = schedules.find((item) => item.id === routeState.fromScheduleId);
+    if (!sourceSchedule || !Array.isArray(sourceSchedule.songs) || sourceSchedule.songs.length === 0) {
+      return undefined;
+    }
+
+    const mapped = sourceSchedule.songs.map((item, idx) => {
+      const resolvedVersionId = item.versionId || (item as any).version_id || undefined;
+      const resolvedVersionName = item.versionName || (item as any).version_name || undefined;
+      return {
+        slotIndex: idx,
+        songId: item.id,
+        title: item.title,
+        versionId: resolvedVersionId,
+        versionName: resolvedVersionName,
+        rawSong: item,
+      };
+    });
+
+    let currentIndex = -1;
+    if (
+      routeState.scheduleSlot !== undefined &&
+      routeState.scheduleSlot >= 0 &&
+      routeState.scheduleSlot < mapped.length &&
+      mapped[routeState.scheduleSlot].songId === selectedSong.id
+    ) {
+      currentIndex = routeState.scheduleSlot;
+    } else if (routeState.songVersionId) {
+      currentIndex = mapped.findIndex(
+        (item) => item.songId === selectedSong.id && item.versionId === routeState.songVersionId
+      );
+    }
+    if (currentIndex < 0) {
+      currentIndex = mapped.findIndex((item) => item.songId === selectedSong.id);
+    }
+    if (currentIndex < 0) return undefined;
+
+    return {
+      scheduleId: sourceSchedule.id,
+      scheduleTitle: sourceSchedule.title,
+      currentIndex,
+      items: mapped.map(({ rawSong: _raw, ...rest }) => rest),
+      onSelectSlot: (targetSlotIndex: number) => {
+        const target = mapped[targetSlotIndex];
+        if (!target) return;
+        void handleSelectSong(target.rawSong, {
+          versionId: target.versionId,
+          fromScheduleId: sourceSchedule.id,
+          slotIndex: targetSlotIndex,
+        });
+      },
+    };
+  }, [routeState.fromScheduleId, routeState.scheduleSlot, routeState.songVersionId, schedules, selectedSong]);
 
   const activeFilterCount = Number(Boolean(filters.originalKey)) + Number(Boolean(filters.hasYoutube)) + Number(Boolean(filters.classificationId));
   const hasActiveFilters = activeFilterCount > 0;
@@ -1005,6 +1117,10 @@ export default function App() {
   if (routeState.module === 'vocal') {
     return (
       <>
+        <GlobalRehearsalAudioMiniPlayer
+          sessionController={rehearsalSession}
+          onOpenLoadedSong={handleOpenLoadedRehearsalSong}
+        />
         <VocalExercisePlayer />
         {toastContainer}
       </>
@@ -1014,9 +1130,14 @@ export default function App() {
   if (routeState.isRehearsalPackages) {
     return (
       <>
+        <GlobalRehearsalAudioMiniPlayer
+          sessionController={rehearsalSession}
+          onOpenLoadedSong={handleOpenLoadedRehearsalSong}
+        />
         <RehearsalPackageLibraryView
           currentUser={currentUser}
           onNavigateBack={() => navigate('/')}
+          manager={rehearsalManager}
           showToast={showToast}
         />
         {toastContainer}
@@ -1365,6 +1486,12 @@ export default function App() {
           />
         )}
 
+        {/* Global Rehearsal Mini-Player (persists across modules while session context matches) */}
+        <GlobalRehearsalAudioMiniPlayer
+          sessionController={rehearsalSession}
+          onOpenLoadedSong={handleOpenLoadedRehearsalSong}
+        />
+
         {/* View contents wrapper */}
         <div className="app-container" style={{ flex: 1, maxWidth: 'none', margin: 0 }}>
           {detailLoading && (routeState.songId || routeState.folderId || routeState.scheduleId) && (
@@ -1417,6 +1544,11 @@ export default function App() {
                 setSelectedSmartChordId(chordId);
                 setMainModule('cifrador');
               }}
+              scheduleSequence={scheduleSequence}
+              rehearsalManager={rehearsalManager}
+              rehearsalSession={rehearsalSession}
+              songReadVerified={true}
+              onNavigateToRehearsalPackages={() => navigate('/pacotes-ensaio')}
             />
           )}
 
@@ -1735,6 +1867,7 @@ export default function App() {
                       handleSelectSong(song, {
                         versionId: ctx?.versionId,
                         fromScheduleId: ctx?.scheduleId || selectedSchedule.id,
+                        slotIndex: ctx?.slotIndex,
                       })
                     }
                     onEdit={userRole === 'admin' ? () => {

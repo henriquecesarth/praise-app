@@ -141,6 +141,8 @@ class SongLink {
 @immutable
 class SongVersion {
   final String? id;
+  /// Local provenance, set only by the legacy adapter and never read from JSON.
+  final bool isLegacySynthetic;
   final String name;
   final Object? _classificationIds;
   final Object? _notes;
@@ -151,6 +153,7 @@ class SongVersion {
 
   const SongVersion({
     this.id,
+    this.isLegacySynthetic = false,
     required this.name,
     Object? classificationIds = songFieldOmitted,
     Object? notes = songFieldOmitted,
@@ -189,8 +192,8 @@ class SongVersion {
           : List<SongLink>.unmodifiable(_links as List);
 
   factory SongVersion.fromJson(Map<String, dynamic> json, {int index = 0}) {
-    final rawId = json['id']?.toString().trim();
-    final id = (rawId != null && rawId.isNotEmpty) ? rawId : 'v_${index + 1}';
+    final rawId = json['id'] is String ? (json['id'] as String).trim() : null;
+    final id = (rawId != null && rawId.isNotEmpty) ? rawId : null;
 
     final rawName = json['name']?.toString().trim();
     final name = (rawName != null && rawName.isNotEmpty)
@@ -317,6 +320,7 @@ class SongVersion {
   }) {
     return SongVersion(
       id: id is _SongFieldOmitted ? this.id : id as String?,
+      isLegacySynthetic: isLegacySynthetic && (id is _SongFieldOmitted || id == this.id),
       name: name ?? this.name,
       classificationIds: classificationIds is _SongFieldOmitted
           ? _classificationIds
@@ -335,6 +339,7 @@ class SongVersion {
       other is SongVersion &&
           runtimeType == other.runtimeType &&
           id == other.id &&
+          isLegacySynthetic == other.isLegacySynthetic &&
           name == other.name &&
           listEquals(classificationIds, other.classificationIds) &&
           notes == other.notes &&
@@ -346,6 +351,7 @@ class SongVersion {
   @override
   int get hashCode =>
       id.hashCode ^
+      isLegacySynthetic.hashCode ^
       name.hashCode ^
       Object.hashAll(classificationIds) ^
       notes.hashCode ^
@@ -451,6 +457,7 @@ class SongDetail {
 
     return SongVersion(
       id: id.trim().isNotEmpty ? '${id.trim()}_v1' : 'v1',
+      isLegacySynthetic: true,
       name: 'Original',
       classificationIds: classIds,
       notes: versionNotes,
@@ -543,6 +550,9 @@ class SongDetail {
             ),
           );
           idx++;
+        } else {
+          // Retain the invalid slot so it cannot become a legacy fallback.
+          parsedVersions.add(const SongVersion(name: ''));
         }
       }
       if (parsedVersions.isNotEmpty &&
@@ -614,6 +624,7 @@ class SongDetail {
       parsedVersions = [
         SongVersion(
           id: songId.trim().isNotEmpty ? '${songId.trim()}_v1' : 'v1',
+          isLegacySynthetic: true,
           name: 'Original',
           classificationIds: (legacyClassIds.isNotEmpty || hasRootClassificationKey)
               ? legacyClassIds

@@ -16,7 +16,8 @@ import {
  *
  * Security & retention invariants:
  * - Zero IndexedDB, zero localStorage, zero sessionStorage, zero network/upload calls,
- *   zero auto-playback, and zero SongVersion binding (`bindingStatus: 'unlinked'` only).
+ *   zero auto-playback. Package import stays `'unlinked'` until an explicit
+ *   SongVersion binding (`LocalSongVersionAudioBinding`) is persisted.
  * - `index.json` stores metadata only (zero audio bytes, zero Base64 blobs).
  * - Internal filenames on OPFS are derived strictly by `resolveInternalFileName(entry)`
  *   from `(entry.role, entry.stemId, entry.audioInfo.container)`, never from ZIP paths.
@@ -75,6 +76,77 @@ export interface LocalWebRehearsalStemMetadata {
   channels: number;
 }
 
+export type RehearsalAssetId = 'original' | 'stems_bundle_v1';
+
+export type LocalBindingValidityState =
+  | 'valid'
+  | 'version_removed'
+  | 'package_missing'
+  | 'package_replaced_incompatible'
+  | 'package_corrupted';
+
+export interface LocalSongVersionAudioBinding {
+  accountNamespaceHash: string;
+  ministryId: string;
+  songId: string;
+  canonicalVersionId: string;
+  packageId: string;
+  assetId: RehearsalAssetId;
+  songTitleSnapshot: string;
+  versionNameSnapshot: string;
+  versionKeySnapshot: string | null;
+  versionIsSynthetic: boolean;
+  packageTitleSnapshot: string;
+  packageRevision: number;
+  packageManifestSha256: string;
+  packageCompositeSha256: string;
+  assetSha256: string;
+  assetContainer: string;
+  assetCodec: string;
+  boundAt: string;
+  validityState: LocalBindingValidityState;
+  validityMessage?: string | null;
+  invalidatedAt?: string | null;
+}
+
+export type ResolveVerifiedBoundAssetResult =
+  | { status: 'not_bound' }
+  | {
+      status: 'invalid_binding';
+      validityState: Exclude<LocalBindingValidityState, 'valid'>;
+      message: string;
+      binding: LocalSongVersionAudioBinding;
+    }
+  | {
+      status: 'stems_only_requires_mixer';
+      message: string;
+      binding: LocalSongVersionAudioBinding;
+    }
+  | {
+      status: 'unsupported_codec';
+      message: string;
+      binding: LocalSongVersionAudioBinding;
+    }
+  | {
+      status: 'corrupted';
+      message: string;
+      binding: LocalSongVersionAudioBinding;
+    }
+  | {
+      status: 'ready';
+      file: File | Blob;
+      fileName: string;
+      binding: LocalSongVersionAudioBinding;
+      packageRecord: LocalWebRehearsalPackageRecord;
+      verifiedSha256: string;
+    };
+
+export interface PackageInvalidationEvent {
+  accountNamespaceHash: string;
+  packageId: string;
+  reason: 'deleted' | 'replaced_incompatible' | 'corrupted';
+}
+
 export interface LocalWebRehearsalPackageRecord {
   packageId: string;
   accountNamespaceHash: string;
@@ -103,7 +175,7 @@ export interface LocalWebRehearsalPackageRecord {
   original: LocalWebRehearsalStemMetadata | null;
   storageMode: RehearsalStorageMode;
   storageLocationLabel: string;
-  bindingStatus: 'unlinked';
+  bindingStatus: 'unlinked' | 'linked';
   usageRightsDeclaration: string;
   isReadyForLocalUse: boolean;
 }
@@ -293,6 +365,7 @@ interface RehearsalIndexFileV1 {
   accountNamespaceHash: string;
   updatedAt: string;
   packages: LocalWebRehearsalPackageRecord[];
+  bindings?: LocalSongVersionAudioBinding[];
 }
 
 interface RehearsalCommitFileEntry {
@@ -354,6 +427,7 @@ interface EphemeralPackageEntry {
 
 interface EphemeralAccountStore {
   packages: Map<string, EphemeralPackageEntry>;
+  bindings: LocalSongVersionAudioBinding[];
 }
 
 /**
@@ -366,7 +440,7 @@ export class EphemeralMemoryRehearsalStorageBackend {
   getOrCreateAccount(accountNamespaceHash: string): EphemeralAccountStore {
     let store = this.accounts.get(accountNamespaceHash);
     if (!store) {
-      store = { packages: new Map() };
+      store = { packages: new Map(), bindings: [] };
       this.accounts.set(accountNamespaceHash, store);
     }
     return store;
@@ -513,6 +587,37 @@ function clonePackageRecord(record: LocalWebRehearsalPackageRecord): LocalWebReh
   };
 }
 
+function cloneBinding(binding: LocalSongVersionAudioBinding): LocalSongVersionAudioBinding {
+  return { ...binding };
+}
+
+function applyBindingStatuses(
+  packages: readonly LocalWebRehearsalPackageRecord[],
+  bindings: readonly LocalSongVersionAudioBinding[],
+): LocalWebRehearsalPackageRecord[] {
+  const activeLinkedPackageIds = new Set(
+    bindings.filter((b) => b.validityState === 'valid').map((b) => b.packageId),
+  );
+  return packages.map((pkg) => {
+    const next = clonePackageRecord(pkg);
+    next.bindingStatus = activeLinkedPackageIds.has(next.packageId) ? 'linked' : 'unlinked';
+    return next;
+  });
+}
+
+function defaultInvalidBindingMessage(validityState: Exclude<LocalBindingValidityState, 'valid'>): string {
+  switch (validityState) {
+    case 'version_removed':
+      return 'A versão vinculada foi removida ou substituída na música.';
+    case 'package_missing':
+      return 'Pacote local ausente ou excluído da biblioteca desta conta.';
+    case 'package_replaced_incompatible':
+      return 'O pacote local foi substituído por uma versão incompatível com este vínculo.';
+    case 'package_corrupted':
+      return 'O pacote local vinculado está corrompido ou incompleto.';
+  }
+}
+
 function parseManifestForCrossCheck(manifestBytes: Uint8Array): ParsedManifestCrossCheck {
   if (manifestBytes.byteLength > LIMITS_V1.maxManifestBytes) {
     throw new Error(`manifest.json exceeded ${LIMITS_V1.maxManifestBytes} bytes.`);
@@ -579,15 +684,20 @@ async function readBlobAsText(blob: Blob): Promise<string> {
   return new TextDecoder('utf-8').decode(new Uint8Array(buf));
 }
 
-async function computeBlobSha256AndSize(blob: Blob): Promise<{ sha256: string; byteLength: number }> {
+async function computeBlobSha256AndSize(
+  blob: Blob,
+  beforeSliceCheck?: () => void,
+): Promise<{ sha256: string; byteLength: number }> {
   const hasher = new Sha256Hasher();
   let pos = 0;
   while (pos < blob.size) {
+    beforeSliceCheck?.();
     const slice = blob.slice(pos, Math.min(blob.size, pos + CHUNK_BYTES));
     const buf = new Uint8Array(await readBlobAsArrayBuffer(slice));
     hasher.update(buf);
     pos += buf.byteLength;
   }
+  beforeSliceCheck?.();
   return {
     sha256: hasher.digestHex(),
     byteLength: blob.size,
@@ -731,7 +841,8 @@ function isValidIndexFile(
     obj.schemaVersion === 1 &&
     obj.accountNamespaceHash === expectedAccountHash &&
     typeof obj.updatedAt === 'string' &&
-    Array.isArray(obj.packages)
+    Array.isArray(obj.packages) &&
+    (obj.bindings === undefined || Array.isArray(obj.bindings))
   );
 }
 
@@ -785,6 +896,7 @@ export class RehearsalPackageLibraryManager {
   private readonly _pendingConflicts = new Map<string, PendingConflict>();
   private readonly _activeAbortControllers = new Map<string, { accountHash: string; controller: AbortController }>();
   private readonly _ephemeralBackend = new EphemeralMemoryRehearsalStorageBackend();
+  private readonly _packageInvalidationListeners = new Set<(event: PackageInvalidationEvent) => void>();
 
   private _sessionGeneration = 1;
 
@@ -831,6 +943,27 @@ export class RehearsalPackageLibraryManager {
     this._pendingConflicts.clear();
     this._activeStagingTxIds.clear();
     this._ephemeralBackend.clearAll();
+  }
+
+  /**
+   * Registers a listener notified whenever a package is deleted, replaced
+   * incompatibly, or marked corrupted/incomplete during revalidation.
+   */
+  subscribePackageInvalidation(listener: (event: PackageInvalidationEvent) => void): () => void {
+    this._packageInvalidationListeners.add(listener);
+    return () => {
+      this._packageInvalidationListeners.delete(listener);
+    };
+  }
+
+  private _emitPackageInvalidation(event: PackageInvalidationEvent): void {
+    for (const listener of Array.from(this._packageInvalidationListeners)) {
+      try {
+        listener(event);
+      } catch {
+        // Isolate listener failures from storage operations
+      }
+    }
   }
 
   /**
@@ -1016,12 +1149,17 @@ export class RehearsalPackageLibraryManager {
     accountDir: OpfsDirectoryHandleLike,
     accountHash: string,
     packages: LocalWebRehearsalPackageRecord[],
+    bindings: readonly LocalSongVersionAudioBinding[] = [],
   ): Promise<void> {
+    const normalizedBindings = bindings
+      .filter((b) => b.accountNamespaceHash === accountHash)
+      .map(cloneBinding);
     const payload: RehearsalIndexFileV1 = {
       schemaVersion: 1,
       accountNamespaceHash: accountHash,
       updatedAt: this._now().toISOString(),
-      packages: packages.map(clonePackageRecord),
+      packages: applyBindingStatuses(packages, normalizedBindings),
+      bindings: normalizedBindings,
     };
     const encoded = new TextEncoder().encode(JSON.stringify(payload, null, 2));
     await this._writeBytesToOpfsFile(
@@ -1049,9 +1187,19 @@ export class RehearsalPackageLibraryManager {
 
     let resolved: RehearsalIndexFileV1 | null = null;
     if (mainRead.exists && isValidIndexFile(mainRead.data, accountHash)) {
-      resolved = mainRead.data;
+      resolved = {
+        ...mainRead.data,
+        bindings: Array.isArray(mainRead.data.bindings)
+          ? mainRead.data.bindings.map(cloneBinding)
+          : [],
+      };
     } else if (tmpRead.exists && isValidIndexFile(tmpRead.data, accountHash)) {
-      resolved = tmpRead.data;
+      resolved = {
+        ...tmpRead.data,
+        bindings: Array.isArray(tmpRead.data.bindings)
+          ? tmpRead.data.bindings.map(cloneBinding)
+          : [],
+      };
       const encoded = new TextEncoder().encode(JSON.stringify(resolved, null, 2));
       await this._writeBytesToOpfsFile(
         { stage: 'index', fileName: INDEX_FILE_NAME },
@@ -1072,9 +1220,10 @@ export class RehearsalPackageLibraryManager {
         accountNamespaceHash: accountHash,
         updatedAt: this._now().toISOString(),
         packages: [],
+        bindings: [],
       };
       if (!mainRead.exists || mainRead.invalidJson) {
-        await this._writeIndexAtomic(accountDir, accountHash, resolved.packages);
+        await this._writeIndexAtomic(accountDir, accountHash, resolved.packages, resolved.bindings);
       }
     }
 
@@ -1109,7 +1258,6 @@ export class RehearsalPackageLibraryManager {
   ): Promise<{ record: LocalWebRehearsalPackageRecord; changed: boolean }> {
     const next = clonePackageRecord(record);
     next.storageMode = 'opfs';
-    next.bindingStatus = 'unlinked';
 
     try {
       const pkgDir = await tryGetDirectoryHandle(packagesDir, record.packageId);
@@ -1272,6 +1420,58 @@ export class RehearsalPackageLibraryManager {
     await removeEntryIfExists(backupsDir, backupDirName, true);
   }
 
+  private _reconcileBindingsForPackages(
+    bindings: readonly LocalSongVersionAudioBinding[],
+    packages: readonly LocalWebRehearsalPackageRecord[],
+    nowIso: string,
+  ): { bindings: LocalSongVersionAudioBinding[]; changed: boolean; corruptedPackageIds: string[] } {
+    const pkgById = new Map(packages.map((p) => [p.packageId, p] as const));
+    let changed = false;
+    const corruptedPackageIds: string[] = [];
+
+    const nextBindings = bindings.map((b) => {
+      const pkg = pkgById.get(b.packageId);
+      if (!pkg) {
+        return cloneBinding(b);
+      }
+      if (pkg.integrityState !== 'verified' || !pkg.isReadyForLocalUse) {
+        if (b.validityState === 'valid') {
+          changed = true;
+          corruptedPackageIds.push(pkg.packageId);
+          return {
+            ...b,
+            validityState: 'package_corrupted' as const,
+            validityMessage: pkg.integrityMessage ?? 'Pacote local corrompido ou incompleto.',
+            invalidatedAt: nowIso,
+          };
+        }
+        return cloneBinding(b);
+      }
+
+      if (b.validityState === 'package_corrupted') {
+        const assetMatches =
+          b.assetId === 'stems_bundle_v1' ||
+          (pkg.original !== null && pkg.original.sha256 === b.assetSha256);
+        if (
+          pkg.compositeSha256 === b.packageCompositeSha256 &&
+          pkg.manifestSha256 === b.packageManifestSha256 &&
+          assetMatches
+        ) {
+          changed = true;
+          return {
+            ...b,
+            validityState: 'valid' as const,
+            validityMessage: null,
+            invalidatedAt: null,
+          };
+        }
+      }
+      return cloneBinding(b);
+    });
+
+    return { bindings: nextBindings, changed, corruptedPackageIds };
+  }
+
   /**
    * Loads the library for a given user account, performing crash/reload recovery
    * and reconciling indexed packages against disk state.
@@ -1286,9 +1486,10 @@ export class RehearsalPackageLibraryManager {
       return this._enqueueAccountMutation(accountHash, async () => {
         this._assertNotStaleOrAborted(sessionGen, userId);
         const store = this._ephemeralBackend.getOrCreateAccount(accountHash);
-        const packages = Array.from(store.packages.values()).map((entry) =>
+        const rawPackages = Array.from(store.packages.values()).map((entry) =>
           clonePackageRecord(entry.record),
         );
+        const packages = applyBindingStatuses(rawPackages, store.bindings);
         const occupied = packages.reduce((sum, p) => sum + p.totalOccupiedBytes, 0);
         const storageSummary = await this._queryQuota(
           occupied,
@@ -1400,18 +1601,39 @@ export class RehearsalPackageLibraryManager {
 
       // 4. Reconcile all indexed packages against disk
       let indexChanged = false;
-      const reconciledPackages: LocalWebRehearsalPackageRecord[] = [];
+      const reconciledPackagesRaw: LocalWebRehearsalPackageRecord[] = [];
       for (const pkg of index.packages) {
         const res = await this._reconcileOpfsPackageMetadata(packagesDir, accountHash, pkg);
         if (res.changed) {
           indexChanged = true;
         }
-        reconciledPackages.push(res.record);
+        reconciledPackagesRaw.push(res.record);
+      }
+
+      const bindingRec = this._reconcileBindingsForPackages(
+        index.bindings ?? [],
+        reconciledPackagesRaw,
+        this._now().toISOString(),
+      );
+      if (bindingRec.changed) {
+        indexChanged = true;
+      }
+      const reconciledPackages = applyBindingStatuses(reconciledPackagesRaw, bindingRec.bindings);
+      for (let i = 0; i < reconciledPackages.length; i++) {
+        if (reconciledPackages[i].bindingStatus !== reconciledPackagesRaw[i].bindingStatus) {
+          indexChanged = true;
+          break;
+        }
       }
 
       if (indexChanged) {
         this._assertNotStaleOrAborted(sessionGen, userId);
-        await this._writeIndexAtomic(accountDir, accountHash, reconciledPackages);
+        await this._writeIndexAtomic(
+          accountDir,
+          accountHash,
+          reconciledPackages,
+          bindingRec.bindings,
+        );
       }
 
       const occupied = reconciledPackages.reduce((sum, p) => sum + p.totalOccupiedBytes, 0);
@@ -2408,7 +2630,12 @@ export class RehearsalPackageLibraryManager {
           });
 
           const updatedPackages = [...index.packages, clonePackageRecord(newRecord)];
-          await this._writeIndexAtomic(accountDir, accountHash, updatedPackages);
+          await this._writeIndexAtomic(
+            accountDir,
+            accountHash,
+            updatedPackages,
+            index.bindings ?? [],
+          );
         } catch (commitErr) {
           try {
             await removeEntryIfExists(packagesDir, newRecord.packageId, true);
@@ -2440,6 +2667,46 @@ export class RehearsalPackageLibraryManager {
         }
       }
     }
+  }
+
+  private _reconcileBindingsOnReplace(
+    bindings: readonly LocalSongVersionAudioBinding[],
+    packageId: string,
+    existingComposite: string,
+    updatedRecord: LocalWebRehearsalPackageRecord,
+    nowIso: string,
+  ): { bindings: LocalSongVersionAudioBinding[]; anyIncompatible: boolean } {
+    const compositeMismatch = updatedRecord.compositeSha256 !== existingComposite;
+    let anyIncompatible = compositeMismatch;
+
+    const nextBindings = bindings.map((b) => {
+      if (b.packageId !== packageId) {
+        return cloneBinding(b);
+      }
+      if (b.validityState === 'version_removed') {
+        return cloneBinding(b);
+      }
+      const originalMismatch =
+        b.assetId === 'original' &&
+        (!updatedRecord.original || updatedRecord.original.sha256 !== b.assetSha256);
+      if (compositeMismatch || originalMismatch) {
+        anyIncompatible = true;
+        return {
+          ...b,
+          validityState: 'package_replaced_incompatible' as const,
+          validityMessage:
+            'O pacote local foi substituído por uma revisão ou conteúdo incompatível com este vínculo.',
+          invalidatedAt: nowIso,
+        };
+      }
+      return {
+        ...b,
+        packageTitleSnapshot: updatedRecord.displayName,
+        packageRevision: updatedRecord.revision,
+      };
+    });
+
+    return { bindings: nextBindings, anyIncompatible };
   }
 
   /**
@@ -2506,17 +2773,36 @@ export class RehearsalPackageLibraryManager {
         return await this._enqueueAccountMutation(accountHash, async () => {
           this._assertNotStaleOrAborted(sessionGen, userId, abortController.signal);
           const store = this._ephemeralBackend.getOrCreateAccount(accountHash);
+          const existingComposite =
+            store.packages.get(updatedRecord.packageId)?.record.compositeSha256 ??
+            pending.existingRecord.compositeSha256;
+          const replaced = this._reconcileBindingsOnReplace(
+            store.bindings,
+            updatedRecord.packageId,
+            existingComposite,
+            updatedRecord,
+            this._now().toISOString(),
+          );
+          store.bindings = replaced.bindings;
+          const [withStatus] = applyBindingStatuses([updatedRecord], store.bindings);
           store.packages.set(updatedRecord.packageId, {
-            record: clonePackageRecord(updatedRecord),
+            record: clonePackageRecord(withStatus),
             sourceFile: pending.ephemeralSourceFile!,
             externalHandle: pending.ephemeralExternalHandle,
           });
           this._pendingConflicts.delete(txId);
+          if (replaced.anyIncompatible) {
+            this._emitPackageInvalidation({
+              accountNamespaceHash: accountHash,
+              packageId: updatedRecord.packageId,
+              reason: 'replaced_incompatible',
+            });
+          }
           return {
             category: 'imported',
             title: 'Pacote substituído na sessão',
-            message: `Pacote "${updatedRecord.displayName}" atualizado na sessão temporária.`,
-            record: clonePackageRecord(updatedRecord),
+            message: `Pacote "${withStatus.displayName}" atualizado na sessão temporária.`,
+            record: clonePackageRecord(withStatus),
           };
         });
       }
@@ -2652,6 +2938,11 @@ export class RehearsalPackageLibraryManager {
         }
 
         // Step 2: Overwrite packages/<packageId> with v2 & rollback if any write fails
+        let replacedBindingsResult: {
+          bindings: LocalSongVersionAudioBinding[];
+          anyIncompatible: boolean;
+        } = { bindings: index.bindings ?? [], anyIncompatible: false };
+        let finalV2Record = v2Record;
         try {
           await this._commitStagedToPackageDir({
             txStagingDir,
@@ -2666,10 +2957,28 @@ export class RehearsalPackageLibraryManager {
             clearExistingFirst: true,
           });
 
-          const updatedPackages = index.packages.map((p) =>
+          replacedBindingsResult = this._reconcileBindingsOnReplace(
+            index.bindings ?? [],
+            pending.packageId,
+            currentRecord.compositeSha256,
+            v2Record,
+            this._now().toISOString(),
+          );
+          const updatedPackagesRaw = index.packages.map((p) =>
             p.packageId === pending.packageId ? clonePackageRecord(v2Record) : p,
           );
-          await this._writeIndexAtomic(accountDir, accountHash, updatedPackages);
+          const updatedPackages = applyBindingStatuses(
+            updatedPackagesRaw,
+            replacedBindingsResult.bindings,
+          );
+          finalV2Record =
+            updatedPackages.find((p) => p.packageId === pending.packageId) ?? v2Record;
+          await this._writeIndexAtomic(
+            accountDir,
+            accountHash,
+            updatedPackages,
+            replacedBindingsResult.bindings,
+          );
         } catch (replaceErr) {
           if (backupWritten) {
             try {
@@ -2693,12 +3002,19 @@ export class RehearsalPackageLibraryManager {
         await removeEntryIfExists(stagingDir, txId, true);
         this._pendingConflicts.delete(txId);
         this._activeStagingTxIds.delete(txId);
+        if (replacedBindingsResult.anyIncompatible) {
+          this._emitPackageInvalidation({
+            accountNamespaceHash: accountHash,
+            packageId: pending.packageId,
+            reason: 'replaced_incompatible',
+          });
+        }
 
         return {
           category: 'imported',
           title: 'Pacote substituído com sucesso',
-          message: `Pacote "${v2Record.displayName}" atualizado para revisão ${v2Record.revision}.`,
-          record: clonePackageRecord(v2Record),
+          message: `Pacote "${finalV2Record.displayName}" atualizado para revisão ${finalV2Record.revision}.`,
+          record: clonePackageRecord(finalV2Record),
         };
       });
     } catch (err) {
@@ -3058,7 +3374,21 @@ export class RehearsalPackageLibraryManager {
           entry.record.lastValidatedAt = nowIso;
           entry.record.isReadyForLocalUse = check.ok;
 
+          const bindingRec = this._reconcileBindingsForPackages(
+            store.bindings,
+            [entry.record],
+            nowIso,
+          );
+          store.bindings = bindingRec.bindings;
+          const [updatedEntryRecord] = applyBindingStatuses([entry.record], store.bindings);
+          entry.record = updatedEntryRecord;
+
           if (!check.ok) {
+            this._emitPackageInvalidation({
+              accountNamespaceHash: accountHash,
+              packageId: options.packageId,
+              reason: 'corrupted',
+            });
             return {
               category:
                 check.integrityState === 'permissionDenied' ? 'permissionDenied' : 'corrupted',
@@ -3120,19 +3450,36 @@ export class RehearsalPackageLibraryManager {
         targetRecord.lastValidatedAt = nowIso;
         targetRecord.isReadyForLocalUse = check.ok;
 
-        const updatedPackages = index.packages.map((p, idx) =>
+        const bindingRec = this._reconcileBindingsForPackages(
+          index.bindings ?? [],
+          [targetRecord],
+          nowIso,
+        );
+        const updatedPackagesRaw = index.packages.map((p, idx) =>
           idx === existingIdx ? targetRecord : p,
         );
-        await this._writeIndexAtomic(accountDir, accountHash, updatedPackages);
+        const updatedPackages = applyBindingStatuses(updatedPackagesRaw, bindingRec.bindings);
+        const finalTargetRecord = updatedPackages[existingIdx];
+        await this._writeIndexAtomic(
+          accountDir,
+          accountHash,
+          updatedPackages,
+          bindingRec.bindings,
+        );
 
         if (!check.ok) {
+          this._emitPackageInvalidation({
+            accountNamespaceHash: accountHash,
+            packageId: options.packageId,
+            reason: 'corrupted',
+          });
           return {
             category:
               check.integrityState === 'permissionDenied' ? 'permissionDenied' : 'corrupted',
             title: 'Integridade comprometida',
             message: check.integrityMessage ?? 'Falha na verificação de integridade.',
             errorCode: check.integrityCode ?? undefined,
-            record: clonePackageRecord(targetRecord),
+            record: clonePackageRecord(finalTargetRecord),
           };
         }
 
@@ -3140,7 +3487,7 @@ export class RehearsalPackageLibraryManager {
           category: 'revalidated',
           title: 'Pacote revalidado',
           message: 'Todos os arquivos e hashes SHA-256 do pacote estão íntegros.',
-          record: clonePackageRecord(targetRecord),
+          record: clonePackageRecord(finalTargetRecord),
         };
       });
     } catch (err) {
@@ -3211,15 +3558,22 @@ export class RehearsalPackageLibraryManager {
         updated.customLabel = validated.label;
         updated.displayName = validated.label;
 
-        const updatedPackages = index.packages.map((p, i) => (i === idx ? updated : p));
+        const updatedPackagesRaw = index.packages.map((p, i) => (i === idx ? updated : p));
+        const updatedPackages = applyBindingStatuses(updatedPackagesRaw, index.bindings ?? []);
+        const finalUpdated = updatedPackages[idx];
         this._assertNotStaleOrAborted(sessionGen, userId);
-        await this._writeIndexAtomic(accountDir, accountHash, updatedPackages);
+        await this._writeIndexAtomic(
+          accountDir,
+          accountHash,
+          updatedPackages,
+          index.bindings ?? [],
+        );
 
         return {
           category: 'renamed',
           title: 'Rótulo atualizado',
           message: `Rótulo local alterado para "${validated.label}".`,
-          record: clonePackageRecord(updated),
+          record: clonePackageRecord(finalUpdated),
         };
       });
     } catch (err) {
@@ -3341,22 +3695,39 @@ export class RehearsalPackageLibraryManager {
           current.lastValidatedAt = nowIso;
           current.isReadyForLocalUse = check.ok;
 
-          const updatedPackages = index.packages.map((p, i) => (i === idx ? current : p));
-          await this._writeIndexAtomic(accountDir, accountHash, updatedPackages);
+          const bindingRec = this._reconcileBindingsForPackages(
+            index.bindings ?? [],
+            [current],
+            nowIso,
+          );
+          const updatedPackagesRaw = index.packages.map((p, i) => (i === idx ? current : p));
+          const updatedPackages = applyBindingStatuses(updatedPackagesRaw, bindingRec.bindings);
+          const finalCurrent = updatedPackages[idx];
+          await this._writeIndexAtomic(
+            accountDir,
+            accountHash,
+            updatedPackages,
+            bindingRec.bindings,
+          );
 
           if (!check.ok || !check.zipFile) {
+            this._emitPackageInvalidation({
+              accountNamespaceHash: accountHash,
+              packageId: options.packageId,
+              reason: 'corrupted',
+            });
             return {
               category:
                 check.integrityState === 'permissionDenied' ? 'permissionDenied' : 'corrupted',
               title: 'Exportação bloqueada',
               message: check.integrityMessage ?? 'Integridade do pacote comprometida.',
               errorCode: check.integrityCode ?? undefined,
-              record: clonePackageRecord(current),
+              record: clonePackageRecord(finalCurrent),
             };
           }
 
           sourceBlob = check.zipFile;
-          record = clonePackageRecord(current);
+          record = clonePackageRecord(finalCurrent);
         }
 
         const exportedFileName = sanitizeExportFileName(record.displayName, record.packageId);
@@ -3428,6 +3799,24 @@ export class RehearsalPackageLibraryManager {
     }
   }
 
+  private _markBindingsPackageMissing(
+    bindings: readonly LocalSongVersionAudioBinding[],
+    packageId: string,
+    nowIso: string,
+  ): LocalSongVersionAudioBinding[] {
+    return bindings.map((b) => {
+      if (b.packageId !== packageId) {
+        return cloneBinding(b);
+      }
+      return {
+        ...b,
+        validityState: 'package_missing' as const,
+        validityMessage: 'Pacote local ausente ou excluído da biblioteca desta conta.',
+        invalidatedAt: nowIso,
+      };
+    });
+  }
+
   /**
    * Deletes a package from the user's account scope only when `confirmedScope === true`.
    */
@@ -3449,6 +3838,7 @@ export class RehearsalPackageLibraryManager {
       const backend = await this._resolveBackend();
       return await this._enqueueAccountMutation(accountHash, async () => {
         this._assertNotStaleOrAborted(sessionGen, userId);
+        const nowIso = this._now().toISOString();
 
         if (backend.mode === 'ephemeral-fallback') {
           const store = this._ephemeralBackend.getOrCreateAccount(accountHash);
@@ -3463,6 +3853,16 @@ export class RehearsalPackageLibraryManager {
           }
           const removed = clonePackageRecord(entry.record);
           store.packages.delete(options.packageId);
+          store.bindings = this._markBindingsPackageMissing(
+            store.bindings,
+            options.packageId,
+            nowIso,
+          );
+          this._emitPackageInvalidation({
+            accountNamespaceHash: accountHash,
+            packageId: options.packageId,
+            reason: 'deleted',
+          });
           return {
             category: 'deleted',
             title: 'Pacote excluído',
@@ -3487,9 +3887,19 @@ export class RehearsalPackageLibraryManager {
         }
 
         const updatedPackages = index.packages.filter((p) => p.packageId !== options.packageId);
-        await this._writeIndexAtomic(accountDir, accountHash, updatedPackages);
+        const updatedBindings = this._markBindingsPackageMissing(
+          index.bindings ?? [],
+          options.packageId,
+          nowIso,
+        );
+        await this._writeIndexAtomic(accountDir, accountHash, updatedPackages, updatedBindings);
         await removeEntryIfExists(packagesDir, options.packageId, true);
         await removeEntryIfExists(backupsDir, `${options.packageId}.backup`, true);
+        this._emitPackageInvalidation({
+          accountNamespaceHash: accountHash,
+          packageId: options.packageId,
+          reason: 'deleted',
+        });
 
         return {
           category: 'deleted',
@@ -3501,6 +3911,444 @@ export class RehearsalPackageLibraryManager {
     } catch (err) {
       return this._mapCaughtErrorOutcome(err, 'Falha ao excluir pacote');
     }
+  }
+
+  /**
+   * Lists persisted local SongVersion audio bindings partitioned strictly by `userId`.
+   */
+  async listBindings(options: {
+    userId: string;
+    ministryId?: string;
+    songId?: string;
+  }): Promise<LocalSongVersionAudioBinding[]> {
+    const userId = assertNonEmptyUserId(options.userId);
+    const sessionGen = this._sessionGeneration;
+    const accountHash = RehearsalPackageLibraryManager.computeAccountNamespaceHash(userId);
+    const backend = await this._resolveBackend();
+
+    return this._enqueueAccountMutation(accountHash, async () => {
+      this._assertNotStaleOrAborted(sessionGen, userId);
+
+      let bindings: LocalSongVersionAudioBinding[];
+      if (backend.mode === 'ephemeral-fallback') {
+        const store = this._ephemeralBackend.getOrCreateAccount(accountHash);
+        bindings = store.bindings.map(cloneBinding);
+      } else {
+        const { accountDir } = await this._getAccountRootDirs(backend.opfsRoot, accountHash);
+        const { index } = await this._readOrInitIndex(accountDir, accountHash);
+        bindings = (index.bindings ?? []).map(cloneBinding);
+      }
+
+      return bindings.filter((b) => {
+        if (b.accountNamespaceHash !== accountHash) return false;
+        if (options.ministryId !== undefined && b.ministryId !== options.ministryId) return false;
+        if (options.songId !== undefined && b.songId !== options.songId) return false;
+        return true;
+      });
+    });
+  }
+
+  /**
+   * Runs an atomic, account-serialized metadata mutation over `bindings` and updates
+   * `packageRecord.bindingStatus` (`'linked' | 'unlinked'`) consistently.
+   */
+  async saveBindingsMutation<T>(
+    options: { userId: string },
+    mutator: (
+      currentBindings: LocalSongVersionAudioBinding[],
+      packages: LocalWebRehearsalPackageRecord[],
+    ) => {
+      bindings: LocalSongVersionAudioBinding[];
+      changed: boolean;
+      result: T;
+    },
+  ): Promise<T> {
+    const userId = assertNonEmptyUserId(options.userId);
+    const sessionGen = this._sessionGeneration;
+    const accountHash = RehearsalPackageLibraryManager.computeAccountNamespaceHash(userId);
+    const backend = await this._resolveBackend();
+
+    return this._enqueueAccountMutation(accountHash, async () => {
+      this._assertNotStaleOrAborted(sessionGen, userId);
+
+      if (backend.mode === 'ephemeral-fallback') {
+        const store = this._ephemeralBackend.getOrCreateAccount(accountHash);
+        const currentBindings = store.bindings.map(cloneBinding);
+        const currentPackages = applyBindingStatuses(
+          Array.from(store.packages.values()).map((e) => e.record),
+          currentBindings,
+        );
+        const mutated = mutator(currentBindings, currentPackages);
+        this._assertNotStaleOrAborted(sessionGen, userId);
+
+        if (mutated.changed) {
+          const sanitizedBindings = mutated.bindings
+            .filter((b) => b.accountNamespaceHash === accountHash)
+            .map(cloneBinding);
+          store.bindings = sanitizedBindings;
+          const updatedPackages = applyBindingStatuses(currentPackages, sanitizedBindings);
+          for (const pkg of updatedPackages) {
+            const existingEntry = store.packages.get(pkg.packageId);
+            if (existingEntry) {
+              existingEntry.record = clonePackageRecord(pkg);
+            }
+          }
+        }
+        return mutated.result;
+      }
+
+      const { accountDir } = await this._getAccountRootDirs(backend.opfsRoot, accountHash);
+      const { index } = await this._readOrInitIndex(accountDir, accountHash);
+      const currentBindings = (index.bindings ?? []).map(cloneBinding);
+      const currentPackages = applyBindingStatuses(index.packages, currentBindings);
+      const mutated = mutator(currentBindings, currentPackages);
+
+      this._assertNotStaleOrAborted(sessionGen, userId);
+      if (mutated.changed) {
+        const sanitizedBindings = mutated.bindings
+          .filter((b) => b.accountNamespaceHash === accountHash)
+          .map(cloneBinding);
+        const updatedPackages = applyBindingStatuses(currentPackages, sanitizedBindings);
+        await this._writeIndexAtomic(accountDir, accountHash, updatedPackages, sanitizedBindings);
+      }
+
+      return mutated.result;
+    });
+  }
+
+  /**
+   * Resolves and cryptographically verifies the bound local audio asset for a canonical SongVersion.
+   * Never accepts caller-supplied filesystem paths; derives all locations from `(accountHash, packageId)`.
+   */
+  async resolveVerifiedBoundAsset(options: {
+    userId: string;
+    ministryId: string;
+    songId: string;
+    canonicalVersionId: string;
+    signal?: AbortSignal;
+  }): Promise<ResolveVerifiedBoundAssetResult> {
+    const userId = assertNonEmptyUserId(options.userId);
+    const sessionGen = this._sessionGeneration;
+    const accountHash = RehearsalPackageLibraryManager.computeAccountNamespaceHash(userId);
+    this._assertNotStaleOrAborted(sessionGen, userId, options.signal);
+
+    const ministryId = typeof options.ministryId === 'string' ? options.ministryId.trim() : '';
+    const songId = typeof options.songId === 'string' ? options.songId.trim() : '';
+    const canonicalVersionId =
+      typeof options.canonicalVersionId === 'string' ? options.canonicalVersionId.trim() : '';
+    if (!ministryId || !songId || !canonicalVersionId) {
+      return { status: 'not_bound' };
+    }
+
+    const backend = await this._resolveBackend();
+    return this._enqueueAccountMutation(accountHash, async () => {
+      this._assertNotStaleOrAborted(sessionGen, userId, options.signal);
+
+      let bindings: LocalSongVersionAudioBinding[];
+      let packages: LocalWebRehearsalPackageRecord[];
+      let opfsPackagesDir: OpfsDirectoryHandleLike | null = null;
+      let ephemeralStore: EphemeralAccountStore | null = null;
+
+      if (backend.mode === 'ephemeral-fallback') {
+        ephemeralStore = this._ephemeralBackend.getOrCreateAccount(accountHash);
+        bindings = ephemeralStore.bindings.map(cloneBinding);
+        packages = applyBindingStatuses(
+          Array.from(ephemeralStore.packages.values()).map((e) => e.record),
+          bindings,
+        );
+      } else {
+        const { accountDir, packagesDir } = await this._getAccountRootDirs(
+          backend.opfsRoot,
+          accountHash,
+        );
+        opfsPackagesDir = packagesDir;
+        const { index } = await this._readOrInitIndex(accountDir, accountHash);
+        bindings = (index.bindings ?? []).map(cloneBinding);
+        packages = applyBindingStatuses(index.packages, bindings);
+      }
+
+      const binding = bindings.find(
+        (b) =>
+          b.accountNamespaceHash === accountHash &&
+          b.ministryId === ministryId &&
+          b.songId === songId &&
+          b.canonicalVersionId === canonicalVersionId,
+      );
+      if (!binding) {
+        return { status: 'not_bound' };
+      }
+
+      if (binding.validityState !== 'valid') {
+        return {
+          status: 'invalid_binding',
+          validityState: binding.validityState,
+          message: binding.validityMessage || defaultInvalidBindingMessage(binding.validityState),
+          binding: cloneBinding(binding),
+        };
+      }
+
+      if (binding.assetId === 'stems_bundle_v1') {
+        return {
+          status: 'stems_only_requires_mixer',
+          message:
+            'Este pacote contém apenas stems separados e requer o mixer multi-faixa para reprodução.',
+          binding: cloneBinding(binding),
+        };
+      }
+
+      if (binding.assetContainer.toLowerCase() !== 'wav') {
+        return {
+          status: 'unsupported_codec',
+          message: `Formato de áudio (${binding.assetContainer}) não homologado para reprodução local no navegador; apenas WAV PCM16 é suportado.`,
+          binding: cloneBinding(binding),
+        };
+      }
+
+      const pkg = packages.find(
+        (p) => p.packageId === binding.packageId && p.accountNamespaceHash === accountHash,
+      );
+      if (!pkg) {
+        return {
+          status: 'corrupted',
+          message: 'Registro do pacote local não encontrado na biblioteca desta conta.',
+          binding: cloneBinding(binding),
+        };
+      }
+
+      if (
+        pkg.integrityState !== 'verified' ||
+        !pkg.isReadyForLocalUse ||
+        pkg.compositeSha256 !== binding.packageCompositeSha256 ||
+        pkg.manifestSha256 !== binding.packageManifestSha256 ||
+        !pkg.original
+      ) {
+        return {
+          status: 'corrupted',
+          message: pkg.integrityMessage ?? 'Metadados ou integridade do pacote local inválidos.',
+          binding: cloneBinding(binding),
+        };
+      }
+
+      if (pkg.original.container.toLowerCase() !== 'wav') {
+        return {
+          status: 'unsupported_codec',
+          message: `Formato de áudio (${pkg.original.container}) não homologado para reprodução local no navegador; apenas WAV PCM16 é suportado.`,
+          binding: cloneBinding(binding),
+        };
+      }
+
+      if (pkg.original.sha256 !== binding.assetSha256) {
+        return {
+          status: 'corrupted',
+          message: 'Hash SHA-256 da faixa original no pacote diverge do vínculo salvo.',
+          binding: cloneBinding(binding),
+        };
+      }
+
+      // Ephemeral backend: extract only `original` in bounded <= 64 KiB chunks without keeping stems in RAM
+      if (ephemeralStore) {
+        const entry = ephemeralStore.packages.get(pkg.packageId);
+        if (!entry) {
+          return {
+            status: 'corrupted',
+            message: 'Arquivo do pacote ausente na sessão temporária.',
+            binding: cloneBinding(binding),
+          };
+        }
+
+        let currentFile: File | Blob = entry.sourceFile;
+        if (entry.externalHandle) {
+          try {
+            if (entry.externalHandle.queryPermission) {
+              const perm = await entry.externalHandle.queryPermission({ mode: 'read' });
+              if (perm === 'denied') {
+                return {
+                  status: 'corrupted',
+                  message: 'Permissão de leitura revogada para o arquivo externo.',
+                  binding: cloneBinding(binding),
+                };
+              }
+              if (perm === 'prompt' && entry.externalHandle.requestPermission) {
+                const req = await entry.externalHandle.requestPermission({ mode: 'read' });
+                if (req !== 'granted') {
+                  return {
+                    status: 'corrupted',
+                    message: 'Permissão de leitura não concedida para o arquivo externo.',
+                    binding: cloneBinding(binding),
+                  };
+                }
+              }
+            }
+            currentFile = await entry.externalHandle.getFile();
+            entry.sourceFile = currentFile;
+          } catch {
+            return {
+              status: 'corrupted',
+              message: 'Não foi possível ler o arquivo externo na sessão temporária.',
+              binding: cloneBinding(binding),
+            };
+          }
+        }
+
+        const originalChunks: Uint8Array[] = [];
+        let collectedBytes = 0;
+        const maxOriginalBytes = pkg.original.byteLength;
+
+        const extractionResult = await validateAndExtractRehearsalPackage(currentFile, {
+          signal: options.signal,
+          includeSourceCopy: false,
+          maxChunkBytes: CHUNK_BYTES,
+          openTargetSink: async (zipEntry) => {
+            this._assertNotStaleOrAborted(sessionGen, userId, options.signal);
+            if (zipEntry.role === 'original') {
+              return {
+                async write(chunk) {
+                  if (collectedBytes + chunk.byteLength > maxOriginalBytes) {
+                    throw new Error('Original entry exceeded expected byte length.');
+                  }
+                  originalChunks.push(new Uint8Array(chunk));
+                  collectedBytes += chunk.byteLength;
+                },
+                async close() {
+                  // no-op
+                },
+                async abort() {
+                  originalChunks.length = 0;
+                  collectedBytes = 0;
+                },
+              };
+            }
+            return {
+              async write() {
+                // Discard manifest and stems; never keep unpacked stems in RAM
+              },
+              async close() {
+                // no-op
+              },
+            };
+          },
+        });
+
+        this._assertNotStaleOrAborted(sessionGen, userId, options.signal);
+
+        if (
+          !extractionResult.readyForPublication ||
+          extractionResult.status !== 'valid' ||
+          extractionResult.packageIdentity?.compositeSha256 !== binding.packageCompositeSha256 ||
+          extractionResult.packageIdentity?.manifestSha256 !== binding.packageManifestSha256 ||
+          collectedBytes !== maxOriginalBytes
+        ) {
+          return {
+            status: 'corrupted',
+            message:
+              extractionResult.errorMessage ??
+              'Falha na verificação de integridade do pacote em sessão temporária.',
+            binding: cloneBinding(binding),
+          };
+        }
+
+        const blobParts = originalChunks as unknown as BlobPart[];
+        const wavFile: File | Blob =
+          typeof File === 'function'
+            ? new File(blobParts, pkg.original.internalFileName, { type: 'audio/wav' })
+            : new Blob(blobParts, { type: 'audio/wav' });
+
+        const verified = await computeBlobSha256AndSize(wavFile, () =>
+          this._assertNotStaleOrAborted(sessionGen, userId, options.signal),
+        );
+        if (verified.byteLength !== maxOriginalBytes || verified.sha256 !== binding.assetSha256) {
+          return {
+            status: 'corrupted',
+            message: 'SHA-256 do áudio extraído diverge do vínculo verificado.',
+            binding: cloneBinding(binding),
+          };
+        }
+
+        this._assertNotStaleOrAborted(sessionGen, userId, options.signal);
+        return {
+          status: 'ready',
+          file: wavFile,
+          fileName: pkg.original.internalFileName,
+          binding: cloneBinding(binding),
+          packageRecord: clonePackageRecord(pkg),
+          verifiedSha256: verified.sha256,
+        };
+      }
+
+      // OPFS backend: derive directory strictly from (accountHash, packageId) and verify commit + SHA-256
+      const pkgDir = await tryGetDirectoryHandle(opfsPackagesDir!, pkg.packageId);
+      if (!pkgDir) {
+        return {
+          status: 'corrupted',
+          message: 'Diretório do pacote não encontrado no armazenamento local.',
+          binding: cloneBinding(binding),
+        };
+      }
+
+      const commitRead = await readJsonFileIfPresent<unknown>(pkgDir, COMMIT_FILE_NAME);
+      if (
+        !commitRead.exists ||
+        commitRead.invalidJson ||
+        !isValidCommitMarker(commitRead.data, accountHash, pkg.packageId) ||
+        commitRead.data.compositeSha256 !== pkg.compositeSha256 ||
+        commitRead.data.manifestSha256 !== pkg.manifestSha256 ||
+        commitRead.data.revision !== pkg.revision
+      ) {
+        return {
+          status: 'corrupted',
+          message: 'Marcador de commit ausente ou inválido no pacote local.',
+          binding: cloneBinding(binding),
+        };
+      }
+
+      const internalFileName = pkg.original.internalFileName;
+      if (internalFileName !== 'original.wav') {
+        return {
+          status: 'unsupported_codec',
+          message: `Nome interno não homologado para reprodução WAV: ${internalFileName}.`,
+          binding: cloneBinding(binding),
+        };
+      }
+
+      const originalHandle = await tryGetFileHandle(pkgDir, internalFileName);
+      if (!originalHandle) {
+        return {
+          status: 'corrupted',
+          message: `Arquivo de áudio ${internalFileName} ausente no armazenamento local.`,
+          binding: cloneBinding(binding),
+        };
+      }
+
+      const file = await originalHandle.getFile();
+      if (file.size !== pkg.original.byteLength) {
+        return {
+          status: 'corrupted',
+          message: `Tamanho de ${internalFileName} divergente (esperado ${pkg.original.byteLength}, encontrado ${file.size}).`,
+          binding: cloneBinding(binding),
+        };
+      }
+
+      const liveHash = await computeBlobSha256AndSize(file, () =>
+        this._assertNotStaleOrAborted(sessionGen, userId, options.signal),
+      );
+      if (liveHash.sha256 !== binding.assetSha256 || liveHash.sha256 !== pkg.original.sha256) {
+        return {
+          status: 'corrupted',
+          message: `Falha de integridade SHA-256 em ${internalFileName}.`,
+          binding: cloneBinding(binding),
+        };
+      }
+
+      this._assertNotStaleOrAborted(sessionGen, userId, options.signal);
+      return {
+        status: 'ready',
+        file,
+        fileName: internalFileName,
+        binding: cloneBinding(binding),
+        packageRecord: clonePackageRecord(pkg),
+        verifiedSha256: liveHash.sha256,
+      };
+    });
   }
 }
 
