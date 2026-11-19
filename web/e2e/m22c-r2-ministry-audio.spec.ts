@@ -154,6 +154,37 @@ function recordingIdFrom(controlRequests: ControlRequest[]) {
 
 const authHeader = (token: string) => ({ Authorization: `Bearer ${token}` });
 
+// M22-C.4 — 'ranged-copy' runs the backend with Range GET reads, CopyObject promotion and the persisted verification.
+const MODE = process.env.M22C_R2_MODE ?? 'default';
+const CONTROL = 'http://127.0.0.1:4315/__m22c';
+const PERSISTED_SECONDS = 24; // 4 233 644 bytes per stem: just over one 4 MiB range part, so reads are really ranged.
+const SETTLE_MS = 2_100; // R2 reports LastModified in whole seconds.
+
+interface R2Counters {
+  staging: { head: number; get: number; rangedGet: number; put: number };
+  final: { head: number; get: number; rangedGet: number; put: number };
+  copy: { sent: number; blocked: number };
+}
+interface FirestoreValue {
+  stringValue?: string;
+  integerValue?: string;
+  booleanValue?: boolean;
+  mapValue?: { fields?: Record<string, FirestoreValue> };
+}
+type Grant = { attempt: number; url: string; headers: Record<string, string> };
+
+function manifestOf(id: (typeof stems)[number], bytes: Buffer) {
+  const frames = (bytes.length - 44) / 4;
+  return {
+    id, codec: 'pcm_s16le', sampleRate: 44_100, channels: 2, durationSeconds: frames / 44_100,
+    frames, sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
+  };
+}
+
+function stagingReads(before: R2Counters, after: R2Counters) {
+  return (after.staging.get + after.staging.rangedGet) - (before.staging.get + before.staging.rangedGet);
+}
+
 // A network error from Playwright would echo the full signed URL; report only a generic failure.
 async function getSigned(request: APIRequestContext, url: string, headers: Record<string, string>) {
   try {
@@ -191,6 +222,14 @@ test.afterAll(() => {
   console.log(report('R2 PUT (browser)', metrics.putMs));
   console.log(report('API /complete incl. seal (browser view)', metrics.completeMs));
   console.log(report('R2 GET (browser)', metrics.getMs));
+});
+
+test('0. o backend iniciado usa exatamente os modos esperados do R2', async ({ request }) => {
+  const response = await request.get(`${CONTROL}/modes`);
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toEqual(MODE === 'ranged-copy'
+    ? { read: 'ranged', promotion: 'copy' }
+    : { read: 'stream', promotion: 'upload' });
 });
 
 test('1. administrador publica seis WAVs no R2 real', async ({ browser }) => {
@@ -339,4 +378,201 @@ test('6. revogação do membro, novas URLs negadas e janela do GET já emitido',
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   const expired = await getSigned(request, issued.url, issued.headers);
   expect(expired.ok(), 'issued GET expired after its TTL').toBe(false);
+});
+
+test('7. retomada persistida: verificação concluída, falha controlada na promoção e novo /complete sem reler o staging', async ({ request }) => {
+  test.skip(MODE !== 'ranged-copy', 'Needs M22C_R2_MODE=ranged-copy (Range GET, CopyObject and persisted verification).');
+  test.setTimeout(290_000);
+  const base = `${API}/ministries/${shared.ministryId}/audio-library`;
+  const admin = authHeader(shared.admin!.token);
+  const content = stems.map((id, index) => {
+    const bytes = wav(100 + index * 30, PERSISTED_SECONDS);
+    return { id, bytes, manifest: manifestOf(id, bytes) };
+  });
+  const of = (id: (typeof stems)[number]) => content.find((stem) => stem.id === id)!;
+  // Same length as the drums stem but different bytes: its SHA-256 cannot match the reserved manifest.
+  const swapped = wav(100 + 30 + 7, PERSISTED_SECONDS);
+  expect(swapped.length).toBe(of('drums').bytes.length);
+
+  const counters = async () => (await request.get(`${CONTROL}/counters`)).json() as Promise<R2Counters>;
+  const armCopyFailure = async () => expect((await request.post(`${CONTROL}/fault`, { data: { copy: 1 } })).status()).toBe(204);
+  const grantFor = async (id: string, stem: (typeof stems)[number]) => {
+    const response = await request.post(`${base}/uploads/${id}/stems/${stem}/upload-url`, { headers: admin });
+    expect(response.status(), `upload grant ${stem}`).toBe(200);
+    const grant = await response.json() as Grant;
+    expect(new URL(grant.url).hostname).toBe(R2_HOST);
+    return grant;
+  };
+  const putStaging = async (grant: Grant, bytes: Buffer) => {
+    try {
+      return (await request.put(grant.url, { headers: grant.headers, data: bytes, timeout: 120_000 })).status();
+    } catch {
+      throw new Error('signed PUT failed at the network level');
+    }
+  };
+  // When a status differs from the expected one, print the sanitized R2 command trace (names, statuses, durations only)
+  // before the assertion fails, so the failing phase is visible in the report.
+  const complete = async (id: string, stem: (typeof stems)[number], attempt: number, expected?: number) => {
+    const started = Date.now();
+    const response = await request.post(`${base}/uploads/${id}/stems/${stem}/complete`, { headers: admin, data: { attempt }, timeout: 90_000 });
+    const result = { status: response.status(), text: await response.text(), ms: Date.now() - started };
+    if (expected !== undefined && result.status !== expected) {
+      const trace = await request.get(`${CONTROL}/trace`).then((r) => r.text()).catch(() => 'trace unavailable');
+      console.log(`DIAG complete stem=${stem} attempt=${attempt} expected=${expected} got=${result.status} after ${result.ms} ms\nDIAG body ${result.text.slice(0, 300)}\nDIAG trace ${trace}`);
+    }
+    return result;
+  };
+  const attemptsOf = async (id: string) => {
+    const response = await request.get(`${FIRESTORE}/ministries/${shared.ministryId}/audio_recordings/${id}`);
+    expect(response.ok(), 'emulator read of the recording').toBeTruthy();
+    const fields = (await response.json() as { fields?: Record<string, FirestoreValue> }).fields?.directAttempts?.mapValue?.fields ?? {};
+    return Object.fromEntries(Object.entries(fields).map(([stem, value]) => {
+      const entry = value.mapValue?.fields ?? {};
+      const verified = entry.verified?.mapValue?.fields;
+      return [stem, {
+        number: Number(entry.number?.integerValue),
+        invalid: entry.invalid?.booleanValue === true,
+        receipt: entry.receipt?.mapValue?.fields?.etag?.stringValue,
+        verified: verified ? { etag: verified.etag?.stringValue, lastModified: Number(verified.lastModified?.integerValue) } : undefined,
+      }];
+    }));
+  };
+  // The client view of a stem must never carry the internal receipt or the persisted verification.
+  const expectNoInternals = (text: string) => expect(text).not.toMatch(/etag|verified|receipt|lastModified|cloudflarestorage|staging\//i);
+  const deleteStaging = async (id: string, stem: (typeof stems)[number], attempt: number) => {
+    const response = await request.post(`${CONTROL}/delete-staging`, { data: { ministryId: shared.ministryId, recordingId: id, stemId: stem, attempt } });
+    expect(response.status()).toBe(204);
+  };
+
+  // A copy failure armed by a step that failed early must not leak into later work.
+  await request.post(`${CONTROL}/fault`, { data: { copy: 0 } });
+
+  const reserved = await request.post(`${base}/uploads`, {
+    headers: admin,
+    data: {
+      idempotencyKey: randomUUID(), confirmed: true, title: `Retomada persistida ${randomUUID().slice(0, 8)}`,
+      artist: 'Banda de teste', version: 'Ensaio', model: { id: 'htdemucs_6s', version: 'fixture' },
+      stems: content.map(({ manifest }) => manifest),
+    },
+  });
+  expect(reserved.ok(), 'reservation').toBeTruthy();
+  const { id } = await reserved.json() as { id: string };
+  // Registered for cleanup before anything else can fail.
+  shared.recordingIds.push(id);
+
+  // --- 1. vocals: full ranged verification, controlled failure before promotion, then a resume that does not re-read staging.
+  const vocals = await grantFor(id, 'vocals');
+  expect(await putStaging(vocals, of('vocals').bytes)).toBe(200);
+  const beforeFirst = await counters();
+  await armCopyFailure();
+  const first = await complete(id, 'vocals', vocals.attempt, 503);
+  expect(first.status).toBe(503);
+  expectNoInternals(first.text);
+  const afterFirst = await counters();
+  expect(stagingReads(beforeFirst, afterFirst), 'staging was fully read once').toBeGreaterThanOrEqual(2);
+  // Exactly 2 parts, or 3 if one part needed its single transient retry.
+  expect(afterFirst.staging.rangedGet - beforeFirst.staging.rangedGet, 'Range GET parts of a 4.2 MB stem').toBeGreaterThanOrEqual(2);
+  expect(afterFirst.staging.rangedGet - beforeFirst.staging.rangedGet).toBeLessThanOrEqual(3);
+  expect(afterFirst.staging.get - beforeFirst.staging.get, 'no single-GET read in ranged mode').toBe(0);
+  expect(afterFirst.copy.blocked - beforeFirst.copy.blocked).toBe(1);
+  expect(afterFirst.copy.sent - beforeFirst.copy.sent, 'the failure happened before R2 saw the copy').toBe(0);
+
+  const persisted = await attemptsOf(id);
+  expect(Object.keys(persisted), 'only the stem being completed has a record').toEqual(['vocals']);
+  expect(persisted.vocals).toMatchObject({ number: vocals.attempt, invalid: false, receipt: undefined });
+  expect(persisted.vocals.verified?.etag).toMatch(/^"[0-9a-f]{32}"$/);
+  expect(Number.isSafeInteger(persisted.vocals.verified?.lastModified)).toBe(true);
+
+  const second = await complete(id, 'vocals', vocals.attempt, 200);
+  expect(second.status).toBe(200);
+  expectNoInternals(second.text);
+  expect((JSON.parse(second.text) as { uploadedStemIds: string[] }).uploadedStemIds).toContain('vocals');
+  const afterSecond = await counters();
+  expect(stagingReads(afterFirst, afterSecond), 'the resume did not read the staging object again').toBe(0);
+  expect(afterSecond.staging.head - afterFirst.staging.head, 'staging identity re-checked by HEAD').toBeGreaterThanOrEqual(1);
+  expect(afterSecond.copy.sent - afterFirst.copy.sent).toBe(1);
+  expect(afterSecond.final.get + afterSecond.final.rangedGet - afterFirst.final.get - afterFirst.final.rangedGet).toBe(0);
+
+  const sealed = await attemptsOf(id);
+  expect(sealed.vocals.receipt).toBe(persisted.vocals.verified?.etag);
+  expect(sealed.vocals.verified, 'the verification is dropped once the receipt exists').toBeUndefined();
+
+  const third = await complete(id, 'vocals', vocals.attempt, 200);
+  expect(third.status).toBe(200);
+  expect(await counters(), 'an already confirmed stem triggers no R2 call').toEqual(afterSecond);
+  console.log(`PERF persisted resume (single observation): /complete with full ranged verification + injected copy failure ${first.ms} ms; resume ${second.ms} ms; repeat ${third.ms} ms`);
+
+  // --- 2. drums: the staging object is replaced after verification, so the old verification must not be reused.
+  const drums = await grantFor(id, 'drums');
+  expect(await putStaging(drums, of('drums').bytes)).toBe(200);
+  await armCopyFailure();
+  expect((await complete(id, 'drums', drums.attempt, 503)).status).toBe(503);
+  expect((await attemptsOf(id)).drums.verified?.etag).toMatch(/^"[0-9a-f]{32}"$/);
+  await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+  await deleteStaging(id, 'drums', drums.attempt);
+  expect(await putStaging(drums, swapped), 'the create-only grant is usable again once the object is gone').toBe(200);
+  const beforeSwap = await counters();
+  const swap = await complete(id, 'drums', drums.attempt, 422);
+  expect(swap.status).toBe(422);
+  expect(JSON.parse(swap.text)).toMatchObject({ error: { details: { code: 'AUDIO_UPLOAD_INVALID' } } });
+  const afterSwap = await counters();
+  expect(stagingReads(beforeSwap, afterSwap), 'the replaced object was verified from scratch').toBeGreaterThanOrEqual(2);
+  expect(afterSwap.copy.sent - beforeSwap.copy.sent, 'nothing was promoted').toBe(0);
+  const invalidated = (await attemptsOf(id)).drums;
+  expect(invalidated).toMatchObject({ invalid: true, receipt: undefined, verified: undefined });
+  const drumsAgain = await grantFor(id, 'drums');
+  expect(drumsAgain.attempt).toBe(drums.attempt + 1);
+  expect(await putStaging(drumsAgain, of('drums').bytes)).toBe(200);
+  expect((await complete(id, 'drums', drumsAgain.attempt, 200)).status).toBe(200);
+
+  // --- 3. bass: same bytes (same ETag) uploaded again later, so only the last-modified time differs.
+  const bass = await grantFor(id, 'bass');
+  expect(await putStaging(bass, of('bass').bytes)).toBe(200);
+  await armCopyFailure();
+  expect((await complete(id, 'bass', bass.attempt, 503)).status).toBe(503);
+  const firstVerification = (await attemptsOf(id)).bass.verified;
+  expect(firstVerification?.etag).toMatch(/^"[0-9a-f]{32}"$/);
+  await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+  await deleteStaging(id, 'bass', bass.attempt);
+  expect(await putStaging(bass, of('bass').bytes)).toBe(200);
+  const beforeRepeat = await counters();
+  expect((await complete(id, 'bass', bass.attempt, 200)).status).toBe(200);
+  const afterRepeat = await counters();
+  expect(stagingReads(beforeRepeat, afterRepeat), 'a newer object version is never covered by an older verification').toBeGreaterThanOrEqual(2);
+  expect((await attemptsOf(id)).bass.receipt).toBe(firstVerification?.etag);
+
+  // --- 4. the remaining stems, then an idempotent publication with intact content.
+  for (const stem of ['guitar', 'piano', 'other'] as const) {
+    const grant = await grantFor(id, stem);
+    expect(await putStaging(grant, of(stem).bytes)).toBe(200);
+    expect((await complete(id, stem, grant.attempt, 200)).status).toBe(200);
+  }
+  const published = await request.post(`${base}/uploads/${id}/finalize`, { headers: admin, timeout: 90_000 });
+  expect(published.status()).toBe(200);
+  const publishedBody = await published.json() as { id: string; status: string };
+  expect(publishedBody).toMatchObject({ id, status: 'published' });
+  const again = await request.post(`${base}/uploads/${id}/finalize`, { headers: admin, timeout: 90_000 });
+  expect(again.status()).toBe(200);
+  expect(await again.json()).toEqual(publishedBody);
+  expectNoInternals(JSON.stringify(publishedBody));
+
+  const final = await attemptsOf(id);
+  for (const stem of stems) {
+    expect(final[stem].receipt, `receipt of ${stem}`).toMatch(/^"[0-9a-f]{32}"$/);
+    expect(final[stem].verified, `no leftover verification on ${stem}`).toBeUndefined();
+  }
+
+  const playback = await request.get(`${base}/${id}/playback`, { headers: admin });
+  expect(playback.status()).toBe(200);
+  const { manifest, tracks } = await playback.json() as { manifest: { stems: Array<{ id: string; sha256: string; sizeBytes: number }> }; tracks: Array<{ id: string; url: string; headers: Record<string, string> }> };
+  for (const stem of ['vocals', 'drums', 'bass'] as const) {
+    const expected = manifest.stems.find(({ id: stemId }) => stemId === stem)!;
+    expect(expected.sha256).toBe(of(stem).manifest.sha256);
+    const track = tracks.find(({ id: trackId }) => trackId === stem)!;
+    const object = await getSigned(request, track.url, track.headers);
+    expect(object.ok(), `R2 GET ${stem}`).toBeTruthy();
+    const body = await object.body();
+    expect(body.byteLength, `size ${stem}`).toBe(expected.sizeBytes);
+    expect(createHash('sha256').update(body).digest('hex'), `sha256 ${stem}`).toBe(expected.sha256);
+  }
 });

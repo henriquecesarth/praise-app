@@ -20,6 +20,15 @@ async function run() {
     process.exitCode = 2;
     return;
   }
+  // Optional: also list the synthetic prefixes of specific E2E runs (the ministry ids printed in CLEANUP_HINT). Only
+  // m22c-r2-<uuid> ids are accepted, so no other ministry prefix can be listed.
+  const ministries = (process.env.M22C_INSPECT_MINISTRIES ?? '').split(',').filter(Boolean);
+  if (!ministries.every((id) => /^m22c-r2-[a-f0-9-]{36}$/.test(id))) {
+    console.log('REFUSED — M22C_INSPECT_MINISTRIES accepts only m22c-r2-<uuid> ids.');
+    process.exitCode = 2;
+    return;
+  }
+  const prefixes = [...PREFIXES, ...ministries.flatMap((id) => [`staging/ministry-audio/${id}/`, `objects/ministry-audio/${id}/`])];
   const { accountId, bucket, accessKeyId, secretAccessKey } = getR2DevelopmentConfig(process.env);
   const client = new S3Client({
     region: 'auto',
@@ -30,7 +39,7 @@ async function run() {
   });
 
   let leftovers = 0;
-  for (const prefix of PREFIXES) {
+  for (const prefix of prefixes) {
     const listed = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, MaxKeys: MAX_KEYS_PER_PREFIX }), {
       abortSignal: AbortSignal.timeout(15_000),
     });
@@ -43,7 +52,7 @@ async function run() {
     leftovers += objects.length;
   }
   console.log(leftovers === 0
-    ? 'RESULT: no leftover synthetic probe objects under the two prefixes.'
+    ? `RESULT: no leftover synthetic objects under the ${prefixes.length} prefixes.`
     : `RESULT: ${leftovers} object(s) found. Nothing was changed. The staging prefix also expires through the bucket lifecycle; remove any final objects/ key only after confirming it above.`);
 }
 

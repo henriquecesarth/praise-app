@@ -15,6 +15,16 @@ if (process.env.M22C_R2_LIVE_TESTS !== '1' || process.env.VERCEL || process.env.
   throw new Error('BLOCKED: set M22C_R2_LIVE_TESTS=1 and the MINISTRY_AUDIO_R2_DEV_* variables locally (see docs/architecture/m22c1-r2-development.md).');
 }
 
+// M22-C.4: M22C_R2_MODE selects how the backend talks to R2. The default keeps the production-default adapter
+// ('stream' reads, 'upload' promotion). 'ranged-copy' enables Range GET reads, CopyObject promotion and the persisted
+// verification scenario. The backend refuses to start if its effective modes differ from the ones set here.
+const mode = process.env.M22C_R2_MODE ?? 'default';
+if (mode !== 'default' && mode !== 'ranged-copy') {
+  throw new Error('BLOCKED: M22C_R2_MODE must be unset, "default" or "ranged-copy".');
+}
+const r2Read = mode === 'ranged-copy' ? 'ranged' : 'stream';
+const r2Promotion = mode === 'ranged-copy' ? 'copy' : 'upload';
+
 const apiOrigin = 'http://127.0.0.1:4315';
 // The only browser origin authorized by the bucket CORS policy.
 const webOrigin = 'http://127.0.0.1:5173';
@@ -31,7 +41,7 @@ export default defineConfig({
   webServer: [
     {
       cwd: '../backend',
-      command: 'npx --no-install tsx -e "import app from \'./src/app\'; app.listen(4315, \'127.0.0.1\')"',
+      command: 'npx --no-install tsx scripts/m22c-r2-e2e-server.ts',
       url: `${apiOrigin}/api/health`,
       timeout: 60_000,
       reuseExistingServer: false,
@@ -48,6 +58,12 @@ export default defineConfig({
         MINISTRY_AUDIO_EMULATOR: '1',
         MINISTRY_AUDIO_DIRECT_SIMULATOR: '0',
         MINISTRY_AUDIO_R2_DEV: '1',
+        M22C_R2_LIVE_TESTS: '1',
+        // Set explicitly so a value left in the shell cannot flip the adapter, then verified by the server at startup.
+        MINISTRY_AUDIO_R2_DEV_READ: r2Read,
+        MINISTRY_AUDIO_R2_DEV_PROMOTION: r2Promotion,
+        M22C_EXPECT_READ: r2Read,
+        M22C_EXPECT_PROMOTION: r2Promotion,
         MINISTRY_AUDIO_SIMULATOR_DIR: join(tmpdir(), 'louvaio-m22c-r2-e2e'),
         CORS_ORIGIN: webOrigin,
       },

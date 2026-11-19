@@ -74,6 +74,9 @@ Execução local, a partir de `web/` e `backend/`, com Auth e Firestore Emulator
 $env:M22C_R2_LIVE_TESTS = '1'
 npx --no-install playwright test --config playwright.m22c-r2.config.ts
 
+# web/: M22-C.4, mesmo fluxo com Range GET + CopyObject e o cenário 7 (retomada persistida)
+# $env:M22C_R2_MODE = 'ranged-copy'   # sem isso: stream/upload (padrão), o cenário 7 é ignorado
+
 # backend/: benchmark M22-C.3, perfil quick (1, 5 e 15 MiB, uma execução cada, sequencial)
 $env:M22C_R2_LIVE_TESTS = '1'; $env:M22C_R2_BENCH = '1'
 npx --no-install tsx scripts/m22c-r2-seal-bench.ts --profile quick
@@ -205,6 +208,51 @@ Todos os números abaixo foram executados pelo usuário no bucket privado de des
 - O p95 não foi medido. O CORS e o fluxo de navegador foram homologados antes do `ranged` e do `copy`.
 
 **Padrões que continuam valendo:** `MINISTRY_AUDIO_R2_DEV_READ=stream` e `MINISTRY_AUDIO_R2_DEV_PROMOTION=upload`. `ranged` e `copy` são opt-in e só existem para o bucket de desenvolvimento, atrás de `getR2DevelopmentConfig`.
+
+## M22-C.4 — E2E real com Range GET + CopyObject e retomada persistida
+
+**Resultado real (execução completa com `M22C_R2_MODE=ranged-copy`, relato do usuário; o Claude não viu a saída bruta):** 8 de 8 testes PASS (0 a 7), saída 0. Observações únicas, sem percentil, na máquina do usuário:
+
+| Medida | Valor |
+| --- | --- |
+| Publicação de seis faixas pela UI | 30.339 ms |
+| Mixer pronto para o outro membro | 2.573 ms |
+| `/complete` com verificação completa por Range GET e falha injetada (503) | 2.028 ms |
+| Retomada persistida (HEAD, cópia, HEAD; sem reler o staging) | 1.779 ms |
+| Repetição idempotente (sem chamada ao R2) | 56 ms |
+
+Também PASS: integridade SHA-256, reprodução sincronizada com mute/solo/seek e sem Demucs, renovação após falha, retomada de upload, revogação com expiração do GET emitido, publicação idempotente, 422 na troca de conteúdo e nova verificação completa para o mesmo conteúdo reenviado. Os valores exatos de contagem de HEAD/Range GET/CopyObject e o resultado da limpeza não foram informados ao Claude: **Unknown / Not yet verified** (a spec os confere por asserção, e o PASS implica que bateram).
+
+**Uma execução anterior** falhou no cenário 7 (um `/complete` esperado como 200 devolveu 503, faixas guitar/piano/other). Depois da instrumentação sanitizada, a execução completa passou. A causa daquele 503 **nunca foi identificada**: a sequência passa offline e a repetição não reproduziu, então ele permanece sem explicação (provável erro transitório do R2 ou da rede, sem prova). O rastro sanitizado (`R2_FAIL`/`DIAG`) fica para uma recorrência.
+
+**O que continua não homologado:** runtime Vercel (**NOT_EXECUTED**), dois selos simultâneos no R2 real, o p95 e a retomada persistida sob o limite de 60 s da função. `/__m22c` e o servidor de E2E vivem em `backend/scripts/`, fora de `tsconfig.publish.json`, e não aparecem em `backend/src` nem em `web/src`.
+
+Inspeção somente leitura dos prefixos desta execução (os ids vêm da linha `CLEANUP_HINT`): em `backend/`, com `M22C_R2_LIVE_TESTS=1`, `M22C_R2_INSPECT=1` e `M22C_INSPECT_MINISTRIES='m22c-r2-<uuid>'`, execute `npx --no-install tsx scripts/m22c-r2-probe-inspect.ts`. O script só lista; nada é alterado.
+
+Preparação (histórico):
+
+**O que mudou:** `web/playwright.m22c-r2.config.ts` agora define explicitamente `MINISTRY_AUDIO_R2_DEV_READ` e `MINISTRY_AUDIO_R2_DEV_PROMOTION` para o backend que ele inicia (um valor esquecido no shell não os altera) conforme `M22C_R2_MODE`: ausente ou `default` mantém `stream`/`upload`; `ranged-copy` usa `ranged`/`copy`. O backend sobe por `backend/scripts/m22c-r2-e2e-server.ts` (fora do build publicado), que recusa iniciar se o ambiente não for o isolado (`NODE_ENV=test`, projeto `demo-*`, Firestore e Auth Emulators em `127.0.0.1`, R2 de desenvolvimento, sem Vercel) ou se os modos efetivos diferirem dos esperados. Em loopback, `/__m22c` expõe: `modes`, `counters` (contagem de HEAD/GET/Range GET/PUT e cópias por staging/final; nunca chaves, URLs ou conteúdo), `fault` (faz a próxima `CopyObject` falhar antes de chegar ao R2) e `delete-staging` (só chaves de staging de um ministério `m22c-r2-<uuid>`). Os padrões do produto não mudam fora deste config.
+
+**Cenários:** os seis anteriores, mais o 0 (modos efetivos) e o 7 (só em `ranged-copy`): verificação completa por Range GET (2 partes), falha controlada na promoção, `directAttempts[stem].verified` gravado só para a tentativa vigente, segundo `/complete` sem nova leitura do staging (só HEAD e cópia), terceira chamada sem nenhuma chamada ao R2, publicação idempotente, SHA-256/tamanho conferidos no R2, nenhum ETag/recibo/`verified` nas respostas ao cliente, bytes trocados após verificação (422, tentativa marcada inválida, tentativa seguinte aceita) e mesmos bytes reenviados (`lastModified` novo, nova verificação completa).
+
+**Comandos (PowerShell, com os Emulators ativos e as variáveis `MINISTRY_AUDIO_R2_DEV_*` locais):**
+
+```powershell
+cd web
+$env:M22C_R2_LIVE_TESTS = '1'
+# 1) Fluxo funcional com R2 nos padrões do produto (stream/upload)
+Remove-Item Env:M22C_R2_MODE -ErrorAction SilentlyContinue
+npx --no-install playwright test --config playwright.m22c-r2.config.ts
+# 2) Fluxo funcional + retomada persistida (ranged + copy)
+$env:M22C_R2_MODE = 'ranged-copy'
+npx --no-install playwright test --config playwright.m22c-r2.config.ts
+# 3) Desempenho de download/selagem: backend/scripts/m22c-r2-seal-bench.ts (perfil large exige autorização)
+# 4) Limpeza, se a linha CLEANUP_HINT indicar objetos restantes: scripts/m22c-r2-e2e-cleanup.ts
+```
+
+**Separação do status:** fluxo funcional com R2 nos padrões `stream`/`upload`: PASS anterior (6/6), **não** repetido nesta etapa. Fluxo com `ranged`/`copy` e retomada persistida no R2 real: **PASS (8/8)**, veja acima. Desempenho de download: observações do C.3D; os tempos do cenário 7 são observações únicas. Runtime Vercel: **NOT_EXECUTED**.
+
+**Primeira execução real (relato do usuário):** cenários 0–6 PASS; no 7, 503 controlado, retomada em 1.805 ms, repetição em 58 ms e 422 na troca de conteúdo passaram, e depois um `/complete` esperado como 200 (linha 541, faixas guitar/piano/other, sem falha armada) devolveu 503. Saída 1. **Causa: Unknown / Not yet verified.** A sequência exata roda offline (`ministry-audio-r2-sequence.integration.test.ts`: serviço real, Firestore Emulator, adaptador `ranged`+`copy`, bucket em memória) e passa, o que afasta um defeito de lógica do serviço ou do adaptador nessa ordem. Restam causas dependentes do R2/rede (erro transitório sem nova tentativa em HEAD/CopyObject, `maxAttempts: 1`), que só um rastro real distingue. O servidor de E2E agora guarda um rastro sanitizado (`/__m22c/trace`: comando, staging/final, duração, nome do erro, status HTTP e código de transporte; nunca chaves, URLs nem mensagens) e imprime `R2_FAIL …` no stderr; a spec imprime `DIAG …` quando um `/complete` devolve status inesperado. Reexecução isolada do cenário 7: `npx --no-install playwright test --config playwright.m22c-r2.config.ts --grep "7\. retomada"` (com `M22C_R2_MODE=ranged-copy`).
 
 ## Homologação posterior
 
