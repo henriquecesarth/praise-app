@@ -63,7 +63,9 @@ export function prepareMinistryMixerTracks(
   download: (stem: MinistryAudioStem, track: MinistryAudioPlaybackTrack) => Promise<Uint8Array>,
 ) {
   const { manifest, tracks } = playback;
-  if (manifest.schemaVersion !== 1 || manifest.recordingId !== recordingId ||
+  // v1 and v2 manifests with pcm_s16le stems share one reader. Other codecs (mp3_cbr256) are
+  // contract-known but not playable until the decoder/trim path ships: reject, never guess.
+  if ((manifest.schemaVersion !== 1 && manifest.schemaVersion !== 2) || manifest.recordingId !== recordingId ||
       manifest.stems.length !== CANONICAL_STEM_IDS.length || tracks.length !== CANONICAL_STEM_IDS.length) {
     throw new Error('Dados de reprodução inválidos.');
   }
@@ -71,10 +73,15 @@ export function prepareMinistryMixerTracks(
   return CANONICAL_STEM_IDS.map((id) => {
     const stem = manifest.stems.find((value) => value.id === id);
     const track = tracks.find((value) => value.id === id);
-    if (!stem || !track || stem.codec !== 'pcm_s16le' || stem.channels !== 2 || !/^[a-f0-9]{64}$/.test(stem.sha256) ||
+    if (!stem || !track || stem.codec !== 'pcm_s16le' || 'alignment' in stem || stem.channels !== 2 || !/^[a-f0-9]{64}$/.test(stem.sha256) ||
         !Number.isInteger(stem.sampleRate) || stem.sampleRate < MIN_MINISTRY_AUDIO_SAMPLE_RATE || stem.sampleRate > MAX_MINISTRY_AUDIO_SAMPLE_RATE ||
         !Number.isInteger(stem.frames) || stem.frames <= 0 || stem.frames > stem.sampleRate * MAX_MINISTRY_AUDIO_SECONDS ||
-        stem.sizeBytes !== 44 + stem.frames * 4) {
+        stem.sizeBytes !== 44 + stem.frames * 4 ||
+        !Number.isFinite(stem.durationSeconds) || Math.abs(stem.durationSeconds - stem.frames / stem.sampleRate) > 1e-8) {
+      throw new Error('Dados de reprodução inválidos.');
+    }
+    const first = manifest.stems.find((value) => value.id === CANONICAL_STEM_IDS[0]);
+    if (!first || stem.sampleRate !== first.sampleRate || stem.frames !== first.frames) {
       throw new Error('Dados de reprodução inválidos.');
     }
     return {

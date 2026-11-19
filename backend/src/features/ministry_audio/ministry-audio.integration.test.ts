@@ -206,6 +206,63 @@ describe('Ministry audio HTTP integration with Firestore Emulator and simulated 
     return readJson<Playback>(await request(`/${id}/playback`, {}, memberToken));
   }
 
+  async function recordingDocs(tenant: string) {
+    return (await db.collection('ministries').doc(tenant).collection('audio_recordings').get()).docs;
+  }
+
+  function mp3V2Input(key = randomUUID()) {
+    const stem = {
+      codec: 'mp3_cbr256', sampleRate: 44_100, channels: 2, bitrateKbps: 256, durationSeconds: 30, frames: 1_323_000,
+      sizeBytes: 962_141, sha256: 'b'.repeat(64),
+      alignment: { encoderDelayFrames: 1105, paddingFrames: 695, mpegAudioFrames: 1150, infoFrame: true },
+    };
+    return { ...uploadInput(), idempotencyKey: key, schemaVersion: 2, stems: stemIds.map((id) => ({ id, ...stem })) };
+  }
+
+  it('persists v1 manifests as v1 and normalizes a PCM v2 request to the same v1 reservation', async () => {
+    const v1 = uploadInput();
+    const upload = await readJson<Upload>(await reserve(v1));
+    const stored = (await recordingDocs(ministryId)).find((doc) => doc.id === upload.id)!.data();
+    expect(stored.manifest.schemaVersion).toBe(1);
+    expect(stored.manifest.stems.map((stem: { id: string }) => stem.id)).toEqual([...stemIds]);
+
+    // Same idempotency key + same PCM content declared as v2: identical requestHash, so a replay, not a conflict.
+    const replay = await readJson<Upload>(await reserve({ ...v1, schemaVersion: 2 } as unknown as UploadInput));
+    expect(replay.id).toBe(upload.id);
+    expect((await recordingDocs(ministryId)).length).toBe(1);
+
+    // A fresh v2 PCM reservation is stored as v1 and plays back as v1 for deployed clients.
+    const v2 = { ...uploadInput('Gamma'), schemaVersion: 2 } as unknown as UploadInput;
+    const fresh = await readJson<Upload>(await reserve(v2));
+    const freshDoc = (await recordingDocs(ministryId)).find((doc) => doc.id === fresh.id)!.data();
+    expect(freshDoc.manifest.schemaVersion).toBe(1);
+    for (const { id, bytes } of stems) await readJson<Upload>(await putStem(fresh.id, id, bytes));
+    await readJson<Recording>(await finalize(fresh.id));
+    expect((await playback(fresh.id)).manifest.schemaVersion).toBe(1);
+  });
+
+  it('rejects MP3 v2 reservations with AUDIO_CODEC_NOT_ENABLED and creates no writes in any ministry', async () => {
+    const before = [(await recordingDocs(ministryId)).length, (await recordingDocs(otherMinistryId)).length];
+    const key = randomUUID();
+    for (const tenant of [ministryId, otherMinistryId]) {
+      const response = await request('/uploads', jsonRequest('POST', mp3V2Input(key)), adminToken, tenant);
+      const body = await response.text();
+      expect(response.status, body).toBe(422);
+      expect(body).toContain('AUDIO_CODEC_NOT_ENABLED');
+    }
+    expect([(await recordingDocs(ministryId)).length, (await recordingDocs(otherMinistryId)).length]).toEqual(before);
+    // The rejected key leaves no residue: the same key is still usable for a valid PCM reservation.
+    await readJson<Upload>(await reserve({ ...uploadInput(), idempotencyKey: key }));
+    // Contract-invalid MP3 metadata is rejected as a validation error, also without writes.
+    const broken = mp3V2Input();
+    (broken.stems[0].alignment as { paddingFrames: number }).paddingFrames = 700;
+    await expectStatus(await reserve(broken as unknown as UploadInput), 400);
+    // Members cannot reserve at all, so MP3 declarations are unreachable for them.
+    await expectStatus(await request('/uploads', jsonRequest('POST', mp3V2Input()), memberToken), 403);
+    // None of the rejected attempts (422/400/403) wrote anything beyond the single valid PCM reservation above.
+    expect([(await recordingDocs(ministryId)).length, (await recordingDocs(otherMinistryId)).length]).toEqual([before[0] + 1, before[1]]);
+  });
+
   it('publishes all six stems and returns the original bytes to a ministry member', async () => {
     const input = uploadInput();
     const upload = await stage(input);

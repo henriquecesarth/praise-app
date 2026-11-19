@@ -1,0 +1,29 @@
+{
+  "comment": "Shared by backend and web contract tests. patch keys are dotted paths; null deletes the key. mp3 numbers come from the M22-C.5 proof of concept (30 s, 44.1 kHz, mediabunny/LAME, Info frame).",
+  "base": {
+    "pcm": { "id": "vocals", "codec": "pcm_s16le", "sampleRate": 44100, "channels": 2, "durationSeconds": 30, "frames": 1323000, "sizeBytes": 5292044, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    "mp3": { "id": "vocals", "codec": "mp3_cbr256", "sampleRate": 44100, "channels": 2, "bitrateKbps": 256, "durationSeconds": 30, "frames": 1323000, "sizeBytes": 962141, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "alignment": { "encoderDelayFrames": 1105, "paddingFrames": 695, "mpegAudioFrames": 1150, "infoFrame": true } }
+  },
+  "cases": [
+    { "name": "pcm baseline", "base": "pcm", "patch": {}, "contractValid": true, "webPlayable": true },
+    { "name": "mp3 baseline", "base": "mp3", "patch": {}, "contractValid": true, "webPlayable": false },
+    { "name": "mp3 48 kHz exact frame size", "base": "mp3", "patch": { "sampleRate": 48000, "frames": 1440000, "durationSeconds": 30, "alignment.encoderDelayFrames": 1105, "alignment.paddingFrames": 47, "alignment.mpegAudioFrames": 1251, "sizeBytes": 961536 }, "contractValid": true, "webPlayable": false },
+    { "name": "mp3 other encoder delay is accepted (no hardcoded delay)", "base": "mp3", "patch": { "alignment.encoderDelayFrames": 576, "alignment.paddingFrames": 1224 }, "contractValid": true, "webPlayable": false },
+    { "name": "mp3 invariant broken", "base": "mp3", "patch": { "alignment.paddingFrames": 700 }, "reason": "frames MPEG", "contractValid": false, "webPlayable": false },
+    { "name": "mp3 delay above bound", "base": "mp3", "patch": { "alignment.encoderDelayFrames": 4609, "alignment.paddingFrames": 647, "alignment.mpegAudioFrames": 1153, "sizeBytes": 964000 }, "reason": "alignment.encoderDelayFrames", "contractValid": false, "webPlayable": false },
+    { "name": "mp3 size below CBR bound", "base": "mp3", "patch": { "sizeBytes": 961084 }, "reason": "Tamanho", "contractValid": false, "webPlayable": false },
+    { "name": "mp3 size above CBR bound", "base": "mp3", "patch": { "sizeBytes": 962237 }, "reason": "Tamanho", "contractValid": false, "webPlayable": false },
+    { "name": "mp3 wrong bitrate", "base": "mp3", "patch": { "bitrateKbps": 128 }, "contractValid": false, "webPlayable": false },
+    { "name": "mp3 unsupported sample rate", "base": "mp3", "patch": { "sampleRate": 32000 }, "contractValid": false, "webPlayable": false },
+    { "name": "mp3 mono", "base": "mp3", "patch": { "channels": 1 }, "contractValid": false, "webPlayable": false },
+    { "name": "mp3 without info frame", "base": "mp3", "patch": { "alignment.infoFrame": false }, "contractValid": false, "webPlayable": false },
+    { "name": "mp3 without alignment", "base": "mp3", "patch": { "alignment": null }, "contractValid": false, "webPlayable": false },
+    { "name": "mp3 unknown field", "base": "mp3", "patch": { "encoder": "lame" }, "contractValid": false, "webPlayable": false },
+    { "name": "mp3 duration mismatch", "base": "mp3", "patch": { "durationSeconds": 31 }, "reason": "Duração", "contractValid": false, "webPlayable": false },
+    { "name": "mp3 over 300 s", "base": "mp3", "patch": { "frames": 13230001, "durationSeconds": 300.00002267573696, "alignment.mpegAudioFrames": 11486, "alignment.encoderDelayFrames": 1105, "alignment.paddingFrames": 766, "sizeBytes": 9600000 }, "reason": ["durationSeconds", "Duração ou frames"], "contractValid": false, "webPlayable": false },
+    { "name": "mp3 bad sha256", "base": "mp3", "patch": { "sha256": "XYZ" }, "contractValid": false, "webPlayable": false },
+    { "name": "pcm with alignment block", "base": "pcm", "patch": { "alignment": { "encoderDelayFrames": 0 } }, "contractValid": false, "webPlayable": false },
+    { "name": "pcm wrong size", "base": "pcm", "patch": { "sizeBytes": 5292045 }, "contractValid": false, "webPlayable": false },
+    { "name": "unknown codec", "base": "pcm", "patch": { "codec": "aac" }, "contractValid": false, "webPlayable": false }
+  ]
+}

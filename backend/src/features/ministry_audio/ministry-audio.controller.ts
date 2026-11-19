@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { AuthenticatedRequest } from '../../middleware/auth';
 import { AppError } from '../../middleware/error-handler';
 import {
-  completeStemSchema, listSchema, metadataSchema, ministryIdSchema, recordingIdSchema, stemIdSchema, uploadSchema,
+  completeStemSchema, listSchema, metadataSchema, ministryIdSchema, recordingIdSchema, selectUploadSchema, stemIdSchema,
 } from './ministry-audio.schema';
 import type { MinistryAudioService } from './ministry-audio.service';
 
@@ -51,7 +51,7 @@ export class MinistryAudioController {
   };
 
   reserve = async (req: AuthenticatedRequest, res: Response) => {
-    res.json(await this.service.reserve(scope(req), parse(uploadSchema, req.body)));
+    res.json(await this.service.reserve(scope(req), parse(selectUploadSchema(req.body), req.body)));
   };
 
   uploadStatus = async (req: AuthenticatedRequest, res: Response) => {

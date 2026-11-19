@@ -27,6 +27,26 @@ export interface MinistryAudioStem {
   sha256: string;
 }
 
+/**
+ * Manifest schemaVersion 2 stem (planned codec, not playable or publishable yet).
+ * Mirrors backend audio-codec.ts; shared fixtures keep both sides in sync.
+ * alignment: encoderDelayFrames + frames + paddingFrames === mpegAudioFrames * 1152.
+ */
+export interface MinistryAudioMp3Stem {
+  id: CanonicalStemId;
+  codec: 'mp3_cbr256';
+  sampleRate: 44100 | 48000;
+  channels: 2;
+  bitrateKbps: 256;
+  durationSeconds: number;
+  frames: number;
+  sizeBytes: number;
+  sha256: string;
+  alignment: { encoderDelayFrames: number; paddingFrames: number; mpegAudioFrames: number; infoFrame: true };
+}
+
+export type MinistryAudioManifestStem = MinistryAudioStem | MinistryAudioMp3Stem;
+
 export interface MinistryAudioRecord extends MinistryAudioMetadata {
   id: string;
   status: 'published' | 'archived';
@@ -68,11 +88,11 @@ export interface MinistryAudioPlaybackTrack {
 
 export interface MinistryAudioPlayback {
   manifest: {
-    schemaVersion: 1;
+    schemaVersion: 1 | 2;
     recordingId: string;
     recordingVersion: string;
     model: MinistryAudioModel;
-    stems: MinistryAudioStem[];
+    stems: MinistryAudioManifestStem[];
   };
   tracks: MinistryAudioPlaybackTrack[];
   expiresAt: number;

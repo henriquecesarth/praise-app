@@ -4,7 +4,7 @@ import { AppError } from '../../middleware/error-handler';
 import {
   MinistryAudioRepository, type AudioCursor, type AudioRecording, type AudioScope,
 } from './ministry-audio.repository';
-import { MAX_DIRECT_ATTEMPTS, recordingIdSchema, STEM_IDS, type ListInput, type RecordingMetadata, type StemId, type UploadInput } from './ministry-audio.schema';
+import { MAX_DIRECT_ATTEMPTS, recordingIdSchema, requirePublishableStems, STEM_IDS, type ListInput, type RecordingMetadata, type StemId, type UploadInput, type UploadInputV2 } from './ministry-audio.schema';
 import type { StemStorage } from './storage';
 import type { DirectStemStorage, ObjectReceipt, VerifiedStaging } from './direct-storage';
 
@@ -97,10 +97,14 @@ export class MinistryAudioService {
     return record;
   }
 
-  async reserve(scope: AudioScope, input: UploadInput) {
-    const { idempotencyKey, title, artist, version, model, stems } = input;
+  async reserve(scope: AudioScope, input: UploadInput | UploadInputV2) {
+    const { idempotencyKey, title, artist, version, model } = input;
+    await this.repository.authorize(scope, true); // authorization first; read-only, no writes
+    const stems = requirePublishableStems(input.stems);
     const id = hash([scope.ministryId, scope.userId, idempotencyKey]);
     const orderedStems = [...stems].sort((a, b) => STEM_IDS.indexOf(a.id) - STEM_IDS.indexOf(b.id));
+    // PCM-only recordings keep the v1 manifest even when requested as v2: the shape is identical and
+    // already-deployed readers only understand v1. Only a future byte-validated codec persists v2.
     const manifest = { schemaVersion: 1 as const, recordingId: id, recordingVersion: version, model, stems: orderedStems };
     const now = this.now();
     const direct = this.directStorage !== undefined;
