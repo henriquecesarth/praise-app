@@ -3,14 +3,18 @@ import { authenticate } from '../../middleware/auth';
 import { MinistryAudioController } from './ministry-audio.controller';
 import { MinistryAudioService } from './ministry-audio.service';
 import type { StemStorage } from './storage';
+import type { DirectStemStorage } from './direct-storage';
 
 export function createMinistryAudioRouter(options: {
   storage: StemStorage;
   now?: () => number;
   ticketSecret?: Buffer;
+  directStorage?: DirectStemStorage;
 }): Router {
   const router = Router({ mergeParams: true });
-  const controller = new MinistryAudioController(new MinistryAudioService(options.storage, options.now, options.ticketSecret));
+  const controller = new MinistryAudioController(
+    new MinistryAudioService(options.storage, options.now, options.ticketSecret, options.directStorage)
+  );
 
   router.use((_req, res, next) => {
     res.setHeader('Cache-Control', 'private, no-store');
@@ -23,6 +27,8 @@ export function createMinistryAudioRouter(options: {
   router.post('/uploads/cleanup', controller.cleanup);
   router.get('/uploads/:id', controller.uploadStatus);
   router.put('/uploads/:id/stems/:stemId', controller.upload);
+  router.post('/uploads/:id/stems/:stemId/upload-url', controller.issueUploadUrl);
+  router.post('/uploads/:id/stems/:stemId/complete', controller.completeUpload);
   router.post('/uploads/:id/finalize', controller.finalize);
   router.patch('/:id', controller.edit);
   router.post('/:id/archive', controller.archive);

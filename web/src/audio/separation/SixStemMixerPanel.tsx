@@ -102,7 +102,7 @@ export function SixStemMixerPanel({
       return;
     }
     void activeController.loadStems(stems, metadata);
-    // loadStems copies all WAV inputs synchronously before returning its promise.
+    // loadStems captures eager WAVs and deferred loaders before returning its promise.
     onInputsCapturedRef.current?.(stems);
   }, [activeController, stems, metadata, playbackOnly]);
 

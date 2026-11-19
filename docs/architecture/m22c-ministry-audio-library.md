@@ -1,5 +1,7 @@
 # M22-C — Biblioteca Ministerial experimental
 
+O [M22-C.1](./m22c1-r2-development.md) descreve a extensão opcional por URLs assinadas e o procedimento de homologação do R2 privado.
+
 O fluxo parte do mixer M22-B em `389d6f83cf3d615fa82e77e6d96e92948b7765ab`. Um administrador informa os metadados, seleciona os seis WAVs exportados e confirma a publicação. Um membro ativo encontra a gravação e carrega as seis faixas diretamente no mixer Web Audio. O frontend chama a API Express pelo cliente em `web/src/api.ts`.
 
 ## Acesso e estados

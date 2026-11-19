@@ -43,6 +43,14 @@ export interface MinistryAudioUpload {
   status: 'uploading' | 'published' | 'archived' | 'expired';
   uploadedStemIds: CanonicalStemId[];
   expiresAt: number;
+  transfer?: 'direct';
+}
+
+export interface MinistryAudioUploadGrant {
+  attempt: number;
+  url: string;
+  headers: Record<string, string>;
+  expiresAt: number;
 }
 
 export interface MinistryAudioReservation extends MinistryAudioMetadata {
@@ -50,6 +58,12 @@ export interface MinistryAudioReservation extends MinistryAudioMetadata {
   confirmed: true;
   model: MinistryAudioModel;
   stems: MinistryAudioStem[];
+}
+
+export interface MinistryAudioPlaybackTrack {
+  id: CanonicalStemId;
+  url: string;
+  headers?: Record<string, string>;
 }
 
 export interface MinistryAudioPlayback {
@@ -60,6 +74,7 @@ export interface MinistryAudioPlayback {
     model: MinistryAudioModel;
     stems: MinistryAudioStem[];
   };
-  tracks: Array<{ id: CanonicalStemId; url: string }>;
+  tracks: MinistryAudioPlaybackTrack[];
   expiresAt: number;
+  transfer?: 'direct';
 }

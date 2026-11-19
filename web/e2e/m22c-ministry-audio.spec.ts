@@ -5,6 +5,8 @@ const AUTH = 'http://127.0.0.1:9098/identitytoolkit.googleapis.com/v1/accounts:s
 const FIRESTORE = 'http://127.0.0.1:8186/v1/projects/demo-louvaio-unit/databases/(default)/documents';
 const audioRoute = '/ministerio/biblioteca-audio';
 const stems = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] as const;
+const directSimulator = process.env.MINISTRY_AUDIO_DIRECT_SIMULATOR === '1';
+const directPath = '/api/local/ministry-audio-objects/';
 
 async function seed(request: APIRequestContext, path: string, values: Record<string, string>) {
   const fields = Object.fromEntries(Object.entries(values).map(([name, stringValue]) => [name, { stringValue }]));
@@ -61,10 +63,25 @@ test('administrador publica e outro membro reproduz seis WAVs armazenados com um
   });
 
   const modelRequests: string[] = [];
+  const controlRequests: Array<{ path: string; authenticated: boolean }> = [];
+  const objectRequests: Array<{ method: string; signed: boolean; authenticated: boolean; cookies: boolean; conditional: boolean }> = [];
   const pageFor = async (token: string) => {
     const context = await browser.newContext({ serviceWorkers: 'block' });
     await context.route('**/*', async (route) => {
       const url = new URL(route.request().url());
+      const method = route.request().method();
+      if (url.pathname.startsWith(directPath) && (method === 'PUT' || method === 'GET')) {
+        const headers = await route.request().allHeaders();
+        objectRequests.push({
+          method,
+          signed: Boolean(url.search),
+          authenticated: 'authorization' in headers,
+          cookies: 'cookie' in headers,
+          conditional: method === 'PUT' ? headers['if-none-match'] === '*' : /^".*"$/.test(headers['if-match'] ?? ''),
+        });
+      } else if (/\/audio-library\/(?:.*\/)?(?:upload-url|complete|playback)$/.test(url.pathname)) {
+        controlRequests.push({ path: url.pathname, authenticated: Boolean((await route.request().allHeaders()).authorization?.startsWith('Bearer ')) });
+      }
       if (/\.(?:onnx|wasm)(?:$|\?)/.test(url.pathname) || url.pathname.includes('demucs-separation.worker')) {
         modelRequests.push(url.pathname);
         await route.abort();
@@ -127,7 +144,17 @@ test('administrador publica e outro membro reproduz seis WAVs armazenados com um
     await page.getByRole('button', { name: 'Abrir mixer' }).click();
     await expect(page.getByTestId('m22b-mixer-status')).toHaveAttribute('data-state', 'ready', { timeout: 30_000 });
     for (const stem of stems) await expect(page.getByTestId(`m22b-stem-channel-${stem}`)).toBeVisible();
-    expect(responseUrls.sort()).toEqual([...stems].sort());
+    expect(responseUrls.sort()).toEqual(directSimulator ? [] : [...stems].sort());
+    if (directSimulator) {
+      expect(controlRequests.filter(({ path }) => path.endsWith('/upload-url'))).toHaveLength(6);
+      expect(controlRequests.filter(({ path }) => path.endsWith('/complete'))).toHaveLength(12);
+      expect(controlRequests.filter(({ path }) => path.endsWith('/playback'))).toHaveLength(1);
+      expect(controlRequests.every(({ authenticated }) => authenticated)).toBe(true);
+      expect(objectRequests.map(({ method }) => method)).toEqual([...Array(6).fill('PUT'), ...Array(6).fill('GET')]);
+      expect(objectRequests.every(({ authenticated, cookies, conditional, signed }) => !authenticated && !cookies && conditional && signed)).toBe(true);
+    } else {
+      expect(objectRequests).toEqual([]);
+    }
     await page.getByTestId('m22b-mixer-play').click();
     await expect(page.getByTestId('m22b-mixer-status')).toHaveAttribute('data-state', 'playing');
     const starts = await page.evaluate(() => (window as Window & { audioStarts?: number[] }).audioStarts ?? []);

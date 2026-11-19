@@ -102,7 +102,8 @@ export function MinistryAudioPublicationForm({ ministryId, userId, onCancel, onP
         if (upload.uploadedStemIds.includes(id)) continue;
         const file = files[id];
         if (!file) throw new Error(`Selecione o arquivo WAV da faixa ${STEM_DISPLAY_LABELS_PT_BR[id]}.`);
-        upload = await api.ministryAudio.uploadStem(ministryId, current.uploadId, id, file, signal);
+        const uploadStem = upload.transfer === 'direct' ? api.ministryAudio.uploadDirectStem : api.ministryAudio.uploadStem;
+        upload = await uploadStem(ministryId, current.uploadId, id, file, signal);
         signal.throwIfAborted();
         setProgress(upload.uploadedStemIds.length);
       }

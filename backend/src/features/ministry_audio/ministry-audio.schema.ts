@@ -6,6 +6,10 @@ export const MAX_STEM_BYTES = 44 + 48_000 * MAX_UPLOAD_SECONDS * 4;
 export const stemIdSchema = z.enum(STEM_IDS);
 export const ministryIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 export const recordingIdSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const MAX_DIRECT_ATTEMPTS = 3;
+export const completeStemSchema = z.object({
+  attempt: z.number().int().min(1).max(MAX_DIRECT_ATTEMPTS),
+}).strict();
 
 const metadata = {
   title: z.string().trim().min(1).max(160),

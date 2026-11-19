@@ -3,6 +3,7 @@ import { db } from '../../lib/firebase';
 import { AppError } from '../../middleware/error-handler';
 import { MinistryRepository } from '../../repositories/MinistryRepository';
 import type { AudioManifest, RecordingMetadata, StemId } from './ministry-audio.schema';
+import type { ObjectReceipt } from './direct-storage';
 
 export interface AudioScope {
   ministryId: string;
@@ -19,6 +20,8 @@ export interface AudioRecording extends RecordingMetadata {
   manifest: AudioManifest;
   requestHash: string;
   uploadedStemIds: StemId[];
+  transfer?: 'direct';
+  directAttempts?: Partial<Record<StemId, { number: number; invalid?: true; receipt?: ObjectReceipt }>>;
   expiresAt: number;
   uploadDeadline?: number;
   publishedAt?: number;
@@ -61,7 +64,7 @@ export class MinistryAudioRepository {
     }, { readOnly: true });
   }
 
-  async reserve(scope: AudioScope, proposed: AudioRecording, now: () => number): Promise<AudioRecording> {
+  async reserve(scope: AudioScope, proposed: AudioRecording, now: () => number, cleanupGraceMs = 0): Promise<AudioRecording> {
     const collection = this.recordings(scope.ministryId);
     const ref = collection.doc(proposed.id);
     return db.runTransaction(async (transaction) => {
@@ -82,7 +85,7 @@ export class MinistryAudioRepository {
       const expiresAt = createdAt + (proposed.expiresAt - proposed.createdAt);
       const created = {
         ...proposed, createdAt, updatedAt: createdAt, expiresAt,
-        uploadDeadline: expiresAt, cleanupAfter: expiresAt,
+        uploadDeadline: expiresAt, cleanupAfter: expiresAt + cleanupGraceMs,
       };
       transaction.create(ref, created);
       return created;

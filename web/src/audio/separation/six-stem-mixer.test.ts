@@ -155,6 +155,37 @@ async function readBlobBytes(blob: Blob): Promise<Uint8Array> {
 }
 
 describe('SixStemWebAudioMixerController (M22-B)', () => {
+  it('fetches each deferred WAV after verifying and decoding the previous stem', async () => {
+    const context = new FakeMixerAudioContext();
+    const createBuffer = context.createBuffer.bind(context);
+    const events: string[] = [];
+    context.createBuffer = (...args) => {
+      events.push('decode');
+      return createBuffer(...args);
+    };
+    const mixer = new SixStemWebAudioMixerController({
+      createAudioContext: () => context,
+      yieldToMainThread: async () => {},
+      enableWavDownloads: false,
+    });
+    const stems = (await buildFakeSixStems(1000)).map(({ wavBytes, ...stem }) => ({
+      ...stem,
+      wavBytes: async () => {
+        events.push(stem.id);
+        return wavBytes.slice();
+      },
+    }));
+
+    expect((await mixer.loadStems(stems)).state).toBe('ready');
+    expect(events).toEqual(CANONICAL_STEM_IDS.flatMap((id) => [id, 'decode']));
+    events.length = 0;
+    stems[1].sha256 = 'f'.repeat(64);
+    expect((await mixer.loadStems(stems)).state).toBe('error');
+    expect(events).toEqual(['vocals', 'decode', 'drums']);
+    expect(mixer.getSnapshot().activeSourceCount).toBe(0);
+    mixer.dispose();
+  });
+
   it.each(['play', 'seek'] as const)('rolls back every source after a partial %s failure', async (operation) => {
     const context = new FakeMixerAudioContext();
     const originalCreate = context.createBufferSource.bind(context);

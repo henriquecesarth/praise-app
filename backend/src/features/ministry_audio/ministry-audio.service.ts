@@ -4,18 +4,25 @@ import { AppError } from '../../middleware/error-handler';
 import {
   MinistryAudioRepository, type AudioCursor, type AudioRecording, type AudioScope,
 } from './ministry-audio.repository';
-import { recordingIdSchema, STEM_IDS, type ListInput, type RecordingMetadata, type StemId, type UploadInput } from './ministry-audio.schema';
+import { MAX_DIRECT_ATTEMPTS, recordingIdSchema, STEM_IDS, type ListInput, type RecordingMetadata, type StemId, type UploadInput } from './ministry-audio.schema';
 import type { StemStorage } from './storage';
+import type { DirectStemStorage, ObjectReceipt } from './direct-storage';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TICKET_TTL_MS = 120_000;
 const CLEANUP_LEASE_MS = 300_000;
+const DIRECT_UPLOAD_TTL_SECONDS = 300;
+const DIRECT_CLEANUP_GRACE_MS = 900_000;
 const SEARCH_BATCH_SIZE = 49;
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const searchText = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 const objectKey = (record: AudioRecording, stem: StemId) =>
   `${record.ministryId}/${record.id}/${stem}.wav`;
+const finalKey = (record: AudioRecording, stem: StemId) =>
+  `objects/ministry-audio/${objectKey(record, stem)}`;
+const stagingKey = (record: AudioRecording, stem: StemId, attempt: number) =>
+  `staging/ministry-audio/${record.ministryId}/${record.id}/${stem}/${attempt}.wav`;
 
 function summary(record: AudioRecording) {
   const { id, title, artist, version, status, updatedAt } = record;
@@ -41,14 +48,15 @@ export class MinistryAudioService {
   constructor(
     private readonly storage: StemStorage,
     private readonly now: () => number = Date.now,
-    private readonly ticketSecret: Buffer = randomBytes(32)
+    private readonly ticketSecret: Buffer = randomBytes(32),
+    private readonly directStorage?: DirectStemStorage
   ) {}
 
   private uploadView(record: AudioRecording) {
     const { id, status, uploadedStemIds, expiresAt } = record;
     return {
       id, status: status === 'uploading' && expiresAt <= this.now() ? 'expired' : status,
-      uploadedStemIds, expiresAt,
+      uploadedStemIds, expiresAt, ...(record.transfer ? { transfer: record.transfer } : {}),
     };
   }
 
@@ -65,6 +73,24 @@ export class MinistryAudioService {
     }
   }
 
+  private getDirect(record: AudioRecording): DirectStemStorage {
+    if (record.transfer !== 'direct') throw new AppError(409, 'Esta sessão usa envio pelo servidor.');
+    if (!this.directStorage) throw new AppError(503, 'Armazenamento direto indisponível.');
+    return this.directStorage;
+  }
+
+  private getReceipt(record: AudioRecording, stemId: StemId): ObjectReceipt {
+    const receipt = record.directAttempts?.[stemId]?.receipt;
+    if (!receipt) throw new AppError(409, 'A faixa ainda precisa ser confirmada.');
+    return receipt;
+  }
+
+  private async assertDirectObjects(record: AudioRecording, storage: DirectStemStorage) {
+    await Promise.all(record.manifest.stems.map((stem) =>
+      storage.assertObject(finalKey(record, stem.id), stem, this.getReceipt(record, stem.id))
+    ));
+  }
+
   private async published(scope: AudioScope, id: string) {
     const record = await this.repository.read(scope, id, false);
     if (record.status !== 'published') throw new AppError(404, 'Gravação não encontrada.');
@@ -77,11 +103,13 @@ export class MinistryAudioService {
     const orderedStems = [...stems].sort((a, b) => STEM_IDS.indexOf(a.id) - STEM_IDS.indexOf(b.id));
     const manifest = { schemaVersion: 1 as const, recordingId: id, recordingVersion: version, model, stems: orderedStems };
     const now = this.now();
+    const direct = this.directStorage !== undefined;
     const record = await this.repository.reserve(scope, {
       id, ministryId: scope.ministryId, createdBy: scope.userId, createdAt: now, updatedAt: now,
       title, artist, version, requestHash: hash({ title, artist, version, manifest }), status: 'uploading',
       manifest, uploadedStemIds: [], expiresAt: now + DAY_MS,
-    }, this.now);
+      ...(direct ? { transfer: 'direct' as const } : {}),
+    }, this.now, direct ? DIRECT_CLEANUP_GRACE_MS : 0);
     return this.uploadView(record);
   }
 
@@ -92,6 +120,7 @@ export class MinistryAudioService {
   async upload(scope: AudioScope, id: string, stemId: StemId, bytes: Readable, length: string | undefined) {
     const record = await this.repository.read(scope, id, true);
     this.assertUploading(record);
+    if (record.transfer === 'direct') throw new AppError(409, 'Esta sessão usa URL de envio direto.');
     const expected = this.getStem(record, stemId);
     if (length !== undefined && Number(length) !== expected.sizeBytes) {
       throw new AppError(422, 'O tamanho da faixa difere do manifesto.');
@@ -108,12 +137,76 @@ export class MinistryAudioService {
     }));
   }
 
+  async issueUploadUrl(scope: AudioScope, id: string, stemId: StemId) {
+    const record = await this.repository.update(scope, id, (current) => {
+      this.getDirect(current);
+      this.assertUploading(current);
+      const attempt = current.directAttempts?.[stemId];
+      if (attempt?.receipt) throw new AppError(409, 'A faixa já foi confirmada.');
+      if (attempt && !attempt.invalid) return;
+      const number = (attempt?.number ?? 0) + 1;
+      if (number > MAX_DIRECT_ATTEMPTS) {
+        throw new AppError(409, 'Limite de tentativas da faixa atingido. Inicie uma nova reserva.');
+      }
+      return { directAttempts: { ...current.directAttempts, [stemId]: { number } } };
+    });
+    const attempt = record.directAttempts![stemId]!.number;
+    const now = this.now();
+    const seconds = Math.min(DIRECT_UPLOAD_TTL_SECONDS, Math.floor((record.expiresAt - now) / 1000));
+    if (seconds < 1) throw new AppError(409, 'A sessão de upload já foi encerrada.');
+    const grant = await this.getDirect(record).signUpload(stagingKey(record, stemId, attempt), this.getStem(record, stemId), seconds);
+    return { attempt, ...grant, expiresAt: now + seconds * 1000 };
+  }
+
+  async completeUpload(scope: AudioScope, id: string, stemId: StemId, attempt: number) {
+    const record = await this.repository.read(scope, id, true);
+    const storage = this.getDirect(record);
+    const currentAttempt = record.directAttempts?.[stemId];
+    if (currentAttempt?.number === attempt && currentAttempt.receipt) return this.uploadView(record);
+    this.assertUploading(record);
+    if (currentAttempt?.number !== attempt || currentAttempt.invalid) {
+      throw new AppError(409, 'Solicite a URL vigente desta faixa.');
+    }
+    let receipt: ObjectReceipt;
+    try {
+      receipt = await storage.seal(stagingKey(record, stemId, attempt), finalKey(record, stemId), this.getStem(record, stemId));
+    } catch (error) {
+      if (error instanceof AppError && error.statusCode === 422) {
+        await this.repository.update(scope, id, (current) => {
+          this.assertUploading(current);
+          const storedAttempt = current.directAttempts?.[stemId];
+          if (storedAttempt?.number !== attempt || storedAttempt.receipt) return;
+          return { directAttempts: { ...current.directAttempts, [stemId]: { number: attempt, invalid: true } } };
+        });
+      }
+      throw error;
+    }
+    const completed = await this.repository.update(scope, id, (current) => {
+      const storedAttempt = current.directAttempts?.[stemId];
+      if (storedAttempt?.number === attempt && storedAttempt.receipt) return;
+      this.assertUploading(current);
+      if (storedAttempt?.number !== attempt || storedAttempt.invalid) {
+        throw new AppError(409, 'Solicite a URL vigente desta faixa.');
+      }
+      return {
+        directAttempts: { ...current.directAttempts, [stemId]: { number: attempt, receipt } },
+        uploadedStemIds: STEM_IDS.filter((stem) => stem === stemId || current.uploadedStemIds.includes(stem)),
+        updatedAt: this.now(),
+      };
+    });
+    return this.uploadView(completed);
+  }
+
   async finalize(scope: AudioScope, id: string) {
     const record = await this.repository.read(scope, id, true);
     if (record.status === 'published') return summary(record);
     this.assertReadyToPublish(record);
-    for (const stem of record.manifest.stems) {
-      await this.storage.verify(objectKey(record, stem.id), stem);
+    if (record.transfer === 'direct') {
+      await this.assertDirectObjects(record, this.getDirect(record));
+    } else {
+      for (const stem of record.manifest.stems) {
+        await this.storage.verify(objectKey(record, stem.id), stem);
+      }
     }
     const published = await this.repository.update(scope, id, (current) => {
       if (current.status === 'published') return;
@@ -121,7 +214,7 @@ export class MinistryAudioService {
       const now = this.now();
       return {
         status: 'published', publishedAt: now, updatedAt: now, uploadedStemIds: [...STEM_IDS],
-        uploadDeadline: undefined, cleanupAfter: undefined,
+        uploadDeadline: undefined, cleanupAfter: current.transfer === 'direct' ? current.cleanupAfter : undefined,
       };
     });
     return summary(published);
@@ -191,7 +284,19 @@ export class MinistryAudioService {
   }
 
   async playback(scope: AudioScope, id: string) {
-    const { manifest } = await this.published(scope, id);
+    const record = await this.published(scope, id);
+    const { manifest } = record;
+    if (record.transfer === 'direct') {
+      const storage = this.getDirect(record);
+      await this.assertDirectObjects(record, storage);
+      await this.published(scope, id);
+      const expiresAt = this.now() + TICKET_TTL_MS;
+      const tracks = await Promise.all(manifest.stems.map(async (stem) => ({
+        id: stem.id,
+        ...await storage.signDownload(finalKey(record, stem.id), this.getReceipt(record, stem.id), TICKET_TTL_MS / 1000),
+      })));
+      return { manifest, expiresAt, tracks, transfer: record.transfer };
+    }
     const expiresAt = this.now() + TICKET_TTL_MS;
     return {
       manifest, expiresAt,
@@ -205,6 +310,7 @@ export class MinistryAudioService {
   async open(scope: AudioScope, id: string, stemId: StemId, ticket: string) {
     this.assertTicket(scope, id, stemId, ticket);
     const record = await this.published(scope, id);
+    if (record.transfer === 'direct') throw new AppError(404, 'Faixa não encontrada.');
     const stem = this.getStem(record, stemId);
     const stream = await this.storage.open(objectKey(record, stemId), stem);
     try {
@@ -223,21 +329,40 @@ export class MinistryAudioService {
       let claimed = false;
       const record = await this.repository.update(scope, id, (current) => {
         const now = this.now();
-        claimed = (current.status === 'uploading' || current.status === 'expired') &&
-          current.expiresAt <= now && current.cleanupAfter !== undefined && current.cleanupAfter <= now;
+        const unpublished = current.status === 'uploading' || current.status === 'expired';
+        claimed = (unpublished || current.transfer === 'direct') && current.expiresAt <= now &&
+          current.cleanupAfter !== undefined && current.cleanupAfter <= now;
         if (!claimed) return;
-        return { status: 'expired', uploadDeadline: undefined, cleanupAfter: now + CLEANUP_LEASE_MS, updatedAt: now };
+        const lease = { cleanupAfter: now + CLEANUP_LEASE_MS };
+        return unpublished
+          ? { ...lease, status: 'expired', uploadDeadline: undefined, updatedAt: now }
+          : lease;
       });
       if (!claimed) continue;
       // A failed removal leaves the lease eligible for retry after the timeout.
-      for (const stem of STEM_IDS) await this.storage.remove(objectKey(record, stem));
+      if (record.transfer === 'direct') {
+        const storage = this.getDirect(record);
+        const keys = STEM_IDS.flatMap((stem) => {
+          const attempts = record.directAttempts?.[stem]?.number ?? 0;
+          const candidates = Array.from({ length: attempts }, (_, index) => stagingKey(record, stem, index + 1));
+          if (record.status === 'expired' && attempts > 0) candidates.push(finalKey(record, stem));
+          return candidates;
+        });
+        const removed = await Promise.allSettled(keys.map((key) => storage.remove(key)));
+        const failure = removed.find((result) => result.status === 'rejected');
+        if (failure?.status === 'rejected') throw failure.reason;
+      } else {
+        for (const stem of STEM_IDS) await this.storage.remove(objectKey(record, stem));
+      }
       await this.repository.update(scope, id, (current) => {
-        if (current.status !== 'expired' || current.cleanupAfter !== record.cleanupAfter) return;
+        if (current.cleanupAfter !== record.cleanupAfter) return;
         const cleanupPasses = (current.cleanupPasses ?? 0) + 1;
         // Revisit once after the upload time limit to collect objects from an in-flight write.
         return { cleanupPasses, cleanupAfter: cleanupPasses === 1 ? this.now() + DAY_MS : undefined };
       });
       cleaned += 1;
+      // Bound the number of S3 operations per invocation.
+      if (record.transfer === 'direct') break;
     }
     return { cleaned };
   }

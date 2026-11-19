@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 
 const apiOrigin = 'http://127.0.0.1:4315';
 const webOrigin = 'http://127.0.0.1:4176';
+const directSimulator = process.env.MINISTRY_AUDIO_DIRECT_SIMULATOR === '1';
 
 export default defineConfig({
   testDir: './e2e',
@@ -34,7 +35,9 @@ export default defineConfig({
         FIRESTORE_EMULATOR_HOST: '127.0.0.1:8186',
         METADATA_SERVER_DETECTION: 'none',
         MINISTRY_AUDIO_EMULATOR: '1',
-        MINISTRY_AUDIO_SIMULATOR_DIR: join(tmpdir(), 'louvaio-m22c-e2e'),
+        MINISTRY_AUDIO_DIRECT_SIMULATOR: directSimulator ? '1' : '0',
+        MINISTRY_AUDIO_DIRECT_SIMULATOR_ORIGIN: apiOrigin,
+        MINISTRY_AUDIO_SIMULATOR_DIR: join(tmpdir(), 'louvaio-m22c-e2e', directSimulator ? 'direct' : 'proxy'),
         CORS_ORIGIN: webOrigin,
       },
     },
@@ -48,6 +51,7 @@ export default defineConfig({
         VERCEL_ENV: '',
         VITE_API_URL: `${apiOrigin}/api/v1`,
         VITE_MINISTRY_AUDIO_EMULATOR: '1',
+        VITE_MINISTRY_AUDIO_DIRECT_SIMULATOR: directSimulator ? '1' : '0',
       },
     },
   ],

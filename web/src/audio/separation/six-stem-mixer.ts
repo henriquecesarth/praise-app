@@ -29,7 +29,8 @@ export interface SeparatedStemMixerInput {
   labelPtBr?: string;
   sampleRate: number;
   totalFrames?: number;
-  wavBytes: Uint8Array;
+  // A deferred loader transfers ownership of a fresh WAV buffer to the mixer.
+  wavBytes: Uint8Array | (() => Promise<Uint8Array>);
   byteLength?: number;
   sha256?: string;
 }
@@ -656,15 +657,8 @@ export class SixStemWebAudioMixerController {
         sourceSha256: metadata?.sourceSha256 ?? null,
       };
 
-      const capturedInputs = CANONICAL_STEM_IDS.map((id) => {
-        const raw = byId.get(id)!;
-        const rawWavBytes = raw.wavBytes;
-        const rawByteLength = raw.byteLength;
-        const rawSampleRate = raw.sampleRate;
-        const rawTotalFrames = raw.totalFrames;
-        const rawSha256 = raw.sha256;
-        const rawLabelPtBr = raw.labelPtBr;
-
+      const capture = (raw: Omit<SeparatedStemMixerInput, 'wavBytes'>, rawWavBytes: Uint8Array, copy: boolean) => {
+        const { id, byteLength, sampleRate, totalFrames, sha256, labelPtBr } = raw;
         if (!(rawWavBytes instanceof Uint8Array) || rawWavBytes.byteLength === 0) {
           throw new AudioSeparationError(
             'EMPTY_AUDIO',
@@ -678,13 +672,12 @@ export class SixStemWebAudioMixerController {
           );
         }
 
-        // Snapshot all 6 stems + metadata synchronously BEFORE the first await/yield
-        // so caller mutations on any stem (1st..6th) or metadata cannot cause TOCTOU.
-        const wavBytes = rawWavBytes.slice();
-        if (rawByteLength !== undefined && rawByteLength !== wavBytes.byteLength) {
+        const wavBytes = copy || rawWavBytes.byteOffset !== 0 || rawWavBytes.byteLength !== rawWavBytes.buffer.byteLength
+          ? rawWavBytes.slice() : rawWavBytes;
+        if (byteLength !== undefined && byteLength !== wavBytes.byteLength) {
           throw new AudioSeparationError(
             'INVALID_AUDIO',
-            `Stem "${id}" declared byteLength (${rawByteLength}) mismatches WAV size (${wavBytes.byteLength}).`
+            `Stem "${id}" declared byteLength (${byteLength}) mismatches WAV size (${wavBytes.byteLength}).`
           );
         }
 
@@ -704,10 +697,10 @@ export class SixStemWebAudioMixerController {
         }
 
         if (
-          !Number.isInteger(rawSampleRate) ||
-          rawSampleRate <= 0 ||
-          rawSampleRate !== wavDescriptor.sampleRate ||
-          (rawTotalFrames !== undefined && rawTotalFrames !== wavDescriptor.totalFrames)
+          !Number.isInteger(sampleRate) ||
+          sampleRate <= 0 ||
+          sampleRate !== wavDescriptor.sampleRate ||
+          (totalFrames !== undefined && totalFrames !== wavDescriptor.totalFrames)
         ) {
           throw new AudioSeparationError(
             'INVALID_AUDIO',
@@ -735,30 +728,41 @@ export class SixStemWebAudioMixerController {
 
         return {
           id,
-          labelPtBr: rawLabelPtBr ?? STEM_DISPLAY_LABELS_PT_BR[id],
+          labelPtBr: labelPtBr ?? STEM_DISPLAY_LABELS_PT_BR[id],
           wavBytes,
           wavMaxFrames,
-          expectedSha256: rawSha256,
+          expectedSha256: sha256,
         };
+      };
+
+      // Capture metadata and eager WAVs before yielding so callers can release their inputs.
+      const capturedInputs = CANONICAL_STEM_IDS.map((id) => {
+        const { labelPtBr, sampleRate, totalFrames, byteLength, sha256, wavBytes } = byId.get(id)!;
+        const input = { id, labelPtBr, sampleRate, totalFrames, byteLength, sha256 };
+        return typeof wavBytes === 'function'
+          ? { input, read: wavBytes }
+          : { captured: capture(input, wavBytes, true) };
       });
 
       byId.clear();
       stems = [];
       const checksums = new Map<CanonicalStemId, string>();
 
-      for (const cap of capturedInputs) {
+      const verify = async (cap: ReturnType<typeof capture>) => {
         const sha256 = await computeSha256Hex(cap.wavBytes);
-        if (loadGen !== this.generation || this.disposed) {
-          return this.getSnapshot();
-        }
         if (cap.expectedSha256 !== undefined && cap.expectedSha256 !== sha256) {
           throw new AudioSeparationError(
             'INVALID_AUDIO',
             `Stem "${cap.id}" sha256 metadata mismatches WAV bytes.`
           );
         }
+        return sha256;
+      };
 
-        checksums.set(cap.id, sha256);
+      for (const { captured } of capturedInputs) {
+        if (!captured) continue;
+        checksums.set(captured.id, await verify(captured));
+        if (loadGen !== this.generation || this.disposed) return this.getSnapshot();
 
         await this.yieldToMainThreadFn();
         if (loadGen !== this.generation || this.disposed) {
@@ -766,9 +770,7 @@ export class SixStemWebAudioMixerController {
         }
       }
 
-      const finalSampleRate = resolvedSampleRate!;
-      const finalTotalFrames = resolvedTotalFrames!;
-      const ctx = this.ensureAudioGraph(finalSampleRate);
+      let ctx: MixerAudioContextLike | undefined;
       const stagedEntries: Array<{
         id: CanonicalStemId;
         labelPtBr: string;
@@ -780,20 +782,18 @@ export class SixStemWebAudioMixerController {
         downloadUrl: string | null;
       }> = [];
 
-      for (const stem of capturedInputs) {
-        if (loadGen !== this.generation || this.disposed) {
-          for (const url of pendingUrls) {
-            try {
-              this.revokeObjectURLFn(url);
-              this.revokedObjectUrlCount += 1;
-            } catch {
-              // Ignore revoke failure during rollback.
-            }
-          }
-          return this.getSnapshot();
-        }
+      for (const entry of capturedInputs) {
+        if (loadGen !== this.generation || this.disposed) return this.getSnapshot();
+        const stem = entry.captured ?? capture(entry.input, await entry.read(), false);
+        if (loadGen !== this.generation || this.disposed) return this.getSnapshot();
+        const sha256 = checksums.get(stem.id) ?? await verify(stem);
+        if (loadGen !== this.generation || this.disposed) return this.getSnapshot();
+
+        const finalSampleRate = resolvedSampleRate!;
+        const finalTotalFrames = resolvedTotalFrames!;
+        ctx ??= this.ensureAudioGraph(finalSampleRate);
         // Allocate only one temporary decoded pair at a time while staging final AudioBuffers.
-        const { left, right } = decodeWavToStereoFloat32(stem.wavBytes.buffer, {
+        const { left, right } = decodeWavToStereoFloat32(stem.wavBytes.buffer as ArrayBuffer, {
           expectedSampleRate: finalSampleRate,
           maxFrames: stem.wavMaxFrames,
         });
@@ -814,7 +814,7 @@ export class SixStemWebAudioMixerController {
           labelPtBr: stem.labelPtBr,
           audioBuffer,
           byteLength: stem.wavBytes.byteLength,
-          sha256: checksums.get(stem.id)!,
+          sha256,
           rms,
           peak,
           downloadUrl,
@@ -823,17 +823,7 @@ export class SixStemWebAudioMixerController {
         await this.yieldToMainThreadFn();
       }
 
-      if (loadGen !== this.generation || this.disposed) {
-        for (const url of pendingUrls) {
-          try {
-            this.revokeObjectURLFn(url);
-            this.revokedObjectUrlCount += 1;
-          } catch {
-            // Ignore revoke failure during rollback.
-          }
-        }
-        return this.getSnapshot();
-      }
+      if (loadGen !== this.generation || this.disposed) return this.getSnapshot();
 
       for (const staged of stagedEntries) {
         const stateEntry = this.stemStates[staged.id];
@@ -846,23 +836,16 @@ export class SixStemWebAudioMixerController {
         stateEntry.downloadUrl = staged.downloadUrl;
       }
 
-      this.sampleRate = finalSampleRate;
-      this.totalFrames = finalTotalFrames;
+      this.sampleRate = resolvedSampleRate!;
+      this.totalFrames = resolvedTotalFrames!;
       this.offsetFrames = 0;
       this.metadata = snapshotMetadata;
       this.applyGainsToNodes();
       this.state = 'ready';
+      pendingUrls.length = 0;
       this.emit();
       return this.getSnapshot();
     } catch (err) {
-      for (const url of pendingUrls) {
-        try {
-          this.revokeObjectURLFn(url);
-          this.revokedObjectUrlCount += 1;
-        } catch {
-          // Ignore revoke failure during rollback.
-        }
-      }
       if (loadGen !== this.generation || this.disposed) {
         return this.getSnapshot();
       }
@@ -880,6 +863,15 @@ export class SixStemWebAudioMixerController {
       };
       this.emit();
       return this.getSnapshot();
+    } finally {
+      for (const url of pendingUrls) {
+        try {
+          this.revokeObjectURLFn(url);
+          this.revokedObjectUrlCount += 1;
+        } catch {
+          // Ignore revoke failure during rollback.
+        }
+      }
     }
   }
 

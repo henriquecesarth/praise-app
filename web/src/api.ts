@@ -69,6 +69,7 @@ import {
   type MinistryAudioRecord,
   type MinistryAudioReservation,
   type MinistryAudioUpload,
+  type MinistryAudioUploadGrant,
 } from './audio/ministry-audio-contract';
 import type { CanonicalStemId } from './audio/separation/demucs-onnx-separator';
 
@@ -486,6 +487,62 @@ function ministryAudioPath(ministryId: string) {
   return `${API_URL}/ministries/${encodeURIComponent(ministryId)}/audio-library`;
 }
 
+function ministryAudioDirectUrl(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('Endereço de transferência inválido.');
+  }
+  if (!url.search || url.hash || url.username || url.password || url.pathname === '/') {
+    throw new Error('Endereço de transferência inválido.');
+  }
+  const allowedR2 = url.protocol === 'https:' && !url.port &&
+    /^[a-f0-9]{32}\.r2\.cloudflarestorage\.com$/.test(url.hostname) &&
+    url.origin === import.meta.env.VITE_MINISTRY_AUDIO_R2_ORIGIN;
+  const allowedSimulator = import.meta.env.VITE_MINISTRY_AUDIO_EMULATOR === '1' &&
+    import.meta.env.VITE_MINISTRY_AUDIO_DIRECT_SIMULATOR === '1' &&
+    (import.meta.env.DEV || import.meta.env.MODE === 'test') && isMinistryAudioLoopbackApi() &&
+    url.origin === new URL(API_URL).origin && url.pathname.startsWith('/api/local/ministry-audio-objects/');
+  if (!allowedR2 && !allowedSimulator) throw new Error('Endereço de transferência inválido.');
+  return url.href;
+}
+
+function ministryAudioDirectHeaders(method: 'PUT' | 'GET', headers: Record<string, string> | undefined): Record<string, string> {
+  const values = new Map(Object.entries(headers ?? {}).map(([key, value]) => [key.toLowerCase(), value]));
+  const match = values.get('if-match');
+  if (method === 'GET' && Object.keys(headers ?? {}).length === 1 && typeof match === 'string' && /^"[^"\x00-\x20\x7f,]+"$/.test(match)) {
+    return { 'if-match': match };
+  }
+
+  const cacheControl = values.get('cache-control');
+  if (method === 'PUT' && Object.keys(headers ?? {}).length === (cacheControl === undefined ? 2 : 3) &&
+      values.get('if-none-match') === '*' && values.get('content-type') === 'audio/wav' &&
+      (cacheControl === undefined || cacheControl === 'private, no-store')) {
+    return { 'if-none-match': '*', 'content-type': 'audio/wav', ...(cacheControl ? { 'cache-control': cacheControl } : {}) };
+  }
+  throw new Error('Cabeçalhos de transferência inválidos.');
+}
+
+function fetchMinistryAudioObject(url: string, method: 'PUT' | 'GET', headers: HeadersInit, signal: AbortSignal, body?: Blob) {
+  signal.throwIfAborted();
+  return fetch(url, {
+    method, headers, signal, body, cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
+  });
+}
+
+function assertMinistryStemSize(size: number) {
+  if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_MINISTRY_STEM_BYTES) throw new Error('Tamanho de faixa inválido.');
+}
+
+async function readMinistryWav(response: Response, sizeBytes: number, signal: AbortSignal) {
+  if (response.headers.get('content-type')?.split(';')[0] !== 'audio/wav') {
+    await response.body?.cancel();
+    throw new Error('Formato de faixa inválido.');
+  }
+  return readMinistryStem(response, sizeBytes, signal);
+}
+
 async function readMinistryStem(response: Response, sizeBytes: number, signal: AbortSignal) {
   const declaredLength = response.headers.get('content-length');
   if (declaredLength !== null && Number(declaredLength) !== sizeBytes) {
@@ -528,6 +585,17 @@ async function requestMinistryAudio<T>(ministryId: string, path: string, signal:
   return handleResponse<T>(response, { signal });
 }
 
+async function completeMinistryAudioStem(ministryId: string, path: string, attempt: number, signal: AbortSignal) {
+  try {
+    return await requestMinistryAudio<MinistryAudioUpload>(ministryId, `${path}/complete`, signal, {
+      method: 'POST', body: JSON.stringify({ attempt }),
+    });
+  } catch (error) {
+    if (error instanceof ApiError && (error.code === 'AUDIO_UPLOAD_MISSING' || error.code === 'AUDIO_UPLOAD_INVALID')) return error;
+    throw error;
+  }
+}
+
 const ministryAudio = {
   list(ministryId: string, filters: { q?: string; cursor?: string; limit?: number }, signal: AbortSignal) {
     const params = new URLSearchParams();
@@ -548,6 +616,45 @@ const ministryAudio = {
       method: 'PUT', headers: { 'Content-Type': 'audio/wav' }, body: file,
     });
   },
+  async uploadDirectStem(ministryId: string, id: string, stemId: CanonicalStemId, file: Blob, signal: AbortSignal) {
+    assertMinistryStemSize(file.size);
+    const path = `/uploads/${encodeURIComponent(id)}/stems/${stemId}`;
+    // One additional grant covers expiry or an attempt marked invalid by the API.
+    for (let grantIndex = 0; grantIndex < 2; grantIndex += 1) {
+      const grant = await requestMinistryAudio<MinistryAudioUploadGrant>(ministryId, `${path}/upload-url`, signal, { method: 'POST' });
+      if (!Number.isSafeInteger(grant.attempt) || grant.attempt < 1 || !Number.isSafeInteger(grant.expiresAt)) {
+        throw new Error('Autorização de transferência inválida.');
+      }
+      const previous = await completeMinistryAudioStem(ministryId, path, grant.attempt, signal);
+      if (!(previous instanceof ApiError)) return previous;
+      // The device clock is not trusted for expiry; an expired grant is detected by the provider's 403.
+      if (previous.code === 'AUDIO_UPLOAD_INVALID') {
+        if (grantIndex === 0) continue;
+        throw previous;
+      }
+
+      const url = ministryAudioDirectUrl(grant.url);
+      const headers = ministryAudioDirectHeaders('PUT', grant.headers);
+      let putStatus: number | undefined;
+      try {
+        const response = await fetchMinistryAudioObject(url, 'PUT', headers, signal, file);
+        putStatus = response.status;
+        await response.body?.cancel();
+      } catch {
+        signal.throwIfAborted();
+        // A dropped response can still leave an object to confirm.
+      }
+      const completed = await completeMinistryAudioStem(ministryId, path, grant.attempt, signal);
+      if (!(completed instanceof ApiError)) return completed;
+      // A PUT with no HTTP status (opaque network/CORS failure from an expired URL) is safe to retry once only
+      // because the API just confirmed that the object is absent and the grant is create-only.
+      const noObject = putStatus === undefined && completed.code === 'AUDIO_UPLOAD_MISSING';
+      if (grantIndex === 0 && (completed.code === 'AUDIO_UPLOAD_INVALID' || putStatus === 403 || noObject)) continue;
+      if (completed.code === 'AUDIO_UPLOAD_INVALID' || putStatus === 409 || putStatus === 412) throw completed;
+      throw new Error('Não foi possível enviar a faixa. Tente novamente.');
+    }
+    throw new Error('Não foi possível autorizar o envio da faixa.');
+  },
   finalize(ministryId: string, id: string, signal: AbortSignal) {
     return requestMinistryAudio<MinistryAudioRecord>(ministryId, `/uploads/${encodeURIComponent(id)}/finalize`, signal, { method: 'POST' });
   },
@@ -567,7 +674,7 @@ const ministryAudio = {
     const params = new URLSearchParams(url.slice(prefix.length));
     const entries = [...params];
     if (entries.length !== 1 || entries[0][0] !== 'ticket' || !entries[0][1]) throw new Error('Acesso à faixa inválido.');
-    if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > MAX_MINISTRY_STEM_BYTES) throw new Error('Tamanho de faixa inválido.');
+    assertMinistryStemSize(sizeBytes);
 
     signal.throwIfAborted();
     const response = await fetch(`${ministryAudioPath(ministryId)}${path}?${params.toString()}`, {
@@ -578,11 +685,27 @@ const ministryAudio = {
     });
     signal.throwIfAborted();
     if (!response.ok) await handleResponse<never>(response, { signal });
-    if (response.headers.get('content-type')?.split(';')[0] !== 'audio/wav') {
-      await response.body?.cancel();
-      throw new Error('Formato de faixa inválido.');
+    return readMinistryWav(response, sizeBytes, signal);
+  },
+  async downloadDirectStem(url: string, headers: Record<string, string> | undefined, sizeBytes: number, signal: AbortSignal) {
+    assertMinistryStemSize(sizeBytes);
+    const target = ministryAudioDirectUrl(url);
+    const requestHeaders = ministryAudioDirectHeaders('GET', headers);
+    let response: Response;
+    try {
+      response = await fetchMinistryAudioObject(target, 'GET', requestHeaders, signal);
+    } catch (reason) {
+      signal.throwIfAborted();
+      // An expired signed URL may surface as an opaque network/CORS failure; status 0 lets the caller renew once.
+      if (reason instanceof TypeError) throw new ApiError('A faixa não está disponível para reprodução.', 0);
+      throw reason;
     }
-    return readMinistryStem(response, sizeBytes, signal);
+    signal.throwIfAborted();
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new ApiError('A faixa não está disponível para reprodução.', response.status);
+    }
+    return readMinistryWav(response, sizeBytes, signal);
   },
 };
 

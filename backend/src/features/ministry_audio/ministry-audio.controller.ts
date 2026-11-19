@@ -4,12 +4,13 @@ import { z } from 'zod';
 import type { AuthenticatedRequest } from '../../middleware/auth';
 import { AppError } from '../../middleware/error-handler';
 import {
-  listSchema, metadataSchema, ministryIdSchema, recordingIdSchema, stemIdSchema, uploadSchema,
+  completeStemSchema, listSchema, metadataSchema, ministryIdSchema, recordingIdSchema, stemIdSchema, uploadSchema,
 } from './ministry-audio.schema';
 import type { MinistryAudioService } from './ministry-audio.service';
 
 const IO_LIMIT = 12;
 const REQUEST_LIMIT_MS = 120_000;
+const DIRECT_SEAL_LIMIT = 2;
 const ticketSchema = z.string().max(80);
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
@@ -31,6 +32,7 @@ function recording(req: AuthenticatedRequest) {
 
 export class MinistryAudioController {
   private activeIO = 0;
+  private activeSeals = 0;
 
   constructor(private readonly service: MinistryAudioService) {}
 
@@ -80,6 +82,23 @@ export class MinistryAudioController {
 
   finalize = async (req: AuthenticatedRequest, res: Response) => {
     res.json(await this.withIO(() => this.service.finalize(scope(req), recording(req))));
+  };
+
+  issueUploadUrl = async (req: AuthenticatedRequest, res: Response) => {
+    res.json(await this.service.issueUploadUrl(scope(req), recording(req), parse(stemIdSchema, req.params.stemId)));
+  };
+
+  completeUpload = async (req: AuthenticatedRequest, res: Response) => {
+    const { attempt } = parse(completeStemSchema, req.body);
+    if (this.activeSeals >= DIRECT_SEAL_LIMIT) throw new AppError(429, 'Verificação ocupada. Tente novamente.');
+    this.activeSeals += 1;
+    try {
+      res.json(await this.withIO(() =>
+        this.service.completeUpload(scope(req), recording(req), parse(stemIdSchema, req.params.stemId), attempt)
+      ));
+    } finally {
+      this.activeSeals -= 1;
+    }
   };
 
   edit = async (req: AuthenticatedRequest, res: Response) => {

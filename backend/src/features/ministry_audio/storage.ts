@@ -51,7 +51,7 @@ function checkHeader(header: Buffer, expected: StemManifest, status: 409 | 422):
   }
 }
 
-async function verifyWav(
+export async function verifyWav(
   source: Readable,
   expected: StemManifest,
   status: 409 | 422,

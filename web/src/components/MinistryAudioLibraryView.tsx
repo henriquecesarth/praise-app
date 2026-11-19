@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { api, getFriendlyErrorMessage } from '../api';
+import { api, ApiError, getFriendlyErrorMessage } from '../api';
 import {
   MAX_MINISTRY_AUDIO_SAMPLE_RATE,
   MAX_MINISTRY_AUDIO_SECONDS,
@@ -8,7 +8,7 @@ import {
   type MinistryAudioPage,
   type MinistryAudioRecord,
 } from '../audio/ministry-audio-contract';
-import { loadMinistryMixerTracks } from '../audio/ministry-audio-files';
+import { prepareMinistryMixerTracks } from '../audio/ministry-audio-files';
 import { SixStemMixerPanel } from '../audio/separation/SixStemMixerPanel';
 import { SixStemWebAudioMixerController, type SeparatedMixerMetadata, type SeparatedStemMixerInput } from '../audio/separation/six-stem-mixer';
 import { ConfirmDialog } from './ui/ConfirmDialog';
@@ -94,8 +94,43 @@ export default function MinistryAudioLibraryView({ ministryId, ministryName, use
     try {
       const response = await api.ministryAudio.getPlayback(ministryId, recording.id, signal);
       signal.throwIfAborted();
-      const stems = await loadMinistryMixerTracks(recording.id, response, (stem, url) =>
-        api.ministryAudio.downloadStem(ministryId, recording.id, stem.id, url, stem.sizeBytes, signal));
+      let activeGrant = response;
+      // Bounds extra grants when failures are not caused by expiry (CORS misconfiguration, captive portal).
+      let renewals = 0;
+      async function renewPlayback() {
+        if (renewals >= 2) throw new Error('Autorização de reprodução inválida.');
+        renewals += 1;
+        const next = await api.ministryAudio.getPlayback(ministryId, recording.id, signal);
+        signal.throwIfAborted();
+        if (next.transfer !== 'direct' || next.manifest.recordingId !== recording.id ||
+            !Number.isSafeInteger(next.expiresAt)) {
+          throw new Error('Autorização de reprodução inválida.');
+        }
+        activeGrant = next;
+      }
+      const prepared = prepareMinistryMixerTracks(recording.id, response, async (stem, track) => {
+        if (response.transfer !== 'direct') {
+          return api.ministryAudio.downloadStem(ministryId, recording.id, stem.id, track.url, stem.sizeBytes, signal);
+        }
+        const download = () => {
+          const signed = activeGrant.tracks.find(({ id }) => id === stem.id);
+          if (!signed) throw new Error('Autorização de reprodução inválida.');
+          return api.ministryAudio.downloadDirectStem(signed.url, signed.headers, stem.sizeBytes, signal);
+        };
+        if (!Number.isSafeInteger(activeGrant.expiresAt)) throw new Error('Autorização de reprodução inválida.');
+        // The device clock is not trusted for expiry; an expired GET is renewed on 401/403.
+        try {
+          return await download();
+        } catch (reason) {
+          if (!(reason instanceof ApiError) || (reason.statusCode !== 0 && reason.statusCode !== 401 && reason.statusCode !== 403)) throw reason;
+          await renewPlayback();
+          return download();
+        }
+      });
+      // Direct playback fetches and decodes each WAV before moving on to the next.
+      const stems = response.transfer === 'direct' ? prepared : await Promise.all(prepared.map(async (stem) => ({
+        ...stem, wavBytes: await stem.wavBytes(),
+      })));
       signal.throwIfAborted();
       setPlayback({
         state: 'ready', recording, stems,
@@ -192,7 +227,7 @@ export default function MinistryAudioLibraryView({ ministryId, ministryName, use
               playbackOnly stems={playback.stems} metadata={playback.metadata} createController={createLibraryMixer}
               onInputsCaptured={(stems) => setPlayback((current) => current?.state === 'ready' && current.stems === stems
                 ? { ...current, stems: null } : current)}
-              onPlaybackError={(error) => setPlayback((current) => current?.state === 'ready' && current.recording.id === playback.recording.id
+              onPlaybackError={(error) => setPlayback((current) => current?.state === 'ready' && current.metadata === playback.metadata
                 ? { state: 'error', recording: current.recording, error } : current)}
               onDisposed={closePlayback}
             />

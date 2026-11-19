@@ -5,13 +5,13 @@ import {
   parseStrictWavDescriptor,
   type CanonicalStemId,
 } from './separation/demucs-onnx-separator';
-import type { SeparatedStemMixerInput } from './separation/six-stem-mixer';
 import {
   MAX_MINISTRY_AUDIO_SAMPLE_RATE,
   MAX_MINISTRY_AUDIO_SECONDS,
   MAX_MINISTRY_STEM_BYTES,
   MIN_MINISTRY_AUDIO_SAMPLE_RATE,
   type MinistryAudioPlayback,
+  type MinistryAudioPlaybackTrack,
   type MinistryAudioStem,
 } from './ministry-audio-contract';
 
@@ -57,18 +57,18 @@ export async function describeMinistryStemFiles(files: MinistryStemFiles, signal
   return descriptors;
 }
 
-export async function loadMinistryMixerTracks(
+export function prepareMinistryMixerTracks(
   recordingId: string,
   playback: MinistryAudioPlayback,
-  download: (stem: MinistryAudioStem, url: string) => Promise<Uint8Array>,
-): Promise<SeparatedStemMixerInput[]> {
+  download: (stem: MinistryAudioStem, track: MinistryAudioPlaybackTrack) => Promise<Uint8Array>,
+) {
   const { manifest, tracks } = playback;
   if (manifest.schemaVersion !== 1 || manifest.recordingId !== recordingId ||
       manifest.stems.length !== CANONICAL_STEM_IDS.length || tracks.length !== CANONICAL_STEM_IDS.length) {
     throw new Error('Dados de reprodução inválidos.');
   }
 
-  const requests = CANONICAL_STEM_IDS.map((id) => {
+  return CANONICAL_STEM_IDS.map((id) => {
     const stem = manifest.stems.find((value) => value.id === id);
     const track = tracks.find((value) => value.id === id);
     if (!stem || !track || stem.codec !== 'pcm_s16le' || stem.channels !== 2 || !/^[a-f0-9]{64}$/.test(stem.sha256) ||
@@ -77,15 +77,13 @@ export async function loadMinistryMixerTracks(
         stem.sizeBytes !== 44 + stem.frames * 4) {
       throw new Error('Dados de reprodução inválidos.');
     }
-    return { stem, url: track.url };
+    return {
+      id: stem.id,
+      sampleRate: stem.sampleRate,
+      totalFrames: stem.frames,
+      byteLength: stem.sizeBytes,
+      sha256: stem.sha256,
+      wavBytes: () => download(stem, track),
+    };
   });
-
-  return Promise.all(requests.map(async ({ stem, url }) => ({
-    id: stem.id,
-    sampleRate: stem.sampleRate,
-    totalFrames: stem.frames,
-    byteLength: stem.sizeBytes,
-    sha256: stem.sha256,
-    wavBytes: await download(stem, url),
-  })));
 }
