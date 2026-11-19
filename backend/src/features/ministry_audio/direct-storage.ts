@@ -10,9 +10,24 @@ export interface ObjectReceipt {
   etag: string;
 }
 
+// Server-computed fact: the staging object identified by this ETag and last-modified time was fully read and its
+// header, size and SHA-256 matched the manifest. It is never supplied by a client and is only a hint: the adapter
+// re-checks the live object (ETag, time, size, metadata) and falls back to a full verification on any difference.
+export interface VerifiedStaging {
+  etag: string;
+  lastModified: number;
+}
+
+export interface SealOptions {
+  /** A previously persisted verification of this attempt's staging object. */
+  verified?: VerifiedStaging;
+  /** Called once a full verification succeeds and before promotion, so a later failure does not lose it. */
+  onVerified?: (verified: VerifiedStaging) => Promise<void>;
+}
+
 export interface DirectStemStorage {
   signUpload(key: string, expected: StemManifest, expiresInSeconds: number): Promise<SignedObjectRequest>;
-  seal(stagingKey: string, finalKey: string, expected: StemManifest): Promise<ObjectReceipt>;
+  seal(stagingKey: string, finalKey: string, expected: StemManifest, options?: SealOptions): Promise<ObjectReceipt>;
   assertObject(key: string, expected: StemManifest, receipt: ObjectReceipt): Promise<void>;
   signDownload(key: string, receipt: ObjectReceipt, expiresInSeconds: number): Promise<SignedObjectRequest>;
   remove(key: string): Promise<void>;

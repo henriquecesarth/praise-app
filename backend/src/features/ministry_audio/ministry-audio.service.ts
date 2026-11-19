@@ -6,7 +6,7 @@ import {
 } from './ministry-audio.repository';
 import { MAX_DIRECT_ATTEMPTS, recordingIdSchema, STEM_IDS, type ListInput, type RecordingMetadata, type StemId, type UploadInput } from './ministry-audio.schema';
 import type { StemStorage } from './storage';
-import type { DirectStemStorage, ObjectReceipt } from './direct-storage';
+import type { DirectStemStorage, ObjectReceipt, VerifiedStaging } from './direct-storage';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TICKET_TTL_MS = 120_000;
@@ -169,7 +169,11 @@ export class MinistryAudioService {
     }
     let receipt: ObjectReceipt;
     try {
-      receipt = await storage.seal(stagingKey(record, stemId, attempt), finalKey(record, stemId), this.getStem(record, stemId));
+      receipt = await storage.seal(stagingKey(record, stemId, attempt), finalKey(record, stemId), this.getStem(record, stemId), {
+        // Only a verification this service persisted for this very attempt is offered back, never client input.
+        verified: currentAttempt.verified,
+        onVerified: (verified) => this.rememberVerification(scope, id, stemId, attempt, verified),
+      });
     } catch (error) {
       if (error instanceof AppError && error.statusCode === 422) {
         await this.repository.update(scope, id, (current) => {
@@ -195,6 +199,22 @@ export class MinistryAudioService {
       };
     });
     return this.uploadView(completed);
+  }
+
+  // Keeps a finished verification so that a timeout or failure during promotion does not discard it. Best effort:
+  // a stale or concurrent state is ignored, and a failure here never changes the outcome of the seal.
+  private async rememberVerification(scope: AudioScope, id: string, stemId: StemId, attempt: number, verified: VerifiedStaging) {
+    try {
+      await this.repository.update(scope, id, (current) => {
+        this.assertUploading(current);
+        const stored = current.directAttempts?.[stemId];
+        if (stored?.number !== attempt || stored.receipt || stored.invalid) return;
+        if (stored.verified?.etag === verified.etag && stored.verified.lastModified === verified.lastModified) return;
+        return { directAttempts: { ...current.directAttempts, [stemId]: { number: attempt, verified } } };
+      });
+    } catch {
+      // The next completion simply verifies again.
+    }
   }
 
   async finalize(scope: AudioScope, id: string) {

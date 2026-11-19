@@ -5,7 +5,7 @@ import { AppError } from '../../middleware/error-handler';
 import {
   assertDirectStorageKey, assertFinalKey, assertSealKeys, assertStagingKey,
   objectConflict, uploadInvalid, uploadMissing,
-  type DirectStemStorage, type ObjectReceipt, type SignedObjectRequest,
+  type DirectStemStorage, type ObjectReceipt, type SealOptions, type SignedObjectRequest,
 } from './direct-storage';
 import { MAX_STEM_BYTES, type StemManifest } from './ministry-audio.schema';
 import { verifyWav } from './storage';
@@ -75,7 +75,8 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
     });
   }
 
-  async seal(stagingKey: string, finalKey: string, expected: StemManifest): Promise<ObjectReceipt> {
+  // The simulator verifies in memory, so it has no use for a persisted verification and ignores the options.
+  async seal(stagingKey: string, finalKey: string, expected: StemManifest, _options?: SealOptions): Promise<ObjectReceipt> {
     assertSealKeys(stagingKey, finalKey, expected.id);
     const staged = this.objects.get(stagingKey);
     if (!staged) throw uploadMissing();

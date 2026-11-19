@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../lib/firebase';
-import { errorHandler } from '../../middleware/error-handler';
+import { AppError, errorHandler } from '../../middleware/error-handler';
 import { UserRepository } from '../../repositories/UserRepository';
 import { MinistryAudioRepository } from './ministry-audio.repository';
 import { createMinistryAudioRouter } from './ministry-audio.routes';
@@ -373,6 +373,49 @@ describe('Ministry audio direct HTTP with Firestore Emulator and signed object s
     expect((await readJson<Upload>(await complete(id, attempt))).uploadedStemIds).toEqual(['vocals']);
   });
 
+  it('keeps a finished verification across a failed promotion and offers it back only for that attempt', async () => {
+    const { id } = await reserve();
+    const { attempt } = await writeStem(id);
+    const seal = storage.seal.bind(storage);
+    const verified = { etag: '"0123456789abcdef0123456789abcdef"', lastModified: Date.UTC(2026, 10, 19, 11) };
+    const offered: Array<unknown> = [];
+    vi.spyOn(storage, 'seal')
+      .mockImplementationOnce(async (_staging, _final, _manifest, options) => {
+        offered.push(options?.verified);
+        await options?.onVerified?.(verified);
+        throw new AppError(503, 'Injected promotion timeout');
+      })
+      .mockImplementationOnce(async (staging, final, manifest, options) => {
+        offered.push(options?.verified);
+        return seal(staging, final, manifest, options);
+      });
+    expect(await statusOf(await complete(id, attempt))).toBe(503);
+    expect((await readJson<Upload>(await complete(id, attempt))).uploadedStemIds).toEqual(['vocals']);
+    expect(offered).toEqual([undefined, verified]);
+    // A confirmed stem is answered from its receipt and never sealed again.
+    expect((await readJson<Upload>(await complete(id, attempt))).uploadedStemIds).toEqual(['vocals']);
+    expect(offered).toHaveLength(2);
+  });
+
+  it('drops a persisted verification when the attempt turns invalid, so a fresh attempt starts clean', async () => {
+    const { id } = await reserve();
+    const first = await writeStem(id);
+    const offered: Array<unknown> = [];
+    vi.spyOn(storage, 'seal')
+      .mockImplementationOnce(async (_staging, _final, _manifest, options) => {
+        await options?.onVerified?.({ etag: '"0123456789abcdef0123456789abcdef"', lastModified: 1 });
+        throw new AppError(422, 'Injected invalid upload');
+      })
+      .mockImplementation(async (_staging, _final, _manifest, options) => {
+        offered.push(options?.verified);
+        throw new AppError(503, 'Injected');
+      });
+    expect(await statusOf(await complete(id, first.attempt))).toBe(422);
+    const next = await readJson<UploadGrant>(await grant(id));
+    expect(next.attempt).toBe(first.attempt + 1);
+    expect(await statusOf(await complete(id, next.attempt))).toBe(503);
+    expect(offered).toEqual([undefined]);
+  });
   it('binds URL origin, method, object path, signed headers and size, with bounded cleanup of staging and final keys', async () => {
     const { id, expiresAt } = await reserve();
     const issued = await readJson<UploadGrant>(await grant(id));

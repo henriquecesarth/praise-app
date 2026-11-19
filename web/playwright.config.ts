@@ -15,6 +15,8 @@ export default defineConfig({
     '**/m22a-demucs-onnx-browser.spec.ts',
     '**/m22b-demucs-worker-mixer.spec.ts',
     '**/m22c-ministry-audio.spec.ts',
+    // Live R2 homologation: it has its own config (playwright.m22c-r2.config.ts) and must never run by default.
+    '**/m22c-r2-ministry-audio.spec.ts',
   ],
   outputDir: './test-results/playwright-output',
   fullyParallel: false,

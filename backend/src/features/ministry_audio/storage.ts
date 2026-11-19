@@ -51,18 +51,32 @@ function checkHeader(header: Buffer, expected: StemManifest, status: 409 | 422):
   }
 }
 
+// Optional timing breakdown of a verification pass. Durations only: no keys, URLs or content.
+export interface VerifyStats {
+  waitMs: number;
+  hashMs: number;
+  writeMs: number;
+}
+
 export async function verifyWav(
   source: Readable,
   expected: StemManifest,
   status: 409 | 422,
   destination?: FileHandle,
+  stats?: VerifyStats,
 ): Promise<void> {
   if (!stemSchema.safeParse(expected).success) throw invalidWav(status);
 
   const header = Buffer.alloc(WAV_HEADER_BYTES);
   const hash = createHash('sha256');
   let sizeBytes = 0;
+  let mark = stats ? performance.now() : 0;
   for await (const chunk of source.iterator({ destroyOnReturn: false })) {
+    if (stats) {
+      const arrived = performance.now();
+      stats.waitMs += arrived - mark;
+      mark = arrived;
+    }
     if (!Buffer.isBuffer(chunk) || sizeBytes + chunk.length > expected.sizeBytes) {
       throw invalidWav(status);
     }
@@ -74,7 +88,17 @@ export async function verifyWav(
     }
     sizeBytes += chunk.length;
     hash.update(chunk);
+    if (stats) {
+      const hashed = performance.now();
+      stats.hashMs += hashed - mark;
+      mark = hashed;
+    }
     await destination?.writeFile(chunk);
+    if (stats && destination) {
+      const written = performance.now();
+      stats.writeMs += written - mark;
+      mark = written;
+    }
   }
   if (sizeBytes !== expected.sizeBytes || hash.digest('hex') !== expected.sha256) {
     throw invalidWav(status);

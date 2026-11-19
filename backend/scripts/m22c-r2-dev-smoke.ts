@@ -3,11 +3,27 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { getR2DevelopmentConfig } from '../src/features/ministry_audio/r2-development-config';
 import type { StemManifest } from '../src/features/ministry_audio/ministry-audio.schema';
 
+// Authorized CORS origin of the development bucket. Keep it aligned with the bucket policy.
+const ALLOWED_ORIGIN = 'http://127.0.0.1:5173';
+
+class StepFailure extends Error {}
+
 function check(condition: unknown, step: string): asserts condition {
-  if (!condition) throw new Error(step);
+  if (!condition) throw new StepFailure(step);
+  console.log(`PASS  ${step}`);
 }
 
-function makeWav(): Uint8Array {
+async function step<T>(name: string, action: () => Promise<T>): Promise<T> {
+  try {
+    const result = await action();
+    console.log(`PASS  ${name}`);
+    return result;
+  } catch {
+    throw new StepFailure(name);
+  }
+}
+
+function makeWav(): Uint8Array<ArrayBuffer> {
   const frames = 8_000;
   const bytes = Buffer.alloc(44 + frames * 4);
   bytes.write('RIFF', 0);
@@ -39,7 +55,7 @@ async function run() {
 
   const { R2StemStorage } = await import('../src/features/ministry_audio/r2-storage');
   const storage = new R2StemStorage(getR2DevelopmentConfig(process.env));
-  const origin = 'http://127.0.0.1:4176';
+  const origin = ALLOWED_ORIGIN;
   const wav = makeWav();
   const sha256 = createHash('sha256').update(wav).digest('hex');
   const id = createHash('sha256').update(randomUUID()).digest('hex');
@@ -52,7 +68,7 @@ async function run() {
   };
 
   try {
-    const upload = await storage.signUpload(stage, expected, 60);
+    const upload = await step('sign staging PUT', () => storage.signUpload(stage, expected, 60));
     const preflight = (candidate: string) => request(upload.url, {
       method: 'OPTIONS',
       headers: {
@@ -77,9 +93,9 @@ async function run() {
     check((await request(upload.url, put)).ok, 'signed PUT');
     check((await request(upload.url, put)).status === 412, 'conditional repeat PUT');
 
-    const receipt = await storage.seal(stage, final, expected);
-    await storage.assertObject(final, expected, receipt);
-    const download = await storage.signDownload(final, receipt, 60);
+    const receipt = await step('seal: verified WAV/size/SHA-256 and conditional final write', () => storage.seal(stage, final, expected));
+    await step('conditional HEAD with If-Match receipt', () => storage.assertObject(final, expected, receipt));
+    const download = await step('sign final GET', () => storage.signDownload(final, receipt, 60));
     const readPreflight = await request(download.url, {
       method: 'OPTIONS',
       headers: {
@@ -94,17 +110,19 @@ async function run() {
     const body = await content.arrayBuffer();
     check(body.byteLength === wav.length && createHash('sha256').update(new Uint8Array(body)).digest('hex') === sha256, 'independent downloaded SHA-256');
     check(!(await request(download.url.split('?')[0], {})).ok, 'private object');
-    const short = await storage.signDownload(final, receipt, 1);
+    const short = await step('sign 1 s GET', () => storage.signDownload(final, receipt, 1));
     await delay(2_100);
     check(!(await request(short.url, { headers: short.headers })).ok, 'expired signature');
     console.log('PASS — dedicated development R2 signed PUT/GET, CORS, conditional write, key binding, SHA-256 and expiry.');
   } finally {
     const cleanup = await Promise.allSettled([stage, differentStage, final].map((key) => storage.remove(key)));
-    if (cleanup.some((result) => result.status === 'rejected')) throw new Error('development fixture cleanup');
+    if (cleanup.some((result) => result.status === 'rejected')) throw new StepFailure('cleanup of probe objects');
+    console.log('PASS  cleanup of probe objects');
   }
 }
 
-void run().catch(() => {
+void run().catch((error) => {
+  console.error(`FAIL  ${error instanceof StepFailure ? error.message : 'unexpected error'}`);
   console.error('FAIL — development R2 probe. Check configuration, policy and provider diagnostics without sharing signed URLs.');
   process.exitCode = 1;
 });

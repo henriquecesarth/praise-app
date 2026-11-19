@@ -3,7 +3,7 @@ import { db } from '../../lib/firebase';
 import { AppError } from '../../middleware/error-handler';
 import { MinistryRepository } from '../../repositories/MinistryRepository';
 import type { AudioManifest, RecordingMetadata, StemId } from './ministry-audio.schema';
-import type { ObjectReceipt } from './direct-storage';
+import type { ObjectReceipt, VerifiedStaging } from './direct-storage';
 
 export interface AudioScope {
   ministryId: string;
@@ -21,7 +21,7 @@ export interface AudioRecording extends RecordingMetadata {
   requestHash: string;
   uploadedStemIds: StemId[];
   transfer?: 'direct';
-  directAttempts?: Partial<Record<StemId, { number: number; invalid?: true; receipt?: ObjectReceipt }>>;
+  directAttempts?: Partial<Record<StemId, { number: number; invalid?: true; receipt?: ObjectReceipt; verified?: VerifiedStaging }>>;
   expiresAt: number;
   uploadDeadline?: number;
   publishedAt?: number;
