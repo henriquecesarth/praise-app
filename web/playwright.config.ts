@@ -14,6 +14,7 @@ export default defineConfig({
   testIgnore: [
     '**/m22a-demucs-onnx-browser.spec.ts',
     '**/m22b-demucs-worker-mixer.spec.ts',
+    '**/m22c-ministry-audio.spec.ts',
   ],
   outputDir: './test-results/playwright-output',
   fullyParallel: false,

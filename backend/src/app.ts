@@ -1,4 +1,6 @@
 import express from 'express';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createCorsMiddleware } from './config/cors.config';
 import repertoireRoutes from './features/repertoire/repertoire.routes';
 import smartChordRoutes from './features/smart_chords/smart_chord.routes';
@@ -19,6 +21,8 @@ import organizationRoutes from './features/organizations/organization.routes';
 import internalWhatsAppRoutes from './features/whatsapp/internal-whatsapp.routes';
 import publicWhatsAppRoutes from './features/whatsapp/public-whatsapp.routes';
 import vocalExerciseRoutes from './features/vocal-exercises/vocal-exercise.routes';
+import { createMinistryAudioRouter, ministryAudioSimulatorEnabled } from './features/ministry_audio/ministry-audio.routes';
+import { SimulatedStemStorage } from './features/ministry_audio/storage';
 import { errorHandler } from './middleware/error-handler';
 import { config } from './config/unifiedConfig';
 
@@ -79,6 +83,14 @@ app.use('/api/v1/internal', internalWhatsAppRoutes);
 app.use('/api/v1/ministries/:ministryId/billing', billingRoutes);
 app.use('/api/v1/groups/:groupId/billing', billingRoutes); // Alias
 app.use('/api/v1/auth', authRoutes);
+
+if (ministryAudioSimulatorEnabled(process.env)) {
+  const storageDirectory = process.env.MINISTRY_AUDIO_SIMULATOR_DIR ||
+    join(tmpdir(), 'louvaio-ministry-audio', config.firebase.projectId ?? 'demo-louvaio');
+  app.use('/api/v1/ministries/:ministryId/audio-library', createMinistryAudioRouter({
+    storage: new SimulatedStemStorage(storageDirectory),
+  }));
+}
 
 app.use('/api/v1/ministries', ministryRoutes);
 app.use('/api/v1/groups', ministryRoutes); // Alias

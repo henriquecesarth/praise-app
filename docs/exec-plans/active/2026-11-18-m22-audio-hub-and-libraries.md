@@ -62,10 +62,12 @@ Entregar o separador musical integrado ao LouvAIO com processamento 100% local n
   - [x] Avaliação comparativa real no Chromium para a amostra de 8,5 s (`htdemucs_6s_fp16weights.onnx`): WASM SIMD single-thread (cold, cache de bytes verificados em memória, sessão aquecida no Worker), WASM SIMD multithread sob COI isolado (`wasmNumThreads: 4`), WebGPU somente e fallback automático WebGPU → WASM (sem habilitar COOP/COEP global).
   - [x] Mixer experimental sincronizado de 6 faixas via Web Audio API (`AudioContext` único compartilhado, clock/drift zero, play/pause, mute, solo, volume master e por faixa, seek sincronizado, exportação individual WAV, liberação explícita de recursos e seletor preparado exclusivamente para `Biblioteca Ministerial` e `Biblioteca LouvAIO`).
   - [ ] Itens reservados para sequência pós-benchmark antes de M22-C/D (fora do escopo desta entrega): persistência OPFS/Cache API com exibição de quota, compressão/transporte em FLAC/Opus e integração definitiva no player/rota de versão canônica do aplicativo.
-- [ ] **M22-C (Auditoria Prévia + Backend Ministerial + R2 Privado)**:
-  - [ ] Auditar repositórios, middlewares RBAC/anti-IDOR, índices Firestore e padrões de upload/signed URL existentes antes de codificar.
-  - [ ] Implementar metadados Firestore, deduplicação controlada por SHA-256 + perfil de modelo, autorização de acesso privada ao Cloudflare R2 (TTL curto) e CRUD da **Biblioteca Ministerial**.
+- [x] **M22-C (Biblioteca Ministerial experimental em emulador)**:
+  - [x] Reusar autenticação e regras de acesso ministerial. Usar o Firestore Emulator para metadados e um adaptador de objetos em disco para o armazenamento privado simulado.
+  - [x] Implementar reserva e finalização idempotentes, manifesto WAV de seis faixas, validação do conteúdo por streaming, edição, arquivamento, catálogo paginado e concessões temporárias de reprodução.
+  - [x] Verificar publicação confirmada e reprodução de gravação armazenada no mixer M22-B em Chromium. A [entrega da Biblioteca Ministerial](../../architecture/m22c-ministry-audio-library.md) registra evidência, revisão independente e plano de homologação com bucket R2 privado.
 - [ ] **M22-D (Frontend Biblioteca Ministerial + Associação ao Repertório)**:
+  - [ ] Homologar bucket R2 privado, escrita condicional e política de deduplicação autorizada.
   - [ ] Fluxo Web de separação -> revisão -> publicação na Biblioteca Ministerial (sem biblioteca pessoal).
   - [ ] Associação ao repertório ministerial por `(ministryId, songId, canonicalVersionId)` e reprodução direta dos stems no R2 sem reexecutar IA.
   - [ ] Migração não destrutiva da superfície `/pacotes-ensaio`: disponibilizar exportação local `.louvaio-rehearsal.zip` / importação assistida para a **Biblioteca Ministerial** preservando dados locais existentes antes de descontinuar a lista pessoal.

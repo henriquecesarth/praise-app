@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api } from './api';
+import { api, isMinistryAudioLoopbackApi } from './api';
 import { bootstrapAuth } from './auth-bootstrap';
-import { MODULE_PATHS, parseAppRoute, pathForFolder, pathForSchedule, pathForSong, shouldBootstrapSession, type MainModuleType } from './routing';
+import { MINISTRY_AUDIO_LIBRARY_PATH, MINISTRY_AUDIO_LIBRARY_SECTION, MODULE_PATHS, parseAppRoute, pathForFolder, pathForSchedule, pathForSong, shouldBootstrapSession, type MainModuleType } from './routing';
 import { Song, Artist, Folder, Classification, RepertoireCounts, SongFilters, Group, GroupRole, MinistrySubscriptionSummary } from './types';
 import { SongCard } from './components/SongCard';
 import './styles/repertoire.css';
@@ -47,6 +47,11 @@ import { useRepertoireDialog } from './components/useRepertoireDialog';
 import { louvaioTheme } from './theme/louvaioTheme';
 import { Search, SlidersHorizontal, Plus, CheckCircle, XCircle, Menu, Music, HardDrive, Edit3, KeyRound, UserPlus, LogOut, Building2, Home, Calendar as CalendarIcon, Sun, Moon } from 'lucide-react';
 
+const MinistryAudioLibraryView = import.meta.env.VITE_MINISTRY_AUDIO_EMULATOR === '1' &&
+  (import.meta.env.DEV || import.meta.env.MODE === 'test')
+  ? React.lazy(() => import('./components/MinistryAudioLibraryView'))
+  : null;
+
 interface Toast {
   id: string;
   message: string;
@@ -67,6 +72,9 @@ export default function App() {
   const navigate = useNavigate();
   const routeState = parseAppRoute(location.pathname, location.search);
   const mainModule = routeState.module;
+  const ministryAudioEnabled = MinistryAudioLibraryView !== null && isMinistryAudioLoopbackApi();
+  const ministryAudioRoute = mainModule === 'ministry' && routeState.ministrySection === MINISTRY_AUDIO_LIBRARY_SECTION;
+  const routeRedirect = ministryAudioRoute && !ministryAudioEnabled ? MODULE_PATHS.ministry : routeState.redirectTo;
 
   const rehearsalManager = React.useMemo(() => getDefaultRehearsalPackageLibraryManager(), []);
   const rehearsalSession = React.useMemo(() => getDefaultGlobalRehearsalAudioSessionController(), []);
@@ -228,10 +236,10 @@ export default function App() {
 
   // Redirecionar rotas legadas do módulo independente de Liturgias para Escalas
   useEffect(() => {
-    if (routeState.redirectTo && location.pathname !== routeState.redirectTo) {
-      navigate(routeState.redirectTo, { replace: true });
+    if (routeRedirect && location.pathname !== routeRedirect) {
+      navigate(routeRedirect, { replace: true });
     }
-  }, [location.pathname, navigate, routeState.redirectTo]);
+  }, [location.pathname, navigate, routeRedirect]);
 
   // Check initial user authentication session
   useEffect(() => {
@@ -1474,7 +1482,7 @@ export default function App() {
                     if (!allowContextChange()) return;
                     clearDetailSelection();
                     setActiveGroup(group);
-                    navigate(MODULE_PATHS[mainModule]);
+                    if (!ministryAudioRoute) navigate(MODULE_PATHS[mainModule]);
                   }}
                   onCreateGroup={() => setShowCreateGroupModal(true)}
                   onJoinGroup={() => setShowJoinModal(true)}
@@ -1824,7 +1832,20 @@ export default function App() {
                 />
               )}
 
-              {mainModule === 'ministry' && activeGroup && currentUser && (
+              {ministryAudioRoute && ministryAudioEnabled && MinistryAudioLibraryView && (
+                <React.Suspense fallback={<p role="status">Carregando biblioteca…</p>}>
+                  <MinistryAudioLibraryView
+                    key={JSON.stringify([authGenerationRef.current, currentUser.id, activeGroup.id, userRole])}
+                    ministryId={activeGroup.id}
+                    ministryName={activeGroup.name}
+                    userId={currentUser.id}
+                    isAdmin={userRole === 'admin'}
+                    onBack={() => navigate(MODULE_PATHS.ministry)}
+                  />
+                </React.Suspense>
+              )}
+
+              {mainModule === 'ministry' && activeGroup && currentUser && (!ministryAudioRoute || !ministryAudioEnabled) && (
                 <MinistryView
                   activeMinistry={activeGroup}
                   userRole={userRole}
@@ -1848,6 +1869,7 @@ export default function App() {
                   section={routeState.ministrySection}
                   onNavigateSection={(section) => navigate(section ? `/ministerio/${section}` : '/ministerio')}
                   onNavigateToVocal={() => setMainModule('vocal')}
+                  onNavigateToMinistryAudio={ministryAudioEnabled ? () => navigate(MINISTRY_AUDIO_LIBRARY_PATH) : undefined}
                 />
               )}
 

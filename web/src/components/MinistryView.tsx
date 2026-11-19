@@ -64,6 +64,7 @@ interface Props {
   section?: string;
   onNavigateSection?: (section?: string) => void;
   onNavigateToVocal?: () => void;
+  onNavigateToMinistryAudio?: () => void;
 }
 
 type ActiveTab = 'info' | 'members';
@@ -81,6 +82,7 @@ export function MinistryView({
   section,
   onNavigateSection,
   onNavigateToVocal,
+  onNavigateToMinistryAudio,
 }: Props) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<ActiveTab>('info');
@@ -760,6 +762,18 @@ export function MinistryView({
               </div>
               <ChevronRight size={16} className="ministry-chevron" />
             </button>
+            {onNavigateToMinistryAudio && (
+              <button type="button" className="ministry-action-row-btn" onClick={onNavigateToMinistryAudio}>
+                <div className="ministry-action-row-left">
+                  <div className="ministry-action-icon primary"><Music size={18} aria-hidden="true" /></div>
+                  <div>
+                    <div className="ministry-action-title">Biblioteca Ministerial</div>
+                    <div className="ministry-action-desc">Gravações de seis faixas compartilhadas no ministério</div>
+                  </div>
+                </div>
+                <ChevronRight size={16} className="ministry-chevron" aria-hidden="true" />
+              </button>
+            )}
             {/* Pacotes de ensaio locais — ACTIVE */}
             <button
               type="button"

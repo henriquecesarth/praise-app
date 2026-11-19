@@ -2,21 +2,24 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   CANONICAL_STEM_IDS,
   type CanonicalStemId,
-  type SeparatedStemOutput,
 } from './demucs-onnx-separator';
 import {
   SixStemWebAudioMixerController,
   type SeparatedMixerMetadata,
+  type SeparatedStemMixerInput,
   type SixStemMixerSnapshot,
   type TargetAudioLibraryKind,
 } from './six-stem-mixer';
 
 export interface SixStemMixerPanelProps {
-  stems: readonly SeparatedStemOutput[] | null;
+  stems: readonly SeparatedStemMixerInput[] | null;
   metadata?: Partial<SeparatedMixerMetadata>;
   controller?: SixStemWebAudioMixerController;
   createController?: () => SixStemWebAudioMixerController;
   isSeparating?: boolean;
+  playbackOnly?: boolean;
+  onInputsCaptured?: (stems: readonly SeparatedStemMixerInput[]) => void;
+  onPlaybackError?: (message: string) => void;
   separationError?: string | null;
   onDisposed?: () => void;
   onLoadingChange?: (loading: boolean) => void;
@@ -37,6 +40,9 @@ export function SixStemMixerPanel({
   controller: externalController,
   createController,
   isSeparating = false,
+  playbackOnly = false,
+  onInputsCaptured,
+  onPlaybackError,
   separationError = null,
   onDisposed,
   onLoadingChange,
@@ -47,6 +53,10 @@ export function SixStemMixerPanel({
   onDisposedRef.current = onDisposed;
   const onLoadingChangeRef = useRef(onLoadingChange);
   onLoadingChangeRef.current = onLoadingChange;
+  const onInputsCapturedRef = useRef(onInputsCaptured);
+  onInputsCapturedRef.current = onInputsCaptured;
+  const onPlaybackErrorRef = useRef(onPlaybackError);
+  onPlaybackErrorRef.current = onPlaybackError;
 
   const [ownedController, setOwnedController] =
     useState<SixStemWebAudioMixerController | null>(null);
@@ -88,18 +98,25 @@ export function SixStemMixerPanel({
       return;
     }
     if (!stems || stems.length === 0) {
-      activeController.clear();
+      if (!playbackOnly) activeController.clear();
       return;
     }
     void activeController.loadStems(stems, metadata);
-  }, [activeController, stems, metadata]);
+    // loadStems copies all WAV inputs synchronously before returning its promise.
+    onInputsCapturedRef.current?.(stems);
+  }, [activeController, stems, metadata, playbackOnly]);
+
+  const playbackError = snapshot?.state === 'error' ? snapshot.error?.message : undefined;
+  useEffect(() => {
+    if (playbackError) onPlaybackErrorRef.current?.(playbackError);
+  }, [playbackError]);
 
   const mountedRef = useRef(false);
   const lastEmittedLoadingRef = useRef<boolean | null>(null);
   const pendingLoadingValue = Boolean(
-    stems &&
+    snapshot?.state === 'loading' || (stems &&
       stems.length > 0 &&
-      (!snapshot || snapshot.state === 'idle' || snapshot.state === 'loading')
+      (!snapshot || snapshot.state === 'idle'))
   );
   const latestLoadingValueRef = useRef(pendingLoadingValue);
   latestLoadingValueRef.current = pendingLoadingValue;
@@ -450,7 +467,7 @@ export function SixStemMixerPanel({
                 />
               </label>
 
-              {ch.downloadUrl ? (
+              {!playbackOnly && (ch.downloadUrl ? (
                 <a
                   data-testid={`m22b-stem-export-${stemId}`}
                   href={ch.downloadUrl}
@@ -468,13 +485,13 @@ export function SixStemMixerPanel({
                 <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>
                   Sem arquivo WAV carregado
                 </span>
-              )}
+              ))}
             </article>
           );
         })}
       </div>
 
-      <div
+      {!playbackOnly && <div
         style={{
           paddingTop: '10px',
           borderTop: '1px solid var(--border-color, #d4d4d8)',
@@ -511,7 +528,7 @@ export function SixStemMixerPanel({
           (sem biblioteca pessoal; integração R2/Firestore/assinatura será
           implementada em M22-C..F).
         </p>
-      </div>
+      </div>}
     </section>
   );
 }

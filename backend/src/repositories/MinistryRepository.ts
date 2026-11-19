@@ -1,4 +1,5 @@
 import { db } from '../lib/firebase';
+import type { Transaction } from 'firebase-admin/firestore';
 import { AppError } from '../middleware/error-handler';
 import crypto from 'crypto';
 
@@ -77,8 +78,9 @@ export class MinistryRepository {
     return Array.from(ministryMap.values());
   }
 
-  async getMinistryById(ministryId: string, userId: string): Promise<MinistryRecord> {
-    const doc = await this.ministriesCol.doc(ministryId).get();
+  async getMinistryById(ministryId: string, userId: string, transaction?: Transaction): Promise<MinistryRecord> {
+    const ministryRef = this.ministriesCol.doc(ministryId);
+    const doc = transaction ? await transaction.get(ministryRef) : await ministryRef.get();
     if (!doc.exists) {
       throw new AppError(404, 'Ministério não encontrado.');
     }
@@ -90,11 +92,11 @@ export class MinistryRepository {
       return { ...mData, role: 'admin' };
     }
 
-    const memberSnap = await this.membersCol
+    const memberQuery = this.membersCol
       .where('ministry_id', '==', ministryId)
       .where('user_id', '==', userId)
-      .limit(1)
-      .get();
+      .limit(1);
+    const memberSnap = transaction ? await transaction.get(memberQuery) : await memberQuery.get();
 
     const activeMemberDoc = memberSnap?.docs?.find((d: any) => d.data()?.status !== 'removed');
 

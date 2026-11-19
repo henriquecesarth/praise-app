@@ -30,6 +30,9 @@ export const MODULE_PATHS: Record<MainModuleType, string> = {
   vocal: '/exercicios-vocais',
 };
 
+export const MINISTRY_AUDIO_LIBRARY_SECTION = 'biblioteca-audio';
+export const MINISTRY_AUDIO_LIBRARY_PATH = `/ministerio/${MINISTRY_AUDIO_LIBRARY_SECTION}`;
+
 const decodeSegment = (value: string | undefined) => {
   if (!value) return undefined;
   try {

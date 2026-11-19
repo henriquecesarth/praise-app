@@ -145,6 +145,8 @@ export interface SixStemMixerDependencies {
   revokeObjectURL?: (url: string) => void;
   scheduleLookaheadSeconds?: number;
   yieldToMainThread?: () => Promise<void>;
+  limits?: { wavBytes: number; frames: number; seconds: number };
+  enableWavDownloads?: boolean;
 }
 
 function defaultYieldToMainThread(): Promise<void> {
@@ -237,6 +239,8 @@ export class SixStemWebAudioMixerController {
   private readonly revokeObjectURLFn: (url: string) => void;
   private readonly scheduleLookaheadSeconds: number;
   private readonly yieldToMainThreadFn: () => Promise<void>;
+  private readonly limits: NonNullable<SixStemMixerDependencies['limits']>;
+  private readonly enableWavDownloads: boolean;
 
   private readonly listeners = new Set<
     (snapshot: SixStemMixerSnapshot) => void
@@ -278,6 +282,8 @@ export class SixStemWebAudioMixerController {
   private readonly stemStates: Record<CanonicalStemId, InternalStemState>;
 
   constructor(deps: SixStemMixerDependencies = {}) {
+    this.limits = { wavBytes: MAX_AUDIO_WAV_BYTES, frames: MAX_SEPARATION_TOTAL_FRAMES, seconds: DEFAULT_MAX_AUDIO_SECONDS, ...deps.limits };
+    this.enableWavDownloads = deps.enableWavDownloads ?? true;
     this.createAudioContextFn =
       deps.createAudioContext ?? defaultCreateAudioContext;
     this.createObjectURLFn =
@@ -665,10 +671,10 @@ export class SixStemWebAudioMixerController {
             `Stem "${id}" has empty WAV bytes.`
           );
         }
-        if (rawWavBytes.byteLength > MAX_AUDIO_WAV_BYTES) {
+        if (rawWavBytes.byteLength > this.limits.wavBytes) {
           throw new AudioSeparationError(
             'INVALID_AUDIO',
-            `Stem "${id}" WAV size (${rawWavBytes.byteLength} bytes) exceeds limit (${MAX_AUDIO_WAV_BYTES}).`
+            `Stem "${id}" WAV size (${rawWavBytes.byteLength} bytes) exceeds limit (${this.limits.wavBytes}).`
           );
         }
 
@@ -684,8 +690,8 @@ export class SixStemWebAudioMixerController {
 
         const wavDescriptor = parseStrictWavDescriptor(wavBytes);
         const wavMaxFrames = Math.min(
-          wavDescriptor.sampleRate * DEFAULT_MAX_AUDIO_SECONDS,
-          MAX_SEPARATION_TOTAL_FRAMES
+          wavDescriptor.sampleRate * this.limits.seconds,
+          this.limits.frames
         );
         if (
           wavDescriptor.totalFrames <= 0 ||
@@ -736,28 +742,11 @@ export class SixStemWebAudioMixerController {
         };
       });
 
-      const prepared = new Map<
-        CanonicalStemId,
-        {
-          id: CanonicalStemId;
-          labelPtBr: string;
-          left: Float32Array;
-          right: Float32Array;
-          wavBytes: Uint8Array;
-          sha256: string;
-          rms: number;
-          peak: number;
-        }
-      >();
+      byId.clear();
+      stems = [];
+      const checksums = new Map<CanonicalStemId, string>();
 
       for (const cap of capturedInputs) {
-        const decoded = decodeWavToStereoFloat32(cap.wavBytes.buffer, {
-          expectedSampleRate: resolvedSampleRate,
-          maxFrames: cap.wavMaxFrames,
-        });
-        const left = decoded.left;
-        const right = decoded.right;
-
         const sha256 = await computeSha256Hex(cap.wavBytes);
         if (loadGen !== this.generation || this.disposed) {
           return this.getSnapshot();
@@ -769,18 +758,7 @@ export class SixStemWebAudioMixerController {
           );
         }
 
-        const stats = computeSignalStats(left, right);
-
-        prepared.set(cap.id, {
-          id: cap.id,
-          labelPtBr: cap.labelPtBr,
-          left,
-          right,
-          wavBytes: cap.wavBytes,
-          sha256,
-          rms: stats.rms,
-          peak: stats.peak,
-        });
+        checksums.set(cap.id, sha256);
 
         await this.yieldToMainThreadFn();
         if (loadGen !== this.generation || this.disposed) {
@@ -799,10 +777,10 @@ export class SixStemWebAudioMixerController {
         sha256: string;
         rms: number;
         peak: number;
-        downloadUrl: string;
+        downloadUrl: string | null;
       }> = [];
 
-      for (const id of CANONICAL_STEM_IDS) {
+      for (const stem of capturedInputs) {
         if (loadGen !== this.generation || this.disposed) {
           for (const url of pendingUrls) {
             try {
@@ -814,26 +792,34 @@ export class SixStemWebAudioMixerController {
           }
           return this.getSnapshot();
         }
-        const stem = prepared.get(id)!;
+        // Allocate only one temporary decoded pair at a time while staging final AudioBuffers.
+        const { left, right } = decodeWavToStereoFloat32(stem.wavBytes.buffer, {
+          expectedSampleRate: finalSampleRate,
+          maxFrames: stem.wavMaxFrames,
+        });
+        const { rms, peak } = computeSignalStats(left, right);
         const audioBuffer = ctx.createBuffer(2, finalTotalFrames, finalSampleRate);
-        audioBuffer.getChannelData(0).set(stem.left);
-        audioBuffer.getChannelData(1).set(stem.right);
+        audioBuffer.getChannelData(0).set(left);
+        audioBuffer.getChannelData(1).set(right);
 
-        const blob = createWavBlobWithoutCopy(stem.wavBytes);
-        const downloadUrl = this.createObjectURLFn(blob);
-        this.createdObjectUrlCount += 1;
-        pendingUrls.push(downloadUrl);
+        let downloadUrl: string | null = null;
+        if (this.enableWavDownloads) {
+          downloadUrl = this.createObjectURLFn(createWavBlobWithoutCopy(stem.wavBytes));
+          this.createdObjectUrlCount += 1;
+          pendingUrls.push(downloadUrl);
+        }
 
         stagedEntries.push({
-          id,
+          id: stem.id,
           labelPtBr: stem.labelPtBr,
           audioBuffer,
           byteLength: stem.wavBytes.byteLength,
-          sha256: stem.sha256,
-          rms: stem.rms,
-          peak: stem.peak,
+          sha256: checksums.get(stem.id)!,
+          rms,
+          peak,
           downloadUrl,
         });
+        stem.wavBytes = new Uint8Array();
         await this.yieldToMainThreadFn();
       }
 

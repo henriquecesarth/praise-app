@@ -61,6 +61,16 @@ import type {
 } from './types';
 import { COMPLIANCE_CONFIG } from './config/compliance.config';
 import type { VocalExercise } from './vocal-exercises';
+import {
+  MAX_MINISTRY_STEM_BYTES,
+  type MinistryAudioMetadata,
+  type MinistryAudioPage,
+  type MinistryAudioPlayback,
+  type MinistryAudioRecord,
+  type MinistryAudioReservation,
+  type MinistryAudioUpload,
+} from './audio/ministry-audio-contract';
+import type { CanonicalStemId } from './audio/separation/demucs-onnx-separator';
 
 export type {
   SmartChord,
@@ -417,13 +427,15 @@ export const SESSION_EXPIRED_EVENT = 'louvaio:session-expired';
 
 const handleResponse = async <T>(
   response: Response,
-  options?: { skipSessionExpiry?: boolean }
+  options?: { skipSessionExpiry?: boolean; signal?: AbortSignal }
 ): Promise<T> => {
+  options?.signal?.throwIfAborted();
   if (response.status === 204) {
     return {} as T;
   }
 
   const text = await response.text();
+  options?.signal?.throwIfAborted();
   let body;
   try {
     body = text ? JSON.parse(text) : {};
@@ -457,6 +469,121 @@ const handleResponse = async <T>(
   }
 
   throw new ApiError(errorMessage, response.status, details);
+};
+
+export function isMinistryAudioLoopbackApi(apiUrl = API_URL) {
+  try {
+    const url = new URL(apiUrl);
+    return url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1') &&
+      !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+function ministryAudioPath(ministryId: string) {
+  if (!isMinistryAudioLoopbackApi()) throw new Error('A biblioteca experimental exige uma API local.');
+  return `${API_URL}/ministries/${encodeURIComponent(ministryId)}/audio-library`;
+}
+
+async function readMinistryStem(response: Response, sizeBytes: number, signal: AbortSignal) {
+  const declaredLength = response.headers.get('content-length');
+  if (declaredLength !== null && Number(declaredLength) !== sizeBytes) {
+    await response.body?.cancel();
+    throw new Error('Tamanho de faixa inválido.');
+  }
+  if (!response.body) throw new Error('Faixa incompleta.');
+
+  const bytes = new Uint8Array(sizeBytes);
+  const reader = response.body.getReader();
+  let offset = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      if (offset + value.byteLength > sizeBytes) {
+        await reader.cancel();
+        throw new Error('Tamanho de faixa inválido.');
+      }
+      bytes.set(value, offset);
+      offset += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (offset !== sizeBytes) throw new Error('Faixa incompleta.');
+  return bytes;
+}
+
+async function requestMinistryAudio<T>(ministryId: string, path: string, signal: AbortSignal, options: RequestInit = {}) {
+  signal.throwIfAborted();
+  const response = await fetch(`${ministryAudioPath(ministryId)}${path}`, {
+    ...options,
+    headers: { ...getHeaders(), ...options.headers },
+    signal,
+    cache: 'no-store',
+    redirect: 'error',
+  });
+  return handleResponse<T>(response, { signal });
+}
+
+const ministryAudio = {
+  list(ministryId: string, filters: { q?: string; cursor?: string; limit?: number }, signal: AbortSignal) {
+    const params = new URLSearchParams();
+    if (filters.q) params.set('q', filters.q);
+    if (filters.cursor) params.set('cursor', filters.cursor);
+    if (filters.limit) params.set('limit', String(filters.limit));
+    const query = params.toString();
+    return requestMinistryAudio<MinistryAudioPage>(ministryId, query ? `?${query}` : '', signal);
+  },
+  reserve(ministryId: string, payload: MinistryAudioReservation, signal: AbortSignal) {
+    return requestMinistryAudio<MinistryAudioUpload>(ministryId, '/uploads', signal, { method: 'POST', body: JSON.stringify(payload) });
+  },
+  getUpload(ministryId: string, id: string, signal: AbortSignal) {
+    return requestMinistryAudio<MinistryAudioUpload>(ministryId, `/uploads/${encodeURIComponent(id)}`, signal);
+  },
+  uploadStem(ministryId: string, id: string, stemId: CanonicalStemId, file: Blob, signal: AbortSignal) {
+    return requestMinistryAudio<MinistryAudioUpload>(ministryId, `/uploads/${encodeURIComponent(id)}/stems/${stemId}`, signal, {
+      method: 'PUT', headers: { 'Content-Type': 'audio/wav' }, body: file,
+    });
+  },
+  finalize(ministryId: string, id: string, signal: AbortSignal) {
+    return requestMinistryAudio<MinistryAudioRecord>(ministryId, `/uploads/${encodeURIComponent(id)}/finalize`, signal, { method: 'POST' });
+  },
+  update(ministryId: string, id: string, payload: MinistryAudioMetadata, signal: AbortSignal) {
+    return requestMinistryAudio<MinistryAudioRecord>(ministryId, `/${encodeURIComponent(id)}`, signal, { method: 'PATCH', body: JSON.stringify(payload) });
+  },
+  archive(ministryId: string, id: string, signal: AbortSignal) {
+    return requestMinistryAudio<MinistryAudioRecord>(ministryId, `/${encodeURIComponent(id)}/archive`, signal, { method: 'POST' });
+  },
+  getPlayback(ministryId: string, id: string, signal: AbortSignal) {
+    return requestMinistryAudio<MinistryAudioPlayback>(ministryId, `/${encodeURIComponent(id)}/playback`, signal);
+  },
+  async downloadStem(ministryId: string, id: string, stemId: CanonicalStemId, url: string, sizeBytes: number, signal: AbortSignal) {
+    const path = `/${encodeURIComponent(id)}/stems/${stemId}`;
+    const prefix = `${path}?`;
+    if (!url.startsWith(prefix) || url.includes('#')) throw new Error('Endereço de faixa inválido.');
+    const params = new URLSearchParams(url.slice(prefix.length));
+    const entries = [...params];
+    if (entries.length !== 1 || entries[0][0] !== 'ticket' || !entries[0][1]) throw new Error('Acesso à faixa inválido.');
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > MAX_MINISTRY_STEM_BYTES) throw new Error('Tamanho de faixa inválido.');
+
+    signal.throwIfAborted();
+    const response = await fetch(`${ministryAudioPath(ministryId)}${path}?${params.toString()}`, {
+      headers: { ...getAuthHeaders(), Accept: 'audio/wav' },
+      signal,
+      cache: 'no-store',
+      redirect: 'error',
+    });
+    signal.throwIfAborted();
+    if (!response.ok) await handleResponse<never>(response, { signal });
+    if (response.headers.get('content-type')?.split(';')[0] !== 'audio/wav') {
+      await response.body?.cancel();
+      throw new Error('Formato de faixa inválido.');
+    }
+    return readMinistryStem(response, sizeBytes, signal);
+  },
 };
 
 const mapSongFromApi = (apiSong: any): Song => {
@@ -660,6 +787,7 @@ const mapMinistryFromApi = (apiMinistry: any): Ministry => ({
 });
 
 export const api = {
+  ministryAudio,
   // Autenticação
   login: async (email: string, password: string): Promise<{ user: { id: string; email: string; name: string }; token: string }> => {
     const response = await fetch(`${API_URL}/auth/login`, {

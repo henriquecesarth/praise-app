@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { StrictMode, useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -78,6 +78,30 @@ async function createPanelStems(): Promise<SeparatedStemOutput[]> {
 }
 
 describe('SixStemMixerPanel (M22-B)', () => {
+  it('keeps playback working after the library releases input WAVs and skips export URLs', async () => {
+    const stems = await createPanelStems();
+    const objectUrl = vi.fn();
+    const captured = vi.fn();
+    const createController = () => new SixStemWebAudioMixerController({
+      createAudioContext: createPanelFakeAudioContext, createObjectURL: objectUrl, enableWavDownloads: false,
+    });
+    function LibraryPlayback() {
+      const [inputs, setInputs] = useState<SeparatedStemOutput[] | null>(stems);
+      return <SixStemMixerPanel playbackOnly stems={inputs} createController={createController} onInputsCaptured={() => {
+        captured();
+        setInputs(null);
+      }} />;
+    }
+    render(<StrictMode><LibraryPlayback /></StrictMode>);
+
+    await waitFor(() => expect(screen.getByTestId('m22b-mixer-status')).toHaveAttribute('data-state', 'ready'));
+    expect(captured).toHaveBeenCalledTimes(1);
+    expect(objectUrl).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('m22b-stem-export-vocals')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('m22b-mixer-play'));
+    await waitFor(() => expect(screen.getByTestId('m22b-mixer-status')).toHaveAttribute('data-state', 'playing'));
+  });
+
   it('renders 6 synchronized tracks, supports play/pause/seek/mute/solo/volume/WAV export/two libraries, and disposes on unmount', async () => {
     const stems = await createPanelStems();
     let seq = 0;
