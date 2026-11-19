@@ -74,6 +74,9 @@ define: { 'globalThis.__LOUVAIO_VERIFIED_API__': JSON.stringify(['preview','prod
       },
     }),
   ],
+  worker: {
+    format: 'es',
+  },
   server: {
     port: 5173,
     proxy: process.env.VITE_PROXY_TARGET ? {

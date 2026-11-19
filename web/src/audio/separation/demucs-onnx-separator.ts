@@ -23,8 +23,9 @@ export const STEM_DISPLAY_LABELS_PT_BR: Record<CanonicalStemId, string> = {
 export type ExecutionProviderName = 'wasm' | 'webgpu';
 
 export const MAX_MODEL_BYTES = 512 * 1024 * 1024;
-export const MAX_AUDIO_WAV_BYTES = 100 * 1024 * 1024;
-export const DEFAULT_MAX_AUDIO_SECONDS = 600;
+export const MAX_AUDIO_WAV_BYTES = 36 * 1024 * 1024;
+export const DEFAULT_MAX_AUDIO_SECONDS = 180;
+export const MAX_SEPARATION_TOTAL_FRAMES = 44100 * DEFAULT_MAX_AUDIO_SECONDS;
 
 /**
  * Microsoft WAVEFORMATEXTENSIBLE base GUID tail bytes:
@@ -88,7 +89,21 @@ export type AudioSeparationErrorCode =
   | 'INFERENCE_FAILED'
   | 'INVALID_OUTPUT_TENSOR'
   | 'NON_FINITE_OUTPUT'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'CONCURRENT_SESSION_FORBIDDEN'
+  | 'WORKER_ERROR'
+  | 'WORKER_DISPOSED';
+
+export type ModelCacheMode = 'none' | 'memory_bytes' | 'session_reused';
+export type SeparationExecutionContext = 'main_thread' | 'web_worker';
+
+export interface ProviderAttemptDiagnostic {
+  provider: ExecutionProviderName;
+  outcome: 'selected' | 'failed' | 'skipped_unsupported';
+  stage: 'support_check' | 'session_create' | 'first_chunk_run';
+  durationMs: number;
+  errorMessage?: string;
+}
 
 export class AudioSeparationError extends Error {
   readonly code: AudioSeparationErrorCode;
@@ -121,6 +136,16 @@ export interface OnnxInferenceSessionHandle {
   readonly modelSha256?: string;
   readonly modelChecksumVerified?: boolean;
   readonly ortVersion?: string;
+  readonly modelBytesFetchMs?: number;
+  readonly modelChecksumMs?: number;
+  readonly sessionInitMs?: number;
+  readonly modelLoadMs?: number;
+  readonly modelCacheHit?: boolean;
+  readonly modelCacheMode?: ModelCacheMode;
+  readonly wasmNumThreads?: number;
+  readonly crossOriginIsolated?: boolean;
+  readonly providerAttempts?: readonly ProviderAttemptDiagnostic[];
+  readonly providerFallbackReason?: string | null;
   runSegment(
     mixPlanarStereo: Float32Array,
     segmentSamples: number,
@@ -137,6 +162,7 @@ export interface OrtWebSessionAdapterOptions {
   graphOptimizationLevel?: 'disabled' | 'basic' | 'extended' | 'all';
   verifyModelChecksum?: boolean;
   maxModelBytes?: number;
+  useModelBytesCache?: boolean;
 }
 
 export type OnnxModelSource = string | Uint8Array | ArrayBuffer | Blob;
@@ -179,6 +205,16 @@ export interface SeparationTelemetryMetrics {
   overlapSamples: number;
   chunksProcessed: number;
   modelLoadMs: number;
+  modelBytesFetchMs?: number;
+  modelChecksumMs?: number;
+  sessionInitMs?: number;
+  modelCacheHit?: boolean;
+  modelCacheMode?: ModelCacheMode;
+  wasmNumThreads?: number | null;
+  crossOriginIsolated?: boolean;
+  executionContext?: SeparationExecutionContext;
+  providerAttempts?: readonly ProviderAttemptDiagnostic[];
+  providerFallbackReason?: string | null;
   inferenceMs: number;
   encodeMs: number;
   totalWallMs: number;
@@ -204,10 +240,17 @@ export interface SeparateStereoAudioOptions {
   ) => Promise<{
     session: OnnxInferenceSessionHandle;
     modelLoadMs?: number;
+    modelBytesFetchMs?: number;
+    modelChecksumMs?: number;
+    sessionInitMs?: number;
+    modelCacheHit?: boolean;
+    modelCacheMode?: ModelCacheMode;
+    ownSession?: boolean;
   }>;
   overlapSamples?: number;
   maxFrames?: number;
   inputSha256?: string | null;
+  executionContext?: SeparationExecutionContext;
   signal?: AbortSignal;
   yieldBetweenChunks?: boolean;
   onProgress?: (event: SeparationProgressEvent) => void;
@@ -230,7 +273,7 @@ function formatDiagValue(value: unknown): string {
   return `[${typeof value}]`;
 }
 
-function snapshotModelDescriptor(
+export function snapshotModelDescriptor(
   descriptor: AudioSeparationModelDescriptor
 ): AudioSeparationModelDescriptor {
   if (!descriptor || typeof descriptor !== 'object') {
@@ -589,7 +632,7 @@ function readAscii(view: DataView, offset: number, length: number): string {
   return out;
 }
 
-interface StrictWavFormat {
+export interface StrictWavFormat {
   effectiveFormat: 1 | 3;
   channels: 1 | 2;
   sampleRate: number;
@@ -605,18 +648,33 @@ interface StrictWavFormat {
  * chunks, consistent blockAlign/byteRate, whole frames, and full 16-byte
  * WAVE_FORMAT_EXTENSIBLE SubFormat GUIDs.
  */
-function parseStrictWavDescriptor(buffer: ArrayBuffer): StrictWavFormat {
-  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0) {
+export function parseStrictWavDescriptor(
+  input: ArrayBuffer | Uint8Array
+): StrictWavFormat {
+  let view: DataView;
+  let totalBytes: number;
+  if (input instanceof ArrayBuffer) {
+    totalBytes = input.byteLength;
+    if (totalBytes === 0) {
+      throw new AudioSeparationError('EMPTY_AUDIO', 'Audio buffer is empty.');
+    }
+    view = new DataView(input);
+  } else if (input instanceof Uint8Array) {
+    totalBytes = input.byteLength;
+    if (totalBytes === 0) {
+      throw new AudioSeparationError('EMPTY_AUDIO', 'Audio buffer is empty.');
+    }
+    view = new DataView(input.buffer, input.byteOffset, input.byteLength);
+  } else {
     throw new AudioSeparationError('EMPTY_AUDIO', 'Audio buffer is empty.');
   }
-  if (buffer.byteLength < 44) {
+  if (totalBytes < 44) {
     throw new AudioSeparationError(
       'CORRUPT_WAV',
       'WAV buffer is smaller than minimum 44-byte RIFF/WAVE header.'
     );
   }
 
-  const view = new DataView(buffer);
   if (readAscii(view, 0, 4) !== 'RIFF' || readAscii(view, 8, 4) !== 'WAVE') {
     throw new AudioSeparationError(
       'CORRUPT_WAV',
@@ -626,10 +684,10 @@ function parseStrictWavDescriptor(buffer: ArrayBuffer): StrictWavFormat {
 
   const riffChunkSize = view.getUint32(4, true);
   const riffEnd = 8 + riffChunkSize;
-  if (riffChunkSize < 36 || riffEnd !== buffer.byteLength) {
+  if (riffChunkSize < 36 || riffEnd !== totalBytes) {
     throw new AudioSeparationError(
       'CORRUPT_WAV',
-      `Invalid RIFF chunk size (${riffChunkSize}) for ${buffer.byteLength}-byte buffer.`
+      `Invalid RIFF chunk size (${riffChunkSize}) for ${totalBytes}-byte buffer.`
     );
   }
 
@@ -890,6 +948,38 @@ function readNormalizedSample(
   }
 }
 
+/** Read one normalized stereo frame `[left, right]` from a validated WAV DataView. */
+export function readStereoWavFrame(
+  view: DataView,
+  header: Pick<
+    StrictWavFormat,
+    | 'dataOffset'
+    | 'blockAlign'
+    | 'channels'
+    | 'effectiveFormat'
+    | 'bitsPerSample'
+  >,
+  frame: number
+): [number, number] {
+  const frameOffset = header.dataOffset + frame * header.blockAlign;
+  const l = readNormalizedSample(
+    view,
+    frameOffset,
+    header.effectiveFormat,
+    header.bitsPerSample
+  );
+  const r =
+    header.channels === 2
+      ? readNormalizedSample(
+          view,
+          frameOffset + header.bitsPerSample / 8,
+          header.effectiveFormat,
+          header.bitsPerSample
+        )
+      : l;
+  return [l, r];
+}
+
 /**
  * Decode a RIFF/WAVE buffer (PCM 8/16/24/32 or IEEE float32, mono or stereo)
  * into planar stereo Float32Arrays in `[-1, 1]`.
@@ -909,8 +999,11 @@ export function decodeWavToStereoFloat32(
       `Expected ${formatDiagValue(options.expectedSampleRate)} Hz WAV, got ${header.sampleRate} Hz.`
     );
   }
-  const maxFrames =
-    options?.maxFrames ?? header.sampleRate * DEFAULT_MAX_AUDIO_SECONDS;
+  const defaultMaxFrames = Math.min(
+    header.sampleRate * DEFAULT_MAX_AUDIO_SECONDS,
+    MAX_SEPARATION_TOTAL_FRAMES
+  );
+  const maxFrames = options?.maxFrames ?? defaultMaxFrames;
   if (!Number.isSafeInteger(maxFrames) || maxFrames <= 0) {
     throw new AudioSeparationError(
       'INVALID_AUDIO',
@@ -924,30 +1017,15 @@ export function decodeWavToStereoFloat32(
     );
   }
 
-  const bytesPerSample = header.bitsPerSample / 8;
   const view = new DataView(buffer);
   const totalFrames = header.totalFrames;
   const left = new Float32Array(totalFrames);
   const right = new Float32Array(totalFrames);
 
   for (let frame = 0; frame < totalFrames; frame++) {
-    const frameOffset = header.dataOffset + frame * header.blockAlign;
-    const l = readNormalizedSample(
-      view,
-      frameOffset,
-      header.effectiveFormat,
-      header.bitsPerSample
-    );
+    const [l, r] = readStereoWavFrame(view, header, frame);
     left[frame] = l;
-    right[frame] =
-      header.channels === 2
-        ? readNormalizedSample(
-            view,
-            frameOffset + bytesPerSample,
-            header.effectiveFormat,
-            header.bitsPerSample
-          )
-        : l;
+    right[frame] = r;
   }
 
   return {
@@ -1191,13 +1269,51 @@ async function resolveModelBytes(
   );
 }
 
+interface VerifiedModelBytesCacheEntry {
+  readonly cacheKey: string;
+  readonly modelId: string;
+  readonly modelVersion: string;
+  readonly bytes: Uint8Array;
+  readonly byteLength: number;
+  readonly sha256: string;
+}
+
+// Single-entry in-memory cache so at most one ~136 MiB model resides in JS RAM.
+let verifiedModelBytesCacheEntry: VerifiedModelBytesCacheEntry | null = null;
+
+/** Clear the single-entry verified ONNX model bytes cache from memory. */
+export function clearVerifiedModelBytesCache(): void {
+  verifiedModelBytesCacheEntry = null;
+}
+
+/** Return diagnostics about the single-entry in-memory verified model bytes cache. */
+export function getVerifiedModelBytesCacheStats(): {
+  entries: number;
+  cachedBytes: number;
+  cachedModelId: string | null;
+} {
+  if (!verifiedModelBytesCacheEntry) {
+    return { entries: 0, cachedBytes: 0, cachedModelId: null };
+  }
+  return {
+    entries: 1,
+    cachedBytes: verifiedModelBytesCacheEntry.byteLength,
+    cachedModelId: verifiedModelBytesCacheEntry.modelId,
+  };
+}
+
 interface VerifiedOrtSessionStamp {
   readonly descriptor: AudioSeparationModelDescriptor;
-  readonly executionProvider: ExecutionProviderName;
+  readonly initialExecutionProvider: ExecutionProviderName;
+  getExecutionProvider: () => ExecutionProviderName;
+  hasFallbackTransitioned: () => boolean;
   readonly ortVersion: string;
   readonly modelBytes: number;
   readonly modelSha256: string;
   readonly modelChecksumVerified: boolean;
+  readonly getModelLoadMs?: () => number;
+  readonly getSessionInitMs?: () => number;
+  readonly getFallbackSetupMs?: () => number;
   readonly runSegment: OnnxInferenceSessionHandle['runSegment'];
   readonly dispose: OnnxInferenceSessionHandle['dispose'];
 }
@@ -1207,6 +1323,72 @@ const VERIFIED_ORT_SESSION_STAMPS = new WeakMap<
   VerifiedOrtSessionStamp
 >();
 const reflectApply = Reflect.apply;
+
+type OrtModuleType = Awaited<typeof import('onnxruntime-web')>;
+type RawOrtSession = Awaited<ReturnType<OrtModuleType['InferenceSession']['create']>>;
+
+async function runOrtSessionSegment(
+  ort: OrtModuleType,
+  rawSession: RawOrtSession,
+  mixPlanarStereo: Float32Array,
+  segmentSamples: number,
+  callerDescriptor: AudioSeparationModelDescriptor
+): Promise<Float32Array> {
+  const inputTensor = new ort.Tensor('float32', mixPlanarStereo, [
+    1,
+    2,
+    segmentSamples,
+  ]);
+  let results: Record<
+    string,
+    { data: unknown; dims?: readonly number[]; dispose?: () => void }
+  > = {};
+  try {
+    results = await rawSession.run(
+      { [callerDescriptor.inputTensorName]: inputTensor },
+      [callerDescriptor.outputTensorName]
+    );
+    const rawOut = results[callerDescriptor.outputTensorName];
+    if (!rawOut) {
+      throw new AudioSeparationError(
+        'INVALID_OUTPUT_TENSOR',
+        `Missing expected ONNX output tensor "${callerDescriptor.outputTensorName}".`
+      );
+    }
+    const expectedLen =
+      callerDescriptor.rawOutputStemOrder.length * 2 * segmentSamples;
+    const dims = rawOut.dims ?? [];
+    if (
+      dims.length !== 4 ||
+      dims[0] !== 1 ||
+      dims[1] !== callerDescriptor.rawOutputStemOrder.length ||
+      dims[2] !== 2 ||
+      dims[3] !== segmentSamples
+    ) {
+      throw new AudioSeparationError(
+        'INVALID_OUTPUT_TENSOR',
+        `Unexpected ONNX output tensor dims [${dims.join(', ')}]; expected [1, ${callerDescriptor.rawOutputStemOrder.length}, 2, ${segmentSamples}].`
+      );
+    }
+    if (
+      !(rawOut.data instanceof Float32Array) ||
+      rawOut.data.length !== expectedLen
+    ) {
+      throw new AudioSeparationError(
+        'INVALID_OUTPUT_TENSOR',
+        `Expected Float32Array output of length ${expectedLen}.`
+      );
+    }
+    const copy = new Float32Array(rawOut.data.length);
+    copy.set(rawOut.data);
+    return copy;
+  } finally {
+    inputTensor.dispose();
+    for (const tensor of Object.values(results)) {
+      tensor?.dispose?.();
+    }
+  }
+}
 
 /**
  * Create a real browser ONNX Runtime Web session handle for a separation model
@@ -1220,6 +1402,11 @@ export async function createOrtWebSessionAdapter(
 ): Promise<{
   session: OnnxInferenceSessionHandle;
   modelLoadMs: number;
+  modelBytesFetchMs: number;
+  modelChecksumMs: number;
+  sessionInitMs: number;
+  modelCacheHit: boolean;
+  modelCacheMode: ModelCacheMode;
 }> {
   const frozenDescriptor = snapshotModelDescriptor(descriptor);
   checkAborted(options?.signal);
@@ -1251,53 +1438,111 @@ export async function createOrtWebSessionAdapter(
   const ort = await import('onnxruntime-web');
   checkAborted(options?.signal);
 
-  ort.env.wasm.wasmPaths = options?.wasmPaths ?? '/ort/';
+  const effectiveCrossOriginIsolated =
+    typeof globalThis !== 'undefined' &&
+    Boolean((globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated);
+  const hardwareThreads =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.hardwareConcurrency === 'number'
+      ? navigator.hardwareConcurrency
+      : 1;
+  const canUseThreads =
+    effectiveCrossOriginIsolated && typeof SharedArrayBuffer !== 'undefined';
+  const resolvedWasmThreads = canUseThreads
+    ? options?.numThreads !== undefined
+      ? Math.max(1, Math.floor(options.numThreads))
+      : Math.min(4, Math.max(1, hardwareThreads))
+    : 1;
+
+  ort.env.wasm.wasmPaths = options?.wasmPaths;
   ort.env.wasm.simd = options?.simd ?? true;
   ort.env.wasm.proxy = false;
-  if (options?.numThreads !== undefined) {
-    ort.env.wasm.numThreads = Math.max(1, Math.floor(options.numThreads));
-  } else {
-    const hardwareThreads =
-      typeof navigator !== 'undefined' &&
-      typeof navigator.hardwareConcurrency === 'number'
-        ? navigator.hardwareConcurrency
-        : 1;
-    ort.env.wasm.numThreads =
-      typeof globalThis !== 'undefined' &&
-      (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated
-        ? Math.min(4, Math.max(1, hardwareThreads))
-        : 1;
-  }
+  ort.env.wasm.numThreads = resolvedWasmThreads;
 
-  let modelBytesArray: Uint8Array | null = await resolveModelBytes(
-    modelSource,
-    maxModelBytes,
-    options?.signal
-  );
+  const useModelBytesCache = Boolean(options?.useModelBytesCache);
+  const urlCacheKey =
+    useModelBytesCache && typeof modelSource === 'string'
+      ? `${frozenDescriptor.id}::${frozenDescriptor.version}::${frozenDescriptor.expectedModelSha256 ?? 'unpinned'}::${modelSource.trim()}`
+      : null;
 
-  const modelBytes = modelBytesArray.byteLength;
-  const modelSha256 = await computeSha256Hex(modelBytesArray);
-  checkAborted(options?.signal);
-
+  let modelBytesArray: Uint8Array | null = null;
+  let modelBytes = 0;
+  let modelSha256 = '';
   let checksumVerified = false;
-  if (shouldVerify) {
-    if (
-      frozenDescriptor.expectedModelBytes !== undefined &&
-      modelBytes !== frozenDescriptor.expectedModelBytes
-    ) {
-      throw new AudioSeparationError(
-        'MODEL_CHECKSUM_MISMATCH',
-        `Expected ${frozenDescriptor.expectedModelBytes} model bytes, got ${modelBytes}.`
-      );
-    }
-    if (frozenDescriptor.expectedModelSha256) {
-      if (modelSha256 !== frozenDescriptor.expectedModelSha256) {
+  let modelBytesFetchMs = 0;
+  let modelChecksumMs = 0;
+  let modelCacheHit = false;
+  let modelCacheMode: ModelCacheMode = 'none';
+
+  const cached =
+    urlCacheKey !== null &&
+    verifiedModelBytesCacheEntry !== null &&
+    verifiedModelBytesCacheEntry.cacheKey === urlCacheKey &&
+    verifiedModelBytesCacheEntry.bytes.byteLength ===
+      verifiedModelBytesCacheEntry.byteLength &&
+    verifiedModelBytesCacheEntry.byteLength > 0 &&
+    verifiedModelBytesCacheEntry.byteLength <= maxModelBytes &&
+    (frozenDescriptor.expectedModelBytes === undefined ||
+      verifiedModelBytesCacheEntry.byteLength ===
+        frozenDescriptor.expectedModelBytes) &&
+    (!frozenDescriptor.expectedModelSha256 ||
+      verifiedModelBytesCacheEntry.sha256 ===
+        frozenDescriptor.expectedModelSha256)
+      ? verifiedModelBytesCacheEntry
+      : null;
+
+  if (cached) {
+    modelBytesArray = cached.bytes;
+    modelBytes = cached.byteLength;
+    modelSha256 = cached.sha256;
+    checksumVerified = Boolean(frozenDescriptor.expectedModelSha256) && shouldVerify;
+    modelCacheHit = true;
+    modelCacheMode = 'memory_bytes';
+  } else {
+    const fetchStartMs = nowMs();
+    modelBytesArray = await resolveModelBytes(
+      modelSource,
+      maxModelBytes,
+      options?.signal
+    );
+    modelBytesFetchMs = Math.max(0, nowMs() - fetchStartMs);
+
+    modelBytes = modelBytesArray.byteLength;
+    const checksumStartMs = nowMs();
+    modelSha256 = await computeSha256Hex(modelBytesArray);
+    modelChecksumMs = Math.max(0, nowMs() - checksumStartMs);
+    checkAborted(options?.signal);
+
+    if (shouldVerify) {
+      if (
+        frozenDescriptor.expectedModelBytes !== undefined &&
+        modelBytes !== frozenDescriptor.expectedModelBytes
+      ) {
         throw new AudioSeparationError(
           'MODEL_CHECKSUM_MISMATCH',
-          `Model SHA-256 mismatch: expected ${frozenDescriptor.expectedModelSha256}, got ${modelSha256}.`
+          `Expected ${frozenDescriptor.expectedModelBytes} model bytes, got ${modelBytes}.`
         );
       }
-      checksumVerified = true;
+      if (frozenDescriptor.expectedModelSha256) {
+        if (modelSha256 !== frozenDescriptor.expectedModelSha256) {
+          throw new AudioSeparationError(
+            'MODEL_CHECKSUM_MISMATCH',
+            `Model SHA-256 mismatch: expected ${frozenDescriptor.expectedModelSha256}, got ${modelSha256}.`
+          );
+        }
+        checksumVerified = true;
+      }
+    }
+
+    if (urlCacheKey !== null) {
+      verifiedModelBytesCacheEntry = Object.freeze({
+        cacheKey: urlCacheKey,
+        modelId: frozenDescriptor.id,
+        modelVersion: frozenDescriptor.version,
+        bytes: modelBytesArray,
+        byteLength: modelBytes,
+        sha256: modelSha256,
+      });
     }
   }
 
@@ -1308,83 +1553,198 @@ export async function createOrtWebSessionAdapter(
   // Default to 'disabled' because ORT WASM aborts under 'all' across HTDemucs's 13,138 nodes.
   const graphOptimizationLevel = options?.graphOptimizationLevel ?? 'disabled';
 
-  let createdSession: Awaited<ReturnType<typeof ort.InferenceSession.create>> | null =
-    null;
+  const attempts: ProviderAttemptDiagnostic[] = [];
+  let createdSession: RawOrtSession | null = null;
   let activeProvider: ExecutionProviderName | null = null;
+  let sessionInitMs = 0;
   let lastError: unknown = null;
+  let selectedProviderIndex = -1;
 
-  for (const provider of providers) {
+  for (let pIdx = 0; pIdx < providers.length; pIdx++) {
+    const provider = providers[pIdx];
     checkAborted(options?.signal);
     if (!frozenDescriptor.supportedExecutionProviders.includes(provider)) {
+      attempts.push({
+        provider,
+        outcome: 'skipped_unsupported',
+        stage: 'support_check',
+        durationMs: 0,
+        errorMessage: `Provider "${provider}" not supported by model descriptor.`,
+      });
       continue;
     }
-    if (
-      provider === 'webgpu' &&
-      (typeof navigator === 'undefined' ||
-        !(navigator as Navigator & { gpu?: unknown }).gpu)
-    ) {
-      continue;
+    if (provider === 'webgpu') {
+      const checkStart = nowMs();
+      const gpu =
+        typeof navigator !== 'undefined'
+          ? (
+              navigator as Navigator & {
+                gpu?: { requestAdapter?: () => Promise<unknown | null> };
+              }
+            ).gpu
+          : undefined;
+      if (!gpu) {
+        const msg = 'navigator.gpu is unavailable in this environment.';
+        lastError = new Error(msg);
+        attempts.push({
+          provider: 'webgpu',
+          outcome: 'failed',
+          stage: 'support_check',
+          durationMs: Math.max(0, nowMs() - checkStart),
+          errorMessage: msg,
+        });
+        continue;
+      }
+      if (typeof gpu.requestAdapter === 'function') {
+        try {
+          const adapter = await gpu.requestAdapter();
+          checkAborted(options?.signal);
+          if (!adapter) {
+            const msg = 'navigator.gpu.requestAdapter() returned null.';
+            lastError = new Error(msg);
+            attempts.push({
+              provider: 'webgpu',
+              outcome: 'failed',
+              stage: 'support_check',
+              durationMs: Math.max(0, nowMs() - checkStart),
+              errorMessage: msg,
+            });
+            continue;
+          }
+        } catch (adapterErr) {
+          checkAborted(options?.signal);
+          const msg =
+            adapterErr instanceof Error
+              ? adapterErr.message
+              : String(adapterErr);
+          lastError = adapterErr;
+          attempts.push({
+            provider: 'webgpu',
+            outcome: 'failed',
+            stage: 'support_check',
+            durationMs: Math.max(0, nowMs() - checkStart),
+            errorMessage: msg,
+          });
+          continue;
+        }
+      }
     }
+
+    const initStartMs = nowMs();
     try {
-      createdSession = await ort.InferenceSession.create(modelBytesArray, {
+      const candidate = await ort.InferenceSession.create(modelBytesArray, {
         executionProviders: [provider],
         graphOptimizationLevel,
       });
+      const initDuration = Math.max(0, nowMs() - initStartMs);
       if (options?.signal?.aborted) {
         try {
-          await createdSession.release();
+          await candidate.release();
         } catch {
           // Ignore release errors on cancellation so CANCELLED is never masked.
         }
         checkAborted(options?.signal);
       }
+      if (
+        !candidate.inputNames.includes(frozenDescriptor.inputTensorName) ||
+        !candidate.outputNames.includes(frozenDescriptor.outputTensorName)
+      ) {
+        try {
+          await candidate.release();
+        } catch {
+          // Ignore release error so tensor mismatch error surfaces cleanly.
+        }
+        throw new AudioSeparationError(
+          'MODEL_LOAD_FAILED',
+          `ONNX model graph tensors [${candidate.inputNames.join(', ')}] -> [${candidate.outputNames.join(', ')}] do not match descriptor "${frozenDescriptor.id}" (${frozenDescriptor.inputTensorName} -> ${frozenDescriptor.outputTensorName}).`
+        );
+      }
+      createdSession = candidate;
       activeProvider = provider;
+      sessionInitMs += initDuration;
+      selectedProviderIndex = pIdx;
+      attempts.push({
+        provider,
+        outcome: 'selected',
+        stage: 'session_create',
+        durationMs: initDuration,
+      });
       break;
     } catch (err) {
+      const initDuration = Math.max(0, nowMs() - initStartMs);
       if (err instanceof AudioSeparationError && err.code === 'CANCELLED') {
         throw err;
       }
       checkAborted(options?.signal);
       lastError = err;
+      attempts.push({
+        provider,
+        outcome: 'failed',
+        stage: 'session_create',
+        durationMs: initDuration,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
-  // Release JS reference to raw model bytes once ORT holds its internal session buffer.
+  const canFallbackFromWebGpuToWasm =
+    activeProvider === 'webgpu' &&
+    selectedProviderIndex >= 0 &&
+    providers
+      .slice(selectedProviderIndex + 1)
+      .some(
+        (p) =>
+          p === 'wasm' &&
+          frozenDescriptor.supportedExecutionProviders.includes('wasm')
+      );
+
+  // Retain raw model bytes only if chunk-0 WebGPU -> WASM fallback is armed; otherwise drop JS reference.
+  let fallbackBytes: Uint8Array | null = canFallbackFromWebGpuToWasm
+    ? modelBytesArray
+    : null;
   modelBytesArray = null;
 
   if (!createdSession || !activeProvider) {
+    fallbackBytes = null;
     const detail =
-      lastError instanceof Error ? lastError.message : String(lastError ?? 'No provider succeeded');
+      lastError instanceof Error
+        ? lastError.message
+        : String(lastError ?? 'No provider succeeded');
     throw new AudioSeparationError(
       'MODEL_LOAD_FAILED',
       `Failed to initialize ONNX Runtime Web session (${providers.join(', ')}): ${detail}`
     );
   }
 
-  const session = createdSession;
-  const executionProvider = activeProvider;
-  if (
-    !session.inputNames.includes(frozenDescriptor.inputTensorName) ||
-    !session.outputNames.includes(frozenDescriptor.outputTensorName)
-  ) {
-    try {
-      await session.release();
-    } catch {
-      // Preserve MODEL_LOAD_FAILED contract error if release also throws.
-    }
-    throw new AudioSeparationError(
-      'MODEL_LOAD_FAILED',
-      `ONNX model graph tensors [${session.inputNames.join(', ')}] -> [${session.outputNames.join(', ')}] do not match descriptor "${frozenDescriptor.id}" (${frozenDescriptor.inputTensorName} -> ${frozenDescriptor.outputTensorName}).`
-    );
-  }
+  let currentRawSession: RawOrtSession | null = createdSession;
+  let sessionReleased = false;
+  let sessionDisposedByCaller = false;
+  let currentProviderState: ExecutionProviderName = activeProvider;
+  let currentSessionInitMs = sessionInitMs;
+  let currentModelLoadMs = 0;
+  let currentFallbackSetupMs = 0;
+  let currentInputNames = Object.freeze([...createdSession.inputNames]);
+  let currentOutputNames = Object.freeze([...createdSession.outputNames]);
+  let fallbackReason: string | null =
+    attempts.find((a) => a.outcome === 'failed')?.errorMessage ?? null;
+  let fallbackTransitioned = false;
+  let chunkZeroAttempted = false;
+
   const ortVersion =
     ort.env.versions?.web ?? ort.env.versions?.common ?? 'unknown';
-  const modelLoadMs = Math.max(0, nowMs() - loadStartMs);
+  const currentModelLoadBaseMs = Math.max(0, nowMs() - loadStartMs);
+  currentModelLoadMs = currentModelLoadBaseMs;
 
   const handle: OnnxInferenceSessionHandle = Object.freeze<OnnxInferenceSessionHandle>({
-    executionProvider,
-    inputNames: Object.freeze([...session.inputNames]),
-    outputNames: Object.freeze([...session.outputNames]),
+    get executionProvider() {
+      return currentProviderState;
+    },
+    get inputNames() {
+      return currentInputNames;
+    },
+    get outputNames() {
+      return currentOutputNames;
+    },
     descriptor: frozenDescriptor,
     modelId: frozenDescriptor.id,
     modelVersion: frozenDescriptor.version,
@@ -1392,6 +1752,24 @@ export async function createOrtWebSessionAdapter(
     modelSha256,
     modelChecksumVerified: checksumVerified,
     ortVersion,
+    modelBytesFetchMs,
+    modelChecksumMs,
+    get sessionInitMs() {
+      return currentSessionInitMs;
+    },
+    get modelLoadMs() {
+      return currentModelLoadMs;
+    },
+    modelCacheHit,
+    modelCacheMode,
+    wasmNumThreads: resolvedWasmThreads,
+    crossOriginIsolated: effectiveCrossOriginIsolated,
+    get providerAttempts() {
+      return Object.freeze(attempts.map((a) => Object.freeze({ ...a })));
+    },
+    get providerFallbackReason() {
+      return fallbackReason;
+    },
     async runSegment(
       mixPlanarStereo: Float32Array,
       segmentSamples: number,
@@ -1415,58 +1793,159 @@ export async function createOrtWebSessionAdapter(
           `Descriptor or segmentSamples mismatch during runSegment for "${frozenDescriptor.id}@${frozenDescriptor.version}".`
         );
       }
-      const inputTensor = new ort.Tensor('float32', mixPlanarStereo, [
-        1,
-        2,
-        segmentSamples,
-      ]);
-      let results: Record<string, { data: unknown; dims?: readonly number[]; dispose?: () => void }> =
-        {};
-      try {
-        results = await session.run(
-          { [callerDescriptor.inputTensorName]: inputTensor },
-          [callerDescriptor.outputTensorName]
+
+      const activeRawSession = currentRawSession;
+      if (!activeRawSession || sessionReleased || sessionDisposedByCaller) {
+        throw new AudioSeparationError(
+          'INFERENCE_FAILED',
+          `ONNX session for "${frozenDescriptor.id}" has already been released.`
         );
-        const rawOut = results[callerDescriptor.outputTensorName];
-        if (!rawOut) {
-          throw new AudioSeparationError(
-            'INVALID_OUTPUT_TENSOR',
-            `Missing expected ONNX output tensor "${callerDescriptor.outputTensorName}".`
-          );
+      }
+
+      const isFirstChunk = !chunkZeroAttempted;
+      chunkZeroAttempted = true;
+      const chunkRunStart = nowMs();
+
+      try {
+        const result = await runOrtSessionSegment(
+          ort,
+          activeRawSession,
+          mixPlanarStereo,
+          segmentSamples,
+          callerDescriptor
+        );
+        if (isFirstChunk) {
+          fallbackBytes = null;
         }
-        const expectedLen =
-          callerDescriptor.rawOutputStemOrder.length * 2 * segmentSamples;
-        const dims = rawOut.dims ?? [];
+        return result;
+      } catch (err) {
         if (
-          dims.length !== 4 ||
-          dims[0] !== 1 ||
-          dims[1] !== callerDescriptor.rawOutputStemOrder.length ||
-          dims[2] !== 2 ||
-          dims[3] !== segmentSamples
+          isFirstChunk &&
+          currentProviderState === 'webgpu' &&
+          fallbackBytes !== null &&
+          !options?.signal?.aborted &&
+          !sessionDisposedByCaller
         ) {
-          throw new AudioSeparationError(
-            'INVALID_OUTPUT_TENSOR',
-            `Unexpected ONNX output tensor dims [${dims.join(', ')}]; expected [1, ${callerDescriptor.rawOutputStemOrder.length}, 2, ${segmentSamples}].`
-          );
+          const failureMsg = err instanceof Error ? err.message : String(err);
+          const fallbackSetupStart = nowMs();
+          attempts.push({
+            provider: 'webgpu',
+            outcome: 'failed',
+            stage: 'first_chunk_run',
+            durationMs: Math.max(0, nowMs() - chunkRunStart),
+            errorMessage: failureMsg,
+          });
+          currentRawSession = null;
+          sessionReleased = true;
+          try {
+            await activeRawSession.release();
+          } catch {
+            // Ignore WebGPU session release error while falling back to WASM.
+          }
+          checkAborted(options?.signal);
+          if (sessionDisposedByCaller) {
+            currentFallbackSetupMs += Math.max(0, nowMs() - fallbackSetupStart);
+            throw new AudioSeparationError(
+              'CANCELLED',
+              `ONNX session for "${frozenDescriptor.id}" was disposed during fallback.`
+            );
+          }
+          const wasmCreateStart = nowMs();
+          const bytesForWasm = fallbackBytes;
+          fallbackBytes = null;
+          try {
+            const wasmSession = await ort.InferenceSession.create(bytesForWasm, {
+              executionProviders: ['wasm'],
+              graphOptimizationLevel,
+            });
+            const wasmInitMs = Math.max(0, nowMs() - wasmCreateStart);
+            const totalSetupMs = Math.max(0, nowMs() - fallbackSetupStart);
+            if (options?.signal?.aborted || sessionDisposedByCaller) {
+              try {
+                await wasmSession.release();
+              } catch {
+                // Preserve CANCELLED / disposed guard on abort during fallback init.
+              }
+              currentFallbackSetupMs += totalSetupMs;
+              checkAborted(options?.signal);
+              throw new AudioSeparationError(
+                'CANCELLED',
+                `ONNX session for "${frozenDescriptor.id}" was disposed while initializing WASM fallback.`
+              );
+            }
+            if (
+              !wasmSession.inputNames.includes(frozenDescriptor.inputTensorName) ||
+              !wasmSession.outputNames.includes(frozenDescriptor.outputTensorName)
+            ) {
+              try {
+                await wasmSession.release();
+              } catch {
+                // Preserve contract error.
+              }
+              currentFallbackSetupMs += totalSetupMs;
+              throw new AudioSeparationError(
+                'MODEL_LOAD_FAILED',
+                `WASM fallback session tensors do not match "${frozenDescriptor.id}".`
+              );
+            }
+            currentRawSession = wasmSession;
+            sessionReleased = false;
+            currentProviderState = 'wasm';
+            currentSessionInitMs += wasmInitMs;
+            currentModelLoadMs += totalSetupMs;
+            currentFallbackSetupMs += totalSetupMs;
+            currentInputNames = Object.freeze([...wasmSession.inputNames]);
+            currentOutputNames = Object.freeze([...wasmSession.outputNames]);
+            fallbackReason = `webgpu_first_chunk_failed: ${failureMsg}`;
+            fallbackTransitioned = true;
+            attempts.push({
+              provider: 'wasm',
+              outcome: 'selected',
+              stage: 'session_create',
+              durationMs: wasmInitMs,
+            });
+            return await runOrtSessionSegment(
+              ort,
+              wasmSession,
+              mixPlanarStereo,
+              segmentSamples,
+              callerDescriptor
+            );
+          } catch (fallbackErr) {
+            currentFallbackSetupMs += Math.max(0, nowMs() - wasmCreateStart);
+            if (
+              fallbackErr instanceof AudioSeparationError &&
+              fallbackErr.code === 'CANCELLED'
+            ) {
+              throw fallbackErr;
+            }
+            attempts.push({
+              provider: 'wasm',
+              outcome: 'failed',
+              stage: 'session_create',
+              durationMs: Math.max(0, nowMs() - wasmCreateStart),
+              errorMessage:
+                fallbackErr instanceof Error
+                  ? fallbackErr.message
+                  : String(fallbackErr),
+            });
+            throw fallbackErr;
+          }
         }
-        if (!(rawOut.data instanceof Float32Array) || rawOut.data.length !== expectedLen) {
-          throw new AudioSeparationError(
-            'INVALID_OUTPUT_TENSOR',
-            `Expected Float32Array output of length ${expectedLen}.`
-          );
-        }
-        const copy = new Float32Array(rawOut.data.length);
-        copy.set(rawOut.data);
-        return copy;
-      } finally {
-        inputTensor.dispose();
-        for (const tensor of Object.values(results)) {
-          tensor?.dispose?.();
-        }
+        fallbackBytes = null;
+        throw err;
       }
     },
     async dispose() {
-      await session.release();
+      sessionDisposedByCaller = true;
+      fallbackBytes = null;
+      const toRelease = currentRawSession;
+      if (!toRelease || sessionReleased) {
+        return;
+      }
+      currentRawSession = null;
+      sessionReleased = true;
+      await toRelease.release();
     },
   });
   Object.freeze(handle.runSegment);
@@ -1476,17 +1955,30 @@ export async function createOrtWebSessionAdapter(
     handle,
     Object.freeze({
       descriptor: frozenDescriptor,
-      executionProvider,
+      initialExecutionProvider: activeProvider,
+      getExecutionProvider: () => currentProviderState,
+      hasFallbackTransitioned: () => fallbackTransitioned,
       ortVersion,
       modelBytes,
       modelSha256,
       modelChecksumVerified: checksumVerified,
+      getModelLoadMs: () => currentModelLoadMs,
+      getSessionInitMs: () => currentSessionInitMs,
+      getFallbackSetupMs: () => currentFallbackSetupMs,
       runSegment: handle.runSegment,
       dispose: handle.dispose,
     })
   );
 
-  return { session: handle, modelLoadMs };
+  return {
+    session: handle,
+    modelLoadMs: currentModelLoadBaseMs,
+    modelBytesFetchMs,
+    modelChecksumMs,
+    sessionInitMs,
+    modelCacheHit,
+    modelCacheMode,
+  };
 }
 
 interface ValidatedSessionAttestation {
@@ -1499,23 +1991,27 @@ interface ValidatedSessionAttestation {
   dispose: OnnxInferenceSessionHandle['dispose'];
 }
 
-function descriptorsMatchContract(
+export function descriptorsMatchContract(
   a: AudioSeparationModelDescriptor,
   b: AudioSeparationModelDescriptor
 ): boolean {
   if (
     a.id !== b.id ||
+    a.displayName !== b.displayName ||
     a.version !== b.version ||
     a.architecture !== b.architecture ||
+    a.license !== b.license ||
     a.sampleRate !== b.sampleRate ||
     a.channels !== b.channels ||
     a.segmentSamples !== b.segmentSamples ||
+    a.defaultOverlapRatio !== b.defaultOverlapRatio ||
     a.inputTensorName !== b.inputTensorName ||
     a.outputTensorName !== b.outputTensorName ||
     a.expectedModelBytes !== b.expectedModelBytes ||
     a.expectedModelSha256 !== b.expectedModelSha256 ||
     a.rawOutputStemOrder.length !== b.rawOutputStemOrder.length ||
-    a.canonicalStemOrder.length !== b.canonicalStemOrder.length
+    a.canonicalStemOrder.length !== b.canonicalStemOrder.length ||
+    a.supportedExecutionProviders.length !== b.supportedExecutionProviders.length
   ) {
     return false;
   }
@@ -1523,6 +2019,13 @@ function descriptorsMatchContract(
     if (
       a.rawOutputStemOrder[i] !== b.rawOutputStemOrder[i] ||
       a.canonicalStemOrder[i] !== b.canonicalStemOrder[i]
+    ) {
+      return false;
+    }
+  }
+  for (let i = 0; i < a.supportedExecutionProviders.length; i++) {
+    if (
+      a.supportedExecutionProviders[i] !== b.supportedExecutionProviders[i]
     ) {
       return false;
     }
@@ -1631,14 +2134,13 @@ function validateSessionAttestation(
   const stamp = VERIFIED_ORT_SESSION_STAMPS.get(session);
 
   if (stamp !== undefined) {
+    const stampedProvider = stamp.getExecutionProvider();
     if (
       !descriptorsMatchContract(stamp.descriptor, descriptor) ||
-      !stamp.descriptor.supportedExecutionProviders.includes(
-        stamp.executionProvider
-      ) ||
+      !stamp.descriptor.supportedExecutionProviders.includes(stampedProvider) ||
       modelId !== stamp.descriptor.id ||
       modelVersion !== stamp.descriptor.version ||
-      stamp.executionProvider !== executionProvider ||
+      stampedProvider !== executionProvider ||
       stamp.ortVersion !== ortVersion ||
       stamp.modelBytes !== modelBytes ||
       stamp.modelSha256 !== modelSha256 ||
@@ -1739,8 +2241,11 @@ export async function separateStereoAudio(
   );
   checkAborted(options.signal);
 
-  const maxFrames =
-    options.maxFrames ?? descriptor.sampleRate * DEFAULT_MAX_AUDIO_SECONDS;
+  const defaultMaxFrames = Math.min(
+    descriptor.sampleRate * DEFAULT_MAX_AUDIO_SECONDS,
+    MAX_SEPARATION_TOTAL_FRAMES
+  );
+  const maxFrames = options.maxFrames ?? defaultMaxFrames;
   if (!Number.isSafeInteger(maxFrames) || maxFrames <= 0) {
     throw new AudioSeparationError(
       'INVALID_AUDIO',
@@ -1815,7 +2320,14 @@ export async function separateStereoAudio(
   let session = options.session ?? null;
   let ownedSession = false;
   let modelLoadMs = 0;
+  let modelBytesFetchMsOverride: number | undefined;
+  let modelChecksumMsOverride: number | undefined;
+  let sessionInitMsOverride: number | undefined;
+  let modelCacheHitOverride: boolean | undefined;
+  let modelCacheModeOverride: ModelCacheMode | undefined;
   let inferenceMs = 0;
+  let primaryExecutionError: unknown = undefined;
+  let hasPrimaryExecutionError = false;
 
   try {
     if (!session) {
@@ -1835,11 +2347,31 @@ export async function separateStereoAudio(
       const created = await options.createSession(descriptor);
       session = created.session;
       modelLoadMs = created.modelLoadMs ?? 0;
-      ownedSession = true;
+      modelBytesFetchMsOverride = created.modelBytesFetchMs;
+      modelChecksumMsOverride = created.modelChecksumMs;
+      sessionInitMsOverride = created.sessionInitMs;
+      modelCacheHitOverride = created.modelCacheHit;
+      modelCacheModeOverride = created.modelCacheMode;
+      ownedSession = created.ownSession !== false;
       checkAborted(options.signal);
     }
 
     const preAttestation = validateSessionAttestation(session, descriptor);
+    const initialStamp = VERIFIED_ORT_SESSION_STAMPS.get(session);
+    const baselineFallbackSetupMs = initialStamp?.getFallbackSetupMs?.() ?? 0;
+    const baselineFallbackInitMs = initialStamp?.getSessionInitMs?.() ?? 0;
+    const baselineSessionInitMs =
+      sessionInitMsOverride !== undefined
+        ? sessionInitMsOverride
+        : session.sessionInitMs ?? 0;
+
+    options.onProgress?.({
+      phase: 'separating',
+      chunkIndex: 0,
+      totalChunks,
+      fraction: 0.05,
+      elapsedMs: Math.max(0, nowMs() - totalStartMs),
+    });
 
     for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
       checkAborted(options.signal);
@@ -2013,12 +2545,35 @@ export async function separateStereoAudio(
     const encodeMs = Math.max(0, totalEndMs - encodeStartMs);
     const totalWallMs = Math.max(0, totalEndMs - totalStartMs);
     const audioDurationSeconds = totalFrames / descriptor.sampleRate;
-    const rtf =
-      audioDurationSeconds > 0 ? inferenceMs / 1000 / audioDurationSeconds : 0;
     const jsHeapUsedBytes = readJsHeapUsedBytes();
     const postAttestation = validateSessionAttestation(session, descriptor);
+    const activeStamp = VERIFIED_ORT_SESSION_STAMPS.get(session);
+    const fallbackSetupMsDelta = Math.max(
+      0,
+      (activeStamp?.getFallbackSetupMs?.() ?? 0) - baselineFallbackSetupMs
+    );
+    const fallbackInitMsDelta = Math.max(
+      0,
+      (activeStamp?.getSessionInitMs?.() ?? 0) - baselineFallbackInitMs
+    );
+    const effectiveInferenceMs = Math.max(
+      0,
+      inferenceMs - fallbackSetupMsDelta
+    );
+    const rtf =
+      audioDurationSeconds > 0
+        ? effectiveInferenceMs / 1000 / audioDurationSeconds
+        : 0;
+    const allowedWebGpuFallback =
+      activeStamp !== undefined &&
+      activeStamp.hasFallbackTransitioned() &&
+      preAttestation.executionProvider === 'webgpu' &&
+      postAttestation.executionProvider === 'wasm' &&
+      activeStamp.getExecutionProvider() === 'wasm';
+
     if (
-      postAttestation.executionProvider !== preAttestation.executionProvider ||
+      (!allowedWebGpuFallback &&
+        postAttestation.executionProvider !== preAttestation.executionProvider) ||
       postAttestation.ortVersion !== preAttestation.ortVersion ||
       postAttestation.modelBytes !== preAttestation.modelBytes ||
       postAttestation.modelSha256 !== preAttestation.modelSha256 ||
@@ -2033,12 +2588,39 @@ export async function separateStereoAudio(
       );
     }
     const attestation = postAttestation;
+    const modelBytesFetchMs =
+      modelBytesFetchMsOverride ?? session.modelBytesFetchMs ?? 0;
+    const modelChecksumMs =
+      modelChecksumMsOverride ?? session.modelChecksumMs ?? 0;
+    const resolvedModelLoadMs = modelLoadMs + fallbackSetupMsDelta;
+    const sessionInitMs = baselineSessionInitMs + fallbackInitMsDelta;
+    const modelCacheHit =
+      modelCacheHitOverride ?? session.modelCacheHit ?? false;
+    const modelCacheMode: ModelCacheMode =
+      modelCacheModeOverride ?? session.modelCacheMode ?? 'none';
+    const wasmNumThreads = session.wasmNumThreads ?? null;
+    const crossOriginIsolated =
+      session.crossOriginIsolated ??
+      (typeof globalThis !== 'undefined' &&
+        Boolean((globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated));
+    const executionContext: SeparationExecutionContext =
+      options.executionContext ?? 'main_thread';
+    const providerAttempts = session.providerAttempts
+      ? session.providerAttempts.map((attempt) => ({ ...attempt }))
+      : [];
+    const providerFallbackReason = session.providerFallbackReason ?? null;
 
     if (
-      !Number.isFinite(modelLoadMs) ||
-      modelLoadMs < 0 ||
-      !Number.isFinite(inferenceMs) ||
-      inferenceMs < 0 ||
+      !Number.isFinite(resolvedModelLoadMs) ||
+      resolvedModelLoadMs < 0 ||
+      !Number.isFinite(modelBytesFetchMs) ||
+      modelBytesFetchMs < 0 ||
+      !Number.isFinite(modelChecksumMs) ||
+      modelChecksumMs < 0 ||
+      !Number.isFinite(sessionInitMs) ||
+      sessionInitMs < 0 ||
+      !Number.isFinite(effectiveInferenceMs) ||
+      effectiveInferenceMs < 0 ||
       !Number.isFinite(encodeMs) ||
       encodeMs < 0 ||
       !Number.isFinite(totalWallMs) ||
@@ -2084,8 +2666,18 @@ export async function separateStereoAudio(
         segmentSamples,
         overlapSamples,
         chunksProcessed: totalChunks,
-        modelLoadMs,
-        inferenceMs,
+        modelLoadMs: resolvedModelLoadMs,
+        modelBytesFetchMs,
+        modelChecksumMs,
+        sessionInitMs,
+        modelCacheHit,
+        modelCacheMode,
+        wasmNumThreads,
+        crossOriginIsolated,
+        executionContext,
+        providerAttempts,
+        providerFallbackReason,
+        inferenceMs: effectiveInferenceMs,
         encodeMs,
         totalWallMs,
         rtf,
@@ -2096,16 +2688,24 @@ export async function separateStereoAudio(
         inputSha256: options.inputSha256 ?? null,
       },
     };
+  } catch (err) {
+    hasPrimaryExecutionError = true;
+    primaryExecutionError = err;
+    throw err;
   } finally {
     if (ownedSession && session) {
       try {
         await session.dispose();
       } catch (disposeErr) {
-        if (!options.signal?.aborted) {
+        if (!hasPrimaryExecutionError && !options.signal?.aborted) {
           throw disposeErr;
         }
       }
     }
-    checkAborted(options.signal);
+    if (!hasPrimaryExecutionError) {
+      checkAborted(options.signal);
+    } else if (options.signal?.aborted && primaryExecutionError) {
+      checkAborted(options.signal);
+    }
   }
 }

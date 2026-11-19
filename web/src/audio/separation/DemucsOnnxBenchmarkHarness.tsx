@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import {
   AudioSeparationError,
   DEFAULT_SEPARATION_MODEL_REGISTRY,
   HTDEMUCS_6S_ONNX_DESCRIPTOR,
   MAX_AUDIO_WAV_BYTES,
   MAX_MODEL_BYTES,
+  clearVerifiedModelBytesCache,
   computeSha256Hex,
   createOrtWebSessionAdapter,
   decodeWavToStereoFloat32,
@@ -13,17 +14,28 @@ import {
   type AudioSeparationModelDescriptor,
   type CanonicalStemId,
   type ExecutionProviderName,
+  type SeparatedStemOutput,
   type SeparationProgressEvent,
+  type SeparationResult,
   type SeparationTelemetryMetrics,
 } from './demucs-onnx-separator';
+import { DemucsSeparationWorkerClient } from './demucs-worker-client';
+import { SixStemMixerPanel } from './SixStemMixerPanel';
+import type { SixStemWebAudioMixerController } from './six-stem-mixer';
 
 export type ProviderSelectionMode = 'wasm' | 'webgpu-fallback' | 'webgpu';
+export type SeparationExecutionMode = 'worker' | 'main-thread';
 
 export interface DemucsOnnxBenchmarkHarnessProps {
   initialModelUrl?: string;
   initialAudioUrl?: string;
   wasmPaths?: string;
   models?: readonly AudioSeparationModelDescriptor[];
+  initialExecutionMode?: SeparationExecutionMode;
+  initialUseModelBytesCache?: boolean;
+  initialReuseWarmSession?: boolean;
+  createWorkerClient?: () => DemucsSeparationWorkerClient;
+  createMixerController?: () => SixStemWebAudioMixerController;
 }
 
 interface StemPreviewItem {
@@ -37,9 +49,15 @@ interface StemPreviewItem {
   objectUrl: string;
 }
 
+interface UiHeartbeatStats {
+  ticks: number;
+  maxDriftMs: number;
+}
+
 interface BenchmarkReportSnapshot {
   telemetry: SeparationTelemetryMetrics;
   stems: Array<Omit<StemPreviewItem, 'objectUrl'>>;
+  uiHeartbeat: UiHeartbeatStats;
 }
 
 function providersForMode(
@@ -59,8 +77,13 @@ function providersForMode(
 export function DemucsOnnxBenchmarkHarness({
   initialModelUrl = '',
   initialAudioUrl = '',
-  wasmPaths = '/ort/',
+  wasmPaths,
   models = DEFAULT_SEPARATION_MODEL_REGISTRY.list(),
+  initialExecutionMode = 'main-thread',
+  initialUseModelBytesCache = true,
+  initialReuseWarmSession = false,
+  createWorkerClient,
+  createMixerController,
 }: DemucsOnnxBenchmarkHarnessProps) {
   const availableModels =
     models.length > 0 ? models : [HTDEMUCS_6S_ONNX_DESCRIPTOR];
@@ -69,6 +92,14 @@ export function DemucsOnnxBenchmarkHarness({
   );
   const [providerMode, setProviderMode] =
     useState<ProviderSelectionMode>('wasm');
+  const [executionMode, setExecutionMode] =
+    useState<SeparationExecutionMode>(initialExecutionMode);
+  const [useModelBytesCache, setUseModelBytesCache] = useState<boolean>(
+    initialUseModelBytesCache
+  );
+  const [reuseWarmSession, setReuseWarmSession] = useState<boolean>(
+    initialReuseWarmSession
+  );
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [modelUrl, setModelUrl] = useState<string>(initialModelUrl);
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -79,16 +110,35 @@ export function DemucsOnnxBenchmarkHarness({
     'idle' | 'running' | 'completed' | 'cancelled' | 'error'
   >('idle');
   const [isCleaningUp, setIsCleaningUp] = useState<boolean>(false);
+  const [isClearingCache, setIsClearingCache] = useState<boolean>(false);
   const [progress, setProgress] = useState<SeparationProgressEvent | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<SeparationTelemetryMetrics | null>(
     null
   );
   const [stemPreviews, setStemPreviews] = useState<StemPreviewItem[]>([]);
+  const [separatedStems, setSeparatedStems] = useState<
+    readonly SeparatedStemOutput[] | null
+  >(null);
+  const [isMixerLoading, setIsMixerLoading] = useState<boolean>(false);
+  const [uiHeartbeat, setUiHeartbeat] = useState<UiHeartbeatStats>({
+    ticks: 0,
+    maxDriftMs: 0,
+  });
+
+  const heartbeatActiveRef = useRef<{
+    lastTick: number;
+    ticks: number;
+    maxDriftMs: number;
+  }>({ lastTick: 0, ticks: 0, maxDriftMs: 0 });
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const workerClientRef = useRef<DemucsSeparationWorkerClient | null>(null);
+  const createWorkerClientRef = useRef(createWorkerClient);
+  createWorkerClientRef.current = createWorkerClient;
   const runGenerationRef = useRef<number>(0);
   const inFlightRunRef = useRef<boolean>(false);
+  const clearingCacheRef = useRef<boolean>(false);
   const unmountedRef = useRef<boolean>(false);
   const activeUrlsRef = useRef<string[]>([]);
 
@@ -105,9 +155,37 @@ export function DemucsOnnxBenchmarkHarness({
       unmountedRef.current = true;
       runGenerationRef.current += 1;
       abortControllerRef.current?.abort();
+      workerClientRef.current?.dispose();
+      workerClientRef.current = null;
       revokeActiveUrls();
     };
   }, []);
+
+  const isHeartbeatActive = status === 'running' || isMixerLoading;
+
+  useEffect(() => {
+    if (!isHeartbeatActive) {
+      return undefined;
+    }
+    heartbeatActiveRef.current.lastTick = performance.now();
+    const interval = window.setInterval(() => {
+      const now = performance.now();
+      const tracker = heartbeatActiveRef.current;
+      const drift = Math.max(0, now - tracker.lastTick - 40);
+      tracker.lastTick = now;
+      tracker.ticks += 1;
+      if (drift > tracker.maxDriftMs) {
+        tracker.maxDriftMs = drift;
+      }
+      setUiHeartbeat({
+        ticks: tracker.ticks,
+        maxDriftMs: tracker.maxDriftMs,
+      });
+    }, 40);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [isHeartbeatActive]);
 
   const activeDescriptor =
     availableModels.find((m) => m.id === selectedModelId) ?? availableModels[0];
@@ -116,7 +194,7 @@ export function DemucsOnnxBenchmarkHarness({
       activeDescriptor.expectedModelBytes !== undefined
   );
   const effectiveVerifyChecksum = isPinnedModel ? true : verifyChecksum;
-  const isBusy = status === 'running' || isCleaningUp;
+  const isBusy = status === 'running' || isCleaningUp || isClearingCache;
 
   const handleModelFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -132,8 +210,11 @@ export function DemucsOnnxBenchmarkHarness({
     runGenerationRef.current += 1;
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
+    workerClientRef.current?.cancelActiveJob();
     revokeActiveUrls();
     setStemPreviews([]);
+    setIsMixerLoading(false);
+    setSeparatedStems(null);
     setTelemetry(null);
     setProgress(null);
     setStatus('cancelled');
@@ -145,8 +226,35 @@ export function DemucsOnnxBenchmarkHarness({
     }
   };
 
+  const handleClearCache = async () => {
+    if (isBusy || inFlightRunRef.current || clearingCacheRef.current) {
+      return;
+    }
+    clearingCacheRef.current = true;
+    setIsClearingCache(true);
+    try {
+      clearVerifiedModelBytesCache();
+      if (workerClientRef.current && !workerClientRef.current.isDisposed()) {
+        await workerClientRef.current.clearCache();
+      }
+    } catch (err) {
+      if (!unmountedRef.current) {
+        setErrorMessage(
+          err instanceof Error
+            ? err.message
+            : 'Falha ao limpar cache do Worker.'
+        );
+      }
+    } finally {
+      clearingCacheRef.current = false;
+      if (!unmountedRef.current) {
+        setIsClearingCache(false);
+      }
+    }
+  };
+
   const handleRunSeparation = async () => {
-    if (inFlightRunRef.current) {
+    if (inFlightRunRef.current || clearingCacheRef.current) {
       return;
     }
     inFlightRunRef.current = true;
@@ -155,8 +263,16 @@ export function DemucsOnnxBenchmarkHarness({
     abortControllerRef.current = controller;
     const generation = ++runGenerationRef.current;
 
+    heartbeatActiveRef.current = {
+      lastTick: performance.now(),
+      ticks: 0,
+      maxDriftMs: 0,
+    };
+    setUiHeartbeat({ ticks: 0, maxDriftMs: 0 });
     revokeActiveUrls();
     setStemPreviews([]);
+    setIsMixerLoading(false);
+    setSeparatedStems(null);
     setTelemetry(null);
     setErrorMessage(null);
     setProgress(null);
@@ -224,41 +340,81 @@ export function DemucsOnnxBenchmarkHarness({
         return;
       }
 
-      const inputSha256 = await computeSha256Hex(audioBytes);
-      const audioArrayBuffer = audioBytes.slice().buffer;
-      const decoded = decodeWavToStereoFloat32(audioArrayBuffer, {
-        expectedSampleRate: activeDescriptor.sampleRate,
-      });
+      let result: SeparationResult;
+      if (executionMode === 'worker') {
+        if (!workerClientRef.current || workerClientRef.current.isDisposed()) {
+          workerClientRef.current = createWorkerClientRef.current
+            ? createWorkerClientRef.current()
+            : new DemucsSeparationWorkerClient();
+        }
+        const ownedInputBuffer =
+          audioBytes.buffer instanceof ArrayBuffer &&
+          audioBytes.byteOffset === 0 &&
+          audioBytes.byteLength === audioBytes.buffer.byteLength
+            ? audioBytes.buffer
+            : null;
+        result = await workerClientRef.current.separate({
+          descriptor: activeDescriptor,
+          modelSource,
+          audioWavBytes: ownedInputBuffer ?? audioBytes,
+          transferInputBuffer: ownedInputBuffer !== null,
+          wasmPaths,
+          preferredProviders: providersForMode(providerMode),
+          verifyModelChecksum: effectiveVerifyChecksum,
+          useModelBytesCache,
+          reuseWarmSession,
+          signal: controller.signal,
+          onProgress: (evt) => {
+            if (
+              generation === runGenerationRef.current &&
+              !controller.signal.aborted
+            ) {
+              setProgress(evt);
+            }
+          },
+        });
+      } else {
+        const inputSha256 = await computeSha256Hex(audioBytes);
+        const audioArrayBuffer = audioBytes.slice().buffer;
+        const decoded = decodeWavToStereoFloat32(audioArrayBuffer, {
+          expectedSampleRate: activeDescriptor.sampleRate,
+        });
 
-      const result = await separateStereoAudio(decoded, {
-        descriptor: activeDescriptor,
-        inputSha256,
-        signal: controller.signal,
-        onProgress: (evt) => {
-          if (
-            generation === runGenerationRef.current &&
-            !controller.signal.aborted
-          ) {
-            setProgress(evt);
-          }
-        },
-        createSession: (descriptor) =>
-          createOrtWebSessionAdapter(modelSource, descriptor, {
-            wasmPaths,
-            preferredProviders: providersForMode(providerMode),
-            verifyModelChecksum: effectiveVerifyChecksum,
-            signal: controller.signal,
-          }),
-      });
+        result = await separateStereoAudio(decoded, {
+          descriptor: activeDescriptor,
+          inputSha256,
+          executionContext: 'main_thread',
+          signal: controller.signal,
+          onProgress: (evt) => {
+            if (
+              generation === runGenerationRef.current &&
+              !controller.signal.aborted
+            ) {
+              setProgress(evt);
+            }
+          },
+          createSession: (descriptor) =>
+            createOrtWebSessionAdapter(modelSource, descriptor, {
+              wasmPaths,
+              preferredProviders: providersForMode(providerMode),
+              verifyModelChecksum: effectiveVerifyChecksum,
+              useModelBytesCache,
+              signal: controller.signal,
+            }),
+        });
+      }
 
       if (generation !== runGenerationRef.current || controller.signal.aborted) {
         return;
       }
 
       const previews: StemPreviewItem[] = result.orderedStems.map((stem) => {
-        const copy = new Uint8Array(stem.wavBytes.byteLength);
-        copy.set(stem.wavBytes);
-        const blob = new Blob([copy.buffer], { type: 'audio/wav' });
+        const blob =
+          stem.wavBytes.buffer instanceof ArrayBuffer
+            ? new Blob([stem.wavBytes as Uint8Array<ArrayBuffer>], {
+                type: 'audio/wav',
+              })
+            : new Blob([new Uint8Array(stem.wavBytes)], { type: 'audio/wav' });
         const objectUrl = URL.createObjectURL(blob);
         createdUrlsForRun.push(objectUrl);
         return {
@@ -283,6 +439,8 @@ export function DemucsOnnxBenchmarkHarness({
       activeUrlsRef.current = createdUrlsForRun;
       setTelemetry(result.telemetry);
       setStemPreviews(previews);
+      setIsMixerLoading(result.orderedStems.length === 6);
+      setSeparatedStems(result.orderedStems);
       setStatus('completed');
     } catch (err) {
       for (const url of createdUrlsForRun) {
@@ -301,6 +459,7 @@ export function DemucsOnnxBenchmarkHarness({
         return;
       }
       setStatus('error');
+      setIsMixerLoading(false);
       setErrorMessage(
         err instanceof Error ? err.message : 'Erro desconhecido na separação.'
       );
@@ -316,10 +475,26 @@ export function DemucsOnnxBenchmarkHarness({
     }
   };
 
+  const mixerMetadata = useMemo(
+    () => ({
+      modelId: telemetry?.modelId ?? activeDescriptor.id,
+      modelVersion: telemetry?.modelVersion ?? activeDescriptor.version,
+      sourceSha256: telemetry?.inputSha256 ?? null,
+    }),
+    [
+      telemetry?.modelId,
+      telemetry?.modelVersion,
+      telemetry?.inputSha256,
+      activeDescriptor.id,
+      activeDescriptor.version,
+    ]
+  );
+
   const reportSnapshot: BenchmarkReportSnapshot | null = telemetry
     ? {
         telemetry,
         stems: stemPreviews.map(({ objectUrl: _ignored, ...rest }) => rest),
+        uiHeartbeat,
       }
     : null;
 
@@ -390,6 +565,22 @@ export function DemucsOnnxBenchmarkHarness({
         </label>
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <span>Contexto de execução</span>
+          <select
+            data-testid="m22b-execution-mode-select"
+            value={executionMode}
+            onChange={(e) =>
+              setExecutionMode(e.target.value as SeparationExecutionMode)
+            }
+            disabled={isBusy}
+            style={{ minHeight: '44px', padding: '0 10px' }}
+          >
+            <option value="worker">Web Worker dedicado (M22-B)</option>
+            <option value="main-thread">Thread principal (Baseline M22-A)</option>
+          </select>
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <span>Arquivo .onnx local</span>
           <input
             type="file"
@@ -440,26 +631,64 @@ export function DemucsOnnxBenchmarkHarness({
         </label>
       </div>
 
-      <label
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          minHeight: '44px',
-        }}
-      >
-        <input
-          type="checkbox"
-          data-testid="m22a-verify-checksum"
-          checked={effectiveVerifyChecksum}
-          onChange={(e) => setVerifyChecksum(e.target.checked)}
-          disabled={isBusy || isPinnedModel}
-        />
-        <span>
-          Validar SHA-256 esperado do modelo antes de inicializar sessão
-          {isPinnedModel ? ' (obrigatório para modelo fixado)' : ''}
-        </span>
-      </label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            minHeight: '44px',
+          }}
+        >
+          <input
+            type="checkbox"
+            data-testid="m22a-verify-checksum"
+            checked={effectiveVerifyChecksum}
+            onChange={(e) => setVerifyChecksum(e.target.checked)}
+            disabled={isBusy || isPinnedModel}
+          />
+          <span>
+            Validar SHA-256 esperado do modelo antes de inicializar sessão
+            {isPinnedModel ? ' (obrigatório para modelo fixado)' : ''}
+          </span>
+        </label>
+
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            minHeight: '44px',
+          }}
+        >
+          <input
+            type="checkbox"
+            data-testid="m22b-cache-bytes-toggle"
+            checked={useModelBytesCache}
+            onChange={(e) => setUseModelBytesCache(e.target.checked)}
+            disabled={isBusy}
+          />
+          <span>Cache em memória dos bytes verificados</span>
+        </label>
+
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            minHeight: '44px',
+          }}
+        >
+          <input
+            type="checkbox"
+            data-testid="m22b-warm-session-toggle"
+            checked={reuseWarmSession}
+            onChange={(e) => setReuseWarmSession(e.target.checked)}
+            disabled={isBusy || executionMode !== 'worker'}
+          />
+          <span>Reutilizar sessão aquecida no Worker</span>
+        </label>
+      </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
         <button
@@ -493,6 +722,22 @@ export function DemucsOnnxBenchmarkHarness({
         >
           {isCleaningUp ? 'Cancelando...' : 'Cancelar'}
         </button>
+
+        <button
+          type="button"
+          data-testid="m22b-clear-cache-button"
+          onClick={() => {
+            void handleClearCache();
+          }}
+          disabled={isBusy}
+          style={{
+            minHeight: '44px',
+            padding: '0 16px',
+            cursor: isBusy ? 'not-allowed' : 'pointer',
+          }}
+        >
+          Limpar cache/sessão
+        </button>
       </div>
 
       <div
@@ -509,6 +754,15 @@ export function DemucsOnnxBenchmarkHarness({
             {Math.round(progress.fraction * 100)}%)
           </span>
         )}
+        <span
+          data-testid="m22b-ui-heartbeat"
+          data-ticks={uiHeartbeat.ticks}
+          data-max-drift-ms={uiHeartbeat.maxDriftMs.toFixed(1)}
+          style={{ marginLeft: '12px', fontSize: '0.82rem', opacity: 0.8 }}
+        >
+          UI ticks: {uiHeartbeat.ticks} (drift máx.{' '}
+          {uiHeartbeat.maxDriftMs.toFixed(1)} ms)
+        </span>
       </div>
 
       {errorMessage && (
@@ -550,6 +804,22 @@ export function DemucsOnnxBenchmarkHarness({
               <dd>{telemetry.executionProvider}</dd>
             </div>
             <div>
+              <dt>Contexto / Threads</dt>
+              <dd>
+                {telemetry.executionContext ?? 'main_thread'} (threads:{' '}
+                {telemetry.wasmNumThreads ?? 1}, COI:{' '}
+                {telemetry.crossOriginIsolated ? 'sim' : 'não'})
+              </dd>
+            </div>
+            <div>
+              <dt>Cache / Init Sessão</dt>
+              <dd>
+                {telemetry.modelCacheMode ?? 'none'} (fetch:{' '}
+                {(telemetry.modelBytesFetchMs ?? 0).toFixed(1)} ms, init:{' '}
+                {(telemetry.sessionInitMs ?? 0).toFixed(1)} ms)
+              </dd>
+            </div>
+            <div>
               <dt>ORT Web</dt>
               <dd>{telemetry.ortVersion}</dd>
             </div>
@@ -583,6 +853,21 @@ export function DemucsOnnxBenchmarkHarness({
             </div>
           </dl>
         </div>
+      )}
+
+      {separatedStems && separatedStems.length === 6 && (
+        <SixStemMixerPanel
+          stems={separatedStems}
+          metadata={mixerMetadata}
+          createController={createMixerController}
+          isSeparating={status === 'running'}
+          separationError={errorMessage}
+          onLoadingChange={setIsMixerLoading}
+          onDisposed={() => {
+            setIsMixerLoading(false);
+            setSeparatedStems(null);
+          }}
+        />
       )}
 
       {stemPreviews.length > 0 && (

@@ -1615,4 +1615,375 @@ describe('demucs-onnx-separator (M22-A)', () => {
       vi.resetModules();
     }
   });
+
+  it('supports single-entry VerifiedModelBytesCache and automatic WebGPU -> WASM fallback on adapter, create, and chunk-0 failure (M22-B)', async () => {
+    vi.resetModules();
+    let webgpuFailMode: 'no_adapter' | 'create_fail' | 'chunk0_fail' = 'chunk0_fail';
+    let failWasmCreate = false;
+    let failWasmRun = false;
+    let failWasmRelease = false;
+    let wasmCreateGate: (() => Promise<void>) | null = null;
+    let onWebGpuRelease: (() => void) | null = null;
+    let wasmCreateCount = 0;
+    const releaseWebGpuSpy = vi.fn(async () => {
+      onWebGpuRelease?.();
+      if (releaseWebGpuSpy.mock.calls.length > 1) {
+        throw new Error('double_release_webgpu');
+      }
+    });
+    const releaseWasmSpy = vi.fn(async () => {
+      if (failWasmRelease) {
+        throw new Error('secondary_release_error');
+      }
+    });
+
+    vi.doMock('onnxruntime-web', () => ({
+      env: { wasm: {}, versions: { web: '1.21.0-m22b' } },
+      Tensor: class {
+        constructor(
+          public type: string,
+          public data: Float32Array,
+          public dims: number[]
+        ) {}
+        dispose() {}
+      },
+      InferenceSession: {
+        create: async (
+          _bytes: Uint8Array,
+          cfg: { executionProviders: string[] }
+        ) => {
+          const ep = cfg.executionProviders[0];
+          if (ep === 'webgpu') {
+            if (webgpuFailMode === 'create_fail') {
+              throw new Error('webgpu shader compile unsupported ConstantOfShape');
+            }
+            return {
+              inputNames: ['mix'],
+              outputNames: ['stems'],
+              run: async () => {
+                throw new Error('webgpu runtime dispatch failed on chunk 0');
+              },
+              release: releaseWebGpuSpy,
+            };
+          }
+          wasmCreateCount += 1;
+          if (wasmCreateGate) {
+            await wasmCreateGate();
+          }
+          if (failWasmCreate) {
+            throw new Error('wasm_fallback_create_failed');
+          }
+          return {
+            inputNames: ['mix'],
+            outputNames: ['stems'],
+            run: async () => {
+              if (failWasmRun) {
+                throw new Error('primary_wasm_run_failure');
+              }
+              return {
+                stems: {
+                  data: new Float32Array(6 * 2 * 16).fill(0.05),
+                  dims: [1, 6, 2, 16],
+                  dispose: vi.fn(),
+                },
+              };
+            },
+            release: releaseWasmSpy,
+          };
+        },
+      },
+    }));
+
+    const originalFetch = globalThis.fetch;
+    const originalNavGpu = (navigator as Navigator & { gpu?: unknown }).gpu;
+    const modelBytes = new Uint8Array([9, 8, 7, 6, 5, 4]);
+    const fetchSpy = vi.fn(async () => {
+      return new Response(modelBytes.slice().buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/octet-stream' },
+      });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const freshMod = await import('./demucs-onnx-separator');
+      freshMod.clearVerifiedModelBytesCache();
+      const modelHash = await freshMod.computeSha256Hex(modelBytes);
+      const desc: AudioSeparationModelDescriptor = {
+        ...freshMod.HTDEMUCS_6S_ONNX_DESCRIPTOR,
+        id: 'm22b_cache_fallback_test',
+        segmentSamples: 16,
+        defaultOverlapRatio: 0.25,
+        expectedModelBytes: modelBytes.byteLength,
+        expectedModelSha256: modelHash,
+      };
+
+      // Mock navigator.gpu with requestAdapter() returning an adapter so InferenceSession.create('webgpu') runs
+      Object.defineProperty(navigator, 'gpu', {
+        configurable: true,
+        value: {
+          requestAdapter: async () =>
+            webgpuFailMode === 'no_adapter' ? null : { name: 'mock-adapter' },
+        },
+      });
+
+      // 1. Cold fetch + WebGPU chunk-0 failure falls back cleanly to WASM and verifies attestation
+      webgpuFailMode = 'chunk0_fail';
+      const audio = {
+        sampleRate: 44100,
+        totalFrames: 24,
+        left: new Float32Array(24).fill(0.25),
+        right: new Float32Array(24).fill(-0.25),
+      };
+      const firstResult = await freshMod.separateStereoAudio(audio, {
+        descriptor: desc,
+        executionContext: 'web_worker',
+        yieldBetweenChunks: false,
+        createSession: (d) =>
+          freshMod.createOrtWebSessionAdapter('/models/test-cache.onnx', d, {
+            preferredProviders: ['webgpu', 'wasm'],
+            verifyModelChecksum: true,
+            useModelBytesCache: true,
+          }),
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(releaseWebGpuSpy).toHaveBeenCalledTimes(1);
+      expect(releaseWasmSpy).toHaveBeenCalledTimes(1);
+      expect(firstResult.telemetry.executionProvider).toBe('wasm');
+      expect(firstResult.telemetry.modelChecksumVerified).toBe(true);
+      expect(firstResult.telemetry.modelCacheHit).toBe(false);
+      expect(firstResult.telemetry.modelCacheMode).toBe('none');
+      expect(firstResult.telemetry.executionContext).toBe('web_worker');
+      expect(firstResult.telemetry.providerFallbackReason).toContain(
+        'webgpu_first_chunk_failed'
+      );
+      expect(firstResult.telemetry.providerAttempts?.map((a) => `${a.provider}:${a.outcome}:${a.stage}`)).toEqual([
+        'webgpu:selected:session_create',
+        'webgpu:failed:first_chunk_run',
+        'wasm:selected:session_create',
+      ]);
+      expect(freshMod.getVerifiedModelBytesCacheStats()).toEqual({
+        entries: 1,
+        cachedBytes: modelBytes.byteLength,
+        cachedModelId: 'm22b_cache_fallback_test',
+      });
+
+      // 2. Second load hits VerifiedModelBytesCache (0 extra fetches) + WebGPU null adapter falls back at support_check
+      webgpuFailMode = 'no_adapter';
+      const secondResult = await freshMod.separateStereoAudio(audio, {
+        descriptor: desc,
+        executionContext: 'web_worker',
+        yieldBetweenChunks: false,
+        createSession: (d) =>
+          freshMod.createOrtWebSessionAdapter('/models/test-cache.onnx', d, {
+            preferredProviders: ['webgpu', 'wasm'],
+            verifyModelChecksum: true,
+            useModelBytesCache: true,
+          }),
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(secondResult.telemetry.executionProvider).toBe('wasm');
+      expect(secondResult.telemetry.modelChecksumVerified).toBe(true);
+      expect(secondResult.telemetry.modelCacheHit).toBe(true);
+      expect(secondResult.telemetry.modelCacheMode).toBe('memory_bytes');
+      expect(secondResult.telemetry.providerAttempts?.map((a) => `${a.provider}:${a.outcome}:${a.stage}`)).toEqual([
+        'webgpu:failed:support_check',
+        'wasm:selected:session_create',
+      ]);
+
+      // 3. Fallback failure after WebGPU release must NOT double-release WebGPU or mask original error
+      webgpuFailMode = 'chunk0_fail';
+      failWasmCreate = true;
+      releaseWebGpuSpy.mockClear();
+      await expect(
+        freshMod.separateStereoAudio(audio, {
+          descriptor: desc,
+          executionContext: 'web_worker',
+          yieldBetweenChunks: false,
+          createSession: (d) =>
+            freshMod.createOrtWebSessionAdapter('/models/test-cache.onnx', d, {
+              preferredProviders: ['webgpu', 'wasm'],
+              verifyModelChecksum: true,
+              useModelBytesCache: true,
+            }),
+        })
+      ).rejects.toThrow(/wasm_fallback_create_failed/);
+      expect(releaseWebGpuSpy).toHaveBeenCalledTimes(1);
+
+      // 4. Aborting during WebGPU fallback release must prevent WASM session creation and throw CANCELLED
+      failWasmCreate = false;
+      releaseWebGpuSpy.mockClear();
+      wasmCreateCount = 0;
+      const abortDuringRelease = new AbortController();
+      onWebGpuRelease = () => abortDuringRelease.abort();
+      await expect(
+        freshMod.separateStereoAudio(audio, {
+          descriptor: desc,
+          executionContext: 'web_worker',
+          yieldBetweenChunks: false,
+          signal: abortDuringRelease.signal,
+          createSession: (d) =>
+            freshMod.createOrtWebSessionAdapter('/models/test-cache.onnx', d, {
+              preferredProviders: ['webgpu', 'wasm'],
+              verifyModelChecksum: true,
+              useModelBytesCache: true,
+              signal: abortDuringRelease.signal,
+            }),
+        })
+      ).rejects.toMatchObject({ code: 'CANCELLED' });
+      expect(wasmCreateCount).toBe(0);
+      onWebGpuRelease = null;
+
+      // 5. Dispose during pending fallback WASM session creation must release created session and never reinstall
+      releaseWasmSpy.mockClear();
+      let resolvePendingWasm: (() => void) | null = null;
+      wasmCreateGate = () =>
+        new Promise<void>((r) => {
+          resolvePendingWasm = r;
+        });
+      const disposedAdapter = await freshMod.createOrtWebSessionAdapter(
+        '/models/test-cache.onnx',
+        desc,
+        {
+          preferredProviders: ['webgpu', 'wasm'],
+          verifyModelChecksum: true,
+          useModelBytesCache: true,
+        }
+      );
+      const pendingFallbackSegment = disposedAdapter.session.runSegment(
+        new Float32Array(32),
+        16,
+        desc
+      );
+      await vi.waitFor(() => {
+        expect(resolvePendingWasm).not.toBeNull();
+      });
+      await disposedAdapter.session.dispose();
+      resolvePendingWasm!();
+      await expect(pendingFallbackSegment).rejects.toMatchObject({
+        code: 'CANCELLED',
+      });
+      expect(releaseWasmSpy).toHaveBeenCalledTimes(1);
+      wasmCreateGate = null;
+
+      // 6. Fallback setup latency adds to sessionInitMs and is excluded from inferenceMs; secondary release error does not mask primary run failure
+      releaseWasmSpy.mockClear();
+      wasmCreateGate = async () => {
+        await new Promise<void>((r) => setTimeout(r, 25));
+      };
+      const timedFallback = await freshMod.separateStereoAudio(audio, {
+        descriptor: desc,
+        executionContext: 'web_worker',
+        yieldBetweenChunks: false,
+        createSession: (d) =>
+          freshMod.createOrtWebSessionAdapter('/models/test-cache.onnx', d, {
+            preferredProviders: ['webgpu', 'wasm'],
+            verifyModelChecksum: true,
+            useModelBytesCache: true,
+          }),
+      });
+      expect(timedFallback.telemetry.sessionInitMs).toBeGreaterThanOrEqual(20);
+      expect(timedFallback.telemetry.modelLoadMs).toBeGreaterThanOrEqual(20);
+
+      // Passing the adapter session directly without createSession() must also avoid double-counting fallback setup
+      const directSessionAdapter = await freshMod.createOrtWebSessionAdapter(
+        '/models/test-cache.onnx',
+        desc,
+        {
+          preferredProviders: ['webgpu', 'wasm'],
+          verifyModelChecksum: true,
+          useModelBytesCache: true,
+        }
+      );
+      const directResult = await freshMod.separateStereoAudio(audio, {
+        descriptor: desc,
+        session: directSessionAdapter.session,
+        executionContext: 'web_worker',
+        yieldBetweenChunks: false,
+      });
+      expect(directResult.telemetry.sessionInitMs).toBeLessThan(1000);
+      expect(directResult.telemetry.inferenceMs).toBeLessThan(20);
+      expect(directResult.telemetry.sessionInitMs).toBe(
+        directSessionAdapter.session.sessionInitMs
+      );
+      await directSessionAdapter.session.dispose();
+      wasmCreateGate = null;
+
+      // Reusing a warm session with explicit 0 overrides must report modelLoadMs=0 and sessionInitMs=0 even after prior fallback delta
+      const warmAdapter = await freshMod.createOrtWebSessionAdapter(
+        '/models/test-cache.onnx',
+        desc,
+        {
+          preferredProviders: ['webgpu', 'wasm'],
+          verifyModelChecksum: true,
+          useModelBytesCache: true,
+        }
+      );
+      await freshMod.separateStereoAudio(audio, {
+        descriptor: desc,
+        executionContext: 'web_worker',
+        yieldBetweenChunks: false,
+        createSession: async () => ({
+          ...warmAdapter,
+          ownSession: false,
+        }),
+      });
+      const warmReused = await freshMod.separateStereoAudio(audio, {
+        descriptor: desc,
+        executionContext: 'web_worker',
+        yieldBetweenChunks: false,
+        createSession: async () => ({
+          session: warmAdapter.session,
+          modelLoadMs: 0,
+          modelBytesFetchMs: 0,
+          modelChecksumMs: 0,
+          sessionInitMs: 0,
+          modelCacheHit: true,
+          modelCacheMode: 'session_reused',
+          ownSession: false,
+        }),
+      });
+      expect(warmReused.telemetry.modelLoadMs).toBe(0);
+      expect(warmReused.telemetry.sessionInitMs).toBe(0);
+      await warmAdapter.session.dispose();
+
+      failWasmRun = true;
+      failWasmRelease = true;
+      await expect(
+        freshMod.separateStereoAudio(audio, {
+          descriptor: desc,
+          executionContext: 'web_worker',
+          yieldBetweenChunks: false,
+          createSession: (d) =>
+            freshMod.createOrtWebSessionAdapter('/models/test-cache.onnx', d, {
+              preferredProviders: ['webgpu', 'wasm'],
+              verifyModelChecksum: true,
+              useModelBytesCache: true,
+            }),
+        })
+      ).rejects.toThrow(/primary_wasm_run_failure/);
+      failWasmRun = false;
+      failWasmRelease = false;
+
+      // 7. Clearing cache frees entry
+      freshMod.clearVerifiedModelBytesCache();
+      expect(freshMod.getVerifiedModelBytesCacheStats()).toEqual({
+        entries: 0,
+        cachedBytes: 0,
+        cachedModelId: null,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalNavGpu === undefined) {
+        delete (navigator as { gpu?: unknown }).gpu;
+      } else {
+        Object.defineProperty(navigator, 'gpu', {
+          configurable: true,
+          value: originalNavGpu,
+        });
+      }
+      vi.doUnmock('onnxruntime-web');
+      vi.resetModules();
+    }
+  });
 });
