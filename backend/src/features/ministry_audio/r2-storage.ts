@@ -30,9 +30,9 @@ import {
   type SealOptions,
   type SignedObjectRequest,
 } from './direct-storage';
-import { stemSchema, type StemManifest } from './ministry-audio.schema';
+import { isValidStoredStem, stemExtension, stemMime, verifyStemBytes, type StoredStem } from './stem-codec';
 import { readRanged } from './ranged-reader';
-import { verifyWav, type VerifyStats } from './storage';
+import type { VerifyStats } from './storage';
 
 // Timing and size facts only. Never keys, URLs, headers or content.
 export interface SealDiagnosticEvent {
@@ -122,10 +122,13 @@ function isPrecondition(error: unknown): boolean {
 }
 
 function matchesManifest(
-  object: Pick<GetObjectCommandOutput, 'ContentLength' | 'ContentType' | 'CacheControl'>,
-  expected: StemManifest,
+  object: Pick<GetObjectCommandOutput, 'ContentLength' | 'ContentType' | 'CacheControl' | 'ContentEncoding'>,
+  expected: StoredStem,
 ): boolean {
-  return object.ContentLength === expected.sizeBytes && object.ContentType === WAV_TYPE &&
+  // The MIME follows the manifest codec. A compressed MP3 would change the hashed bytes, so it is never accepted;
+  // the WAV rule is unchanged (its encoding is checked by the callers that promote an object).
+  if (expected.codec === 'mp3_cbr256' && object.ContentEncoding && object.ContentEncoding.toLowerCase() !== 'identity') return false;
+  return object.ContentLength === expected.sizeBytes && object.ContentType === stemMime(expected) &&
     object.CacheControl === PRIVATE_CACHE;
 }
 
@@ -160,6 +163,7 @@ export function buildPromotionCopyCommand(
   stagingKey: string,
   finalKey: string,
   sourceEtag: string,
+  contentType: string = WAV_TYPE,
 ): CopyObjectCommand {
   const command = new CopyObjectCommand({
     Bucket: bucket,
@@ -167,7 +171,7 @@ export function buildPromotionCopyCommand(
     CopySource: `${bucket}/${stagingKey}`,
     CopySourceIfMatch: sourceEtag,
     MetadataDirective: 'REPLACE',
-    ContentType: WAV_TYPE,
+    ContentType: contentType,
     CacheControl: PRIVATE_CACHE,
   });
   // R2's destination condition on CopyObject (beta) uses a Cloudflare header the SDK does not model.
@@ -217,11 +221,11 @@ export class R2StemStorage implements DirectStemStorage {
     this.client = createR2Client({ accountId, accessKeyId, secretAccessKey });
   }
 
-  async signUpload(key: string, expected: StemManifest, expiresInSeconds: number): Promise<SignedObjectRequest> {
-    assertStagingKey(key, expected.id);
+  async signUpload(key: string, expected: StoredStem, expiresInSeconds: number): Promise<SignedObjectRequest> {
+    assertStagingKey(key, expected.id, isValidStoredStem(expected) ? stemExtension(expected) : 'wav');
     assertExpiry(expiresInSeconds);
-    if (!stemSchema.safeParse(expected).success) throw uploadInvalid();
-    const headers = { 'cache-control': PRIVATE_CACHE, 'content-type': WAV_TYPE, 'if-none-match': '*' };
+    if (!isValidStoredStem(expected)) throw uploadInvalid();
+    const headers = { 'cache-control': PRIVATE_CACHE, 'content-type': stemMime(expected), 'if-none-match': '*' };
     try {
       const url = await getSignedUrl(this.client, this.putCommand(key, expected), {
         expiresIn: expiresInSeconds,
@@ -234,9 +238,9 @@ export class R2StemStorage implements DirectStemStorage {
     }
   }
 
-  async seal(stagingKey: string, finalKey: string, expected: StemManifest, options: SealOptions = {}): Promise<ObjectReceipt> {
-    assertSealKeys(stagingKey, finalKey, expected.id);
-    if (!stemSchema.safeParse(expected).success) throw uploadInvalid();
+  async seal(stagingKey: string, finalKey: string, expected: StoredStem, options: SealOptions = {}): Promise<ObjectReceipt> {
+    assertSealKeys(stagingKey, finalKey, expected.id, isValidStoredStem(expected) ? stemExtension(expected) : 'wav');
+    if (!isValidStoredStem(expected)) throw uploadInvalid();
     if (this.activeSeals >= MAX_SEAL_OPERATIONS) throw unavailable();
     this.activeSeals++;
     const started = performance.now();
@@ -279,8 +283,8 @@ export class R2StemStorage implements DirectStemStorage {
     }
   }
 
-  async assertObject(key: string, expected: StemManifest, receipt: ObjectReceipt): Promise<void> {
-    assertFinalKey(key, expected.id);
+  async assertObject(key: string, expected: StoredStem, receipt: ObjectReceipt): Promise<void> {
+    assertFinalKey(key, expected.id, isValidStoredStem(expected) ? stemExtension(expected) : 'wav');
     const { etag } = receiptFor(receipt.etag);
     try {
       const object = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key, IfMatch: etag }), {
@@ -294,7 +298,7 @@ export class R2StemStorage implements DirectStemStorage {
   }
 
   async signDownload(key: string, receipt: ObjectReceipt, expiresInSeconds: number): Promise<SignedObjectRequest> {
-    assertFinalKey(key);
+    assertFinalKey(key, undefined, key.endsWith('.mp3') ? 'mp3' : 'wav');
     assertExpiry(expiresInSeconds);
     const { etag } = receiptFor(receipt.etag);
     const headers = { 'if-match': etag };
@@ -320,13 +324,13 @@ export class R2StemStorage implements DirectStemStorage {
     }
   }
 
-  private putCommand(key: string, expected: StemManifest, body?: Readable): PutObjectCommand {
+  private putCommand(key: string, expected: StoredStem, body?: Readable): PutObjectCommand {
     return new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
       Body: body,
       CacheControl: PRIVATE_CACHE,
-      ContentType: WAV_TYPE,
+      ContentType: stemMime(expected),
       ContentLength: expected.sizeBytes,
       IfNoneMatch: '*',
     });
@@ -336,7 +340,7 @@ export class R2StemStorage implements DirectStemStorage {
   // already wrote (final, answered with 409). The snapshot, when given, receives a copy of the verified bytes.
   private async verifyObject(
     key: string,
-    expected: StemManifest,
+    expected: StoredStem,
     signal: AbortSignal,
     context: { invalid: 'upload' | 'conflict'; snapshot?: FileHandle; progress?: SealProgress },
   ): Promise<ObjectFacts | undefined> {
@@ -358,13 +362,13 @@ export class R2StemStorage implements DirectStemStorage {
     if (!(object.Body instanceof Readable)) throw unavailable();
     const body = addAbortSignal(signal, object.Body);
     try {
-      const invalid = kind === 'upload' ? uploadInvalid : objectConflict;
+      const invalid = kind === 'upload' ? () => uploadInvalid(expected.codec) : objectConflict;
       if (!matchesManifest(object, expected)) throw invalid();
       if (progress) progress.phase = `${label}-verify`;
       const stats: VerifyStats | undefined = this.diagnostics && kind === 'upload' ? { waitMs: 0, hashMs: 0, writeMs: 0 } : undefined;
       const verifying = performance.now();
       try {
-        await verifyWav(body, expected, kind === 'upload' ? 422 : 409, snapshot, stats);
+        await verifyStemBytes(body, expected, kind === 'upload' ? 422 : 409, snapshot, stats);
       } catch (error) {
         if (error instanceof AppError) throw invalid();
         throw error;
@@ -381,7 +385,7 @@ export class R2StemStorage implements DirectStemStorage {
   // The HEAD gives the version and its metadata; every part must come back from that same ETag and exact range.
   private async verifyObjectRanged(
     key: string,
-    expected: StemManifest,
+    expected: StoredStem,
     signal: AbortSignal,
     { invalid: kind, snapshot, progress }: { invalid: 'upload' | 'conflict'; snapshot?: FileHandle; progress?: SealProgress },
   ): Promise<ObjectFacts | undefined> {
@@ -397,7 +401,7 @@ export class R2StemStorage implements DirectStemStorage {
       throw error;
     }
     if (kind === 'upload') this.emit({ phase: 'staging-headers', ms: performance.now() - requested });
-    const invalid = kind === 'upload' ? uploadInvalid : objectConflict;
+    const invalid = kind === 'upload' ? () => uploadInvalid(expected.codec) : objectConflict;
     if (!matchesManifest(head, expected)) throw invalid();
     const { etag } = receiptFor(head.ETag);
     if (progress) progress.phase = `${label}-verify`;
@@ -412,7 +416,7 @@ export class R2StemStorage implements DirectStemStorage {
     }), { objectMode: true, highWaterMark: 1 });
     try {
       try {
-        await verifyWav(body, expected, kind === 'upload' ? 422 : 409, snapshot, stats);
+        await verifyStemBytes(body, expected, kind === 'upload' ? 422 : 409, snapshot, stats);
       } catch (error) {
         // A read problem keeps its own status (409 or 503). Only a verification mismatch means an invalid upload.
         if (error instanceof RangedReadFailure) throw error.failure;
@@ -472,7 +476,7 @@ export class R2StemStorage implements DirectStemStorage {
 
   private async probeFinalByEtag(
     finalKey: string,
-    expected: StemManifest,
+    expected: StoredStem,
     etag: string,
     signal: AbortSignal,
     progress: SealProgress,
@@ -495,12 +499,12 @@ export class R2StemStorage implements DirectStemStorage {
   private async sealFromStaging(
     stagingKey: string,
     finalKey: string,
-    expected: StemManifest,
+    expected: StoredStem,
     signal: AbortSignal,
     progress: SealProgress,
   ): Promise<ObjectReceipt> {
     const directory = await mkdtemp(join(tmpdir(), 'louvaio-r2-'));
-    const path = join(directory, 'verified.wav');
+    const path = join(directory, `verified.${stemExtension(expected)}`);
     try {
       const snapshot = await open(path, 'wx', 0o600);
       try {
@@ -531,7 +535,7 @@ export class R2StemStorage implements DirectStemStorage {
   // the result is handed back for persistence before promotion starts, so a failed copy never discards it.
   private async verifiedStagingEtag(
     stagingKey: string,
-    expected: StemManifest,
+    expected: StoredStem,
     signal: AbortSignal,
     progress: SealProgress,
     { verified, onVerified }: SealOptions,
@@ -575,7 +579,7 @@ export class R2StemStorage implements DirectStemStorage {
   private async sealByCopy(
     stagingKey: string,
     finalKey: string,
-    expected: StemManifest,
+    expected: StoredStem,
     signal: AbortSignal,
     progress: SealProgress,
     options: SealOptions,
@@ -584,7 +588,7 @@ export class R2StemStorage implements DirectStemStorage {
     try {
       progress.phase = 'copy';
       const copying = performance.now();
-      const copied = await this.client.send(buildPromotionCopyCommand(this.bucket, stagingKey, finalKey, stagingEtag), { abortSignal: signal });
+      const copied = await this.client.send(buildPromotionCopyCommand(this.bucket, stagingKey, finalKey, stagingEtag, stemMime(expected)), { abortSignal: signal });
       this.emit({ phase: 'copy', ms: performance.now() - copying, bytes: expected.sizeBytes });
       const returned = copied.CopyObjectResult?.ETag;
       // Tolerate a provider that returns the ETag without quotes in the XML body.
@@ -612,7 +616,7 @@ export class R2StemStorage implements DirectStemStorage {
     }
   }
 
-  private async uploadSnapshot(key: string, expected: StemManifest, signal: AbortSignal, path: string) {
+  private async uploadSnapshot(key: string, expected: StoredStem, signal: AbortSignal, path: string) {
     signal.throwIfAborted();
     const body = createReadStream(path, { signal });
     const closed = finished(body, { cleanup: true }).catch(() => undefined);

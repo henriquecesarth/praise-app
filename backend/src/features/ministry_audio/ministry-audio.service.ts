@@ -6,6 +6,7 @@ import {
 } from './ministry-audio.repository';
 import { MAX_DIRECT_ATTEMPTS, recordingIdSchema, requirePublishableStems, STEM_IDS, type ListInput, type RecordingMetadata, type StemId, type UploadInput, type UploadInputV2 } from './ministry-audio.schema';
 import type { StemStorage } from './storage';
+import { stemExtension } from './stem-codec';
 import type { DirectStemStorage, ObjectReceipt, VerifiedStaging } from './direct-storage';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -17,12 +18,18 @@ const SEARCH_BATCH_SIZE = 49;
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const searchText = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
+// The extension follows the codec of the persisted manifest stem (always PCM/`wav` today: v1 keys are unchanged).
+const extensionOf = (record: AudioRecording, stem: StemId) => {
+  const manifestStem = record.manifest.stems.find((candidate) => candidate.id === stem);
+  if (!manifestStem) throw new AppError(404, 'Faixa não encontrada.');
+  return stemExtension(manifestStem);
+};
 const objectKey = (record: AudioRecording, stem: StemId) =>
-  `${record.ministryId}/${record.id}/${stem}.wav`;
+  `${record.ministryId}/${record.id}/${stem}.${extensionOf(record, stem)}`;
 const finalKey = (record: AudioRecording, stem: StemId) =>
   `objects/ministry-audio/${objectKey(record, stem)}`;
 const stagingKey = (record: AudioRecording, stem: StemId, attempt: number) =>
-  `staging/ministry-audio/${record.ministryId}/${record.id}/${stem}/${attempt}.wav`;
+  `staging/ministry-audio/${record.ministryId}/${record.id}/${stem}/${attempt}.${extensionOf(record, stem)}`;
 
 function summary(record: AudioRecording) {
   const { id, title, artist, version, status, updatedAt } = record;

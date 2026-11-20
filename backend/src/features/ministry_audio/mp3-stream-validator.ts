@@ -50,6 +50,10 @@ export interface Mp3ValidationOptions {
    * When omitted only the structural bound [0, 1152] applies and consistency across stems is the caller's gate.
    */
   readonly expectedDecoderDelayFrames?: number;
+  /** Encoder identification (LAME tag, 9 chars) must start with one of these; anything else is an unknown encoder. */
+  readonly allowedEncoderPrefixes?: readonly string[];
+  /** Encoder-side delay recorded in the LAME tag that the supported encoder profile is evidenced to produce. */
+  readonly expectedTagDelayFrames?: number;
 }
 
 export interface Mp3ValidationResult {
@@ -268,6 +272,13 @@ export class Mp3StemStreamValidator {
     }
     if (this.options.expectedDecoderDelayFrames !== undefined && decoderDelay !== this.options.expectedDecoderDelayFrames) {
       throw new Mp3ValidationError('ALIGNMENT', 'Atraso do decodificador diverge da política configurada.');
+    }
+    const { allowedEncoderPrefixes, expectedTagDelayFrames } = this.options;
+    if (allowedEncoderPrefixes !== undefined && !allowedEncoderPrefixes.some((prefix) => tag.encoder.startsWith(prefix))) {
+      throw new Mp3ValidationError('UNSUPPORTED_STREAM', 'Codificador MP3 fora do perfil suportado.');
+    }
+    if (expectedTagDelayFrames !== undefined && tag.delay !== expectedTagDelayFrames) {
+      throw new Mp3ValidationError('ALIGNMENT', 'Atraso do codificador na tag LAME fora do perfil suportado.');
     }
     if (e.frames !== e.alignment.mpegAudioFrames * MPEG_L3_SAMPLES_PER_FRAME - tag.delay - tag.padding) {
       throw new Mp3ValidationError('ALIGNMENT', 'Frames canônicos não fecham com a tag LAME.');

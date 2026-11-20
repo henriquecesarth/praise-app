@@ -7,18 +7,21 @@ import {
   objectConflict, uploadInvalid, uploadMissing,
   type DirectStemStorage, type ObjectReceipt, type SealOptions, type SignedObjectRequest,
 } from './direct-storage';
-import { MAX_STEM_BYTES, type StemManifest } from './ministry-audio.schema';
-import { verifyWav } from './storage';
+import { CODEC_PROFILES } from './audio-codec';
+import { MAX_STEM_BYTES } from './ministry-audio.schema';
+import { isValidStoredStem, stemExtension, verifyStemBytes, type StoredStem } from './stem-codec';
 
 export const simulatedDirectObjectPath = '/api/local/ministry-audio-objects';
 const MAX_FIXTURE_BYTES = 64 * 1024 * 1024;
 const MAX_TRANSFERS = 12;
 const PRIVATE_CACHE = 'private, no-store';
-const UPLOAD_HEADERS = {
+// The Content-Type of an object follows its key extension, which assertSealKeys binds to the manifest codec.
+const mimeForKey = (key: string) => key.endsWith('.mp3') ? CODEC_PROFILES.mp3_cbr256.mime : CODEC_PROFILES.pcm_s16le.mime;
+const uploadHeaders = (key: string) => ({
   'cache-control': PRIVATE_CACHE,
-  'content-type': 'audio/wav',
+  'content-type': mimeForKey(key),
   'if-none-match': '*',
-};
+});
 
 type Grant = { expires: number } & (
   { method: 'PUT'; size: number } | { method: 'GET'; etag: string }
@@ -46,8 +49,8 @@ function parseGrant(method: string, query: URLSearchParams): Grant | undefined {
   }
 }
 
-function readHeaders(grant: Grant): Record<string, string> {
-  return grant.method === 'PUT' ? { ...UPLOAD_HEADERS } : { 'if-match': grant.etag };
+function readHeaders(grant: Grant, key: string): Record<string, string> {
+  return grant.method === 'PUT' ? uploadHeaders(key) : { 'if-match': grant.etag };
 }
 
 export class SimulatedDirectStemStorage implements DirectStemStorage {
@@ -68,22 +71,24 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
     this.router.use((request, response) => this.transfer(request, response));
   }
 
-  async signUpload(key: string, expected: StemManifest, expiresInSeconds: number): Promise<SignedObjectRequest> {
-    assertStagingKey(key, expected.id);
+  async signUpload(key: string, expected: StoredStem, expiresInSeconds: number): Promise<SignedObjectRequest> {
+    if (!isValidStoredStem(expected)) throw uploadInvalid();
+    assertStagingKey(key, expected.id, stemExtension(expected));
     return this.sign(key, {
       method: 'PUT', size: expected.sizeBytes, expires: this.now() + expiresInSeconds * 1_000,
     });
   }
 
   // The simulator verifies in memory, so it has no use for a persisted verification and ignores the options.
-  async seal(stagingKey: string, finalKey: string, expected: StemManifest, _options?: SealOptions): Promise<ObjectReceipt> {
-    assertSealKeys(stagingKey, finalKey, expected.id);
+  async seal(stagingKey: string, finalKey: string, expected: StoredStem, _options?: SealOptions): Promise<ObjectReceipt> {
+    if (!isValidStoredStem(expected)) throw uploadInvalid();
+    assertSealKeys(stagingKey, finalKey, expected.id, stemExtension(expected));
     const staged = this.objects.get(stagingKey);
     if (!staged) throw uploadMissing();
     try {
-      await verifyWav(Readable.from([staged.bytes]), expected, 422);
+      await verifyStemBytes(Readable.from([staged.bytes]), expected, 422);
     } catch (error) {
-      if (error instanceof AppError && error.statusCode === 422) throw uploadInvalid();
+      if (error instanceof AppError && error.statusCode === 422) throw uploadInvalid(expected.codec);
       throw error;
     }
     if (this.objects.get(stagingKey) !== staged) throw uploadMissing();
@@ -96,16 +101,17 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
     return { etag: staged.etag };
   }
 
-  async assertObject(key: string, expected: StemManifest, receipt: ObjectReceipt): Promise<void> {
-    assertFinalKey(key, expected.id);
+  async assertObject(key: string, expected: StoredStem, receipt: ObjectReceipt): Promise<void> {
+    if (!isValidStoredStem(expected)) throw uploadInvalid();
+    assertFinalKey(key, expected.id, stemExtension(expected));
     const object = this.objects.get(key);
     if (!object || object.etag !== receipt.etag) throw objectConflict();
-    await verifyWav(Readable.from([object.bytes]), expected, 409);
+    await verifyStemBytes(Readable.from([object.bytes]), expected, 409);
     if (this.objects.get(key) !== object) throw objectConflict();
   }
 
   async signDownload(key: string, receipt: ObjectReceipt, expiresInSeconds: number): Promise<SignedObjectRequest> {
-    assertFinalKey(key);
+    assertFinalKey(key, undefined, key.endsWith('.mp3') ? 'mp3' : 'wav');
     return this.sign(key, {
       method: 'GET', etag: receipt.etag, expires: this.now() + expiresInSeconds * 1_000,
     });
@@ -132,7 +138,7 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
     if (grant.method === 'PUT') url.searchParams.set('size', String(grant.size));
     else url.searchParams.set('etag', grant.etag);
     url.searchParams.set('signature', this.signature(url.pathname, grant).toString('hex'));
-    return { url: url.href, headers: readHeaders(grant) };
+    return { url: url.href, headers: readHeaders(grant, key) };
   }
 
   private signature(path: string, grant: Grant): Buffer {
@@ -140,7 +146,7 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
       .update(JSON.stringify([
         this.origin, path, grant.method, grant.expires,
         grant.method === 'PUT' ? grant.size : grant.etag,
-        readHeaders(grant),
+        readHeaders(grant, path),
       ]))
       .digest();
   }
@@ -157,7 +163,7 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
     const signature = url.searchParams.get('signature');
     if (!grant || grant.expires <= this.now() || !signature || !/^[0-9a-f]{64}$/.test(signature) ||
         !timingSafeEqual(Buffer.from(signature, 'hex'), this.signature(url.pathname, grant))) return;
-    if (Object.entries(readHeaders(grant)).some(([name, value]) => request.get(name) !== value)) return;
+    if (Object.entries(readHeaders(grant, key)).some(([name, value]) => request.get(name) !== value)) return;
     if (grant.method === 'PUT' && request.get('content-length') !== String(grant.size)) return;
     return { key, grant };
   }
@@ -199,7 +205,7 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
       if (!object) response.status(404).end();
       else if (object.etag !== granted.grant.etag) response.status(412).end();
       else response.set({
-        'Content-Type': 'audio/wav', 'Content-Length': String(object.bytes.length), ETag: object.etag,
+        'Content-Type': mimeForKey(granted.key), 'Content-Length': String(object.bytes.length), ETag: object.etag,
       }).end(object.bytes);
     }
   }
