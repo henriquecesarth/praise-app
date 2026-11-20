@@ -1,0 +1,240 @@
+{
+ "browser": "150.0.7871.125",
+ "out": [
+  {
+   "file": "sig44100.mp3",
+   "desc": {
+    "encoderDelayFrames": 1105,
+    "paddingFrames": 731,
+    "mpegAudioFrames": 193,
+    "infoFrame": true
+   },
+   "shape": "canonical",
+   "trimmed": 0,
+   "decodedLength": 220500,
+   "outLen": 220500,
+   "canonical": 220500,
+   "ms": 56.8,
+   "heapDeltaMB": 3.5,
+   "lag": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "clickOffsets": {
+    "L": [
+     0,
+     0,
+     0
+    ],
+    "R": [
+     0,
+     0,
+     0
+    ]
+   },
+   "seek": [
+    {
+     "click": 1000,
+     "seekFrame": 700,
+     "expectedAt": 300,
+     "foundAt": 300
+    },
+    {
+     "click": 110250,
+     "seekFrame": 109950,
+     "expectedAt": 300,
+     "foundAt": 300
+    },
+    {
+     "click": 220499,
+     "seekFrame": 220199,
+     "expectedAt": 300,
+     "foundAt": 300
+    }
+   ]
+  },
+  {
+   "file": "sig48000.mp3",
+   "desc": {
+    "encoderDelayFrames": 1105,
+    "paddingFrames": 815,
+    "mpegAudioFrames": 210,
+    "infoFrame": true
+   },
+   "shape": "canonical",
+   "trimmed": 0,
+   "decodedLength": 240000,
+   "outLen": 240000,
+   "canonical": 240000,
+   "ms": 27.8,
+   "heapDeltaMB": 4.9,
+   "lag": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "clickOffsets": {
+    "L": [
+     0,
+     0,
+     0
+    ],
+    "R": [
+     0,
+     0,
+     0
+    ]
+   },
+   "seek": [
+    {
+     "click": 1000,
+     "seekFrame": 700,
+     "expectedAt": 300,
+     "foundAt": 300
+    },
+    {
+     "click": 120000,
+     "seekFrame": 119700,
+     "expectedAt": 300,
+     "foundAt": 300
+    },
+    {
+     "click": 239999,
+     "seekFrame": 239699,
+     "expectedAt": 300,
+     "foundAt": 300
+    }
+   ]
+  },
+  {
+   "file": "long44100.mp3",
+   "desc": {
+    "encoderDelayFrames": 1105,
+    "paddingFrames": 767,
+    "mpegAudioFrames": 11486,
+    "infoFrame": true
+   },
+   "shape": "canonical",
+   "trimmed": 0,
+   "decodedLength": 13230000,
+   "outLen": 13230000,
+   "canonical": 13230000,
+   "ms": 1231.3,
+   "heapDeltaMB": 165.4,
+   "lag": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "clickOffsets": {
+    "L": [
+     0,
+     0,
+     0
+    ],
+    "R": [
+     0,
+     0,
+     0
+    ]
+   },
+   "seek": [
+    {
+     "click": 1000,
+     "seekFrame": 700,
+     "expectedAt": 300,
+     "foundAt": 300
+    },
+    {
+     "click": 6615000,
+     "seekFrame": 6614700,
+     "expectedAt": 300,
+     "foundAt": 300
+    },
+    {
+     "click": 13229999,
+     "seekFrame": 13229699,
+     "expectedAt": 300,
+     "foundAt": 300
+    }
+   ]
+  },
+  {
+   "file": "long48000.mp3",
+   "desc": {
+    "encoderDelayFrames": 1105,
+    "paddingFrames": 47,
+    "mpegAudioFrames": 12501,
+    "infoFrame": true
+   },
+   "shape": "canonical",
+   "trimmed": 0,
+   "decodedLength": 14400000,
+   "outLen": 14400000,
+   "canonical": 14400000,
+   "ms": 1543.6,
+   "heapDeltaMB": 219.8,
+   "lag": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "clickOffsets": {
+    "L": [
+     0,
+     0,
+     0
+    ],
+    "R": [
+     0,
+     0,
+     0
+    ]
+   },
+   "seek": [
+    {
+     "click": 1000,
+     "seekFrame": 700,
+     "expectedAt": 300,
+     "foundAt": 300
+    },
+    {
+     "click": 7200000,
+     "seekFrame": 7199700,
+     "expectedAt": 300,
+     "foundAt": 300
+    },
+    {
+     "click": 14399999,
+     "seekFrame": 14399699,
+     "expectedAt": 300,
+     "foundAt": 300
+    }
+   ]
+  }
+ ],
+ "neg": [
+  [
+   "wrong frames (+1)",
+   "BYTES_MISMATCH: Tag LAME do arquivo diverge do alinhamento declarado."
+  ],
+  [
+   "tag mismatch (delay shifted)",
+   "INVALID_DESCRIPTOR: Descritor MP3 inválido: invariante de alinhamento."
+  ],
+  [
+   "wrong sha",
+   "BYTES_MISMATCH: SHA-256 do MP3 diverge do manifesto."
+  ],
+  [
+   "wrong sampleRate",
+   "BYTES_MISMATCH: MP3 inválido: frame 0 não é 256 kbps estéreo a 48000 Hz."
+  ]
+ ],
+ "garbage": "BYTES_MISMATCH"
+}
