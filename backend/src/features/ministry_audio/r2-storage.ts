@@ -30,9 +30,10 @@ import {
   type SealOptions,
   type SignedObjectRequest,
 } from './direct-storage';
-import { isValidStoredStem, stemExtension, stemMime, verifyStemBytes, type StoredStem } from './stem-codec';
+import { isValidStoredStem, mp3FactsMatch, mp3FactsOf, stemExtension, stemMime, verifyStemBytes, type StoredStem } from './stem-codec';
 import { readRanged } from './ranged-reader';
 import type { VerifyStats } from './storage';
+import type { Mp3Facts } from './direct-storage';
 
 // Timing and size facts only. Never keys, URLs, headers or content.
 export interface SealDiagnosticEvent {
@@ -73,7 +74,7 @@ interface SealProgress {
 type ObjectFacts = Pick<
   GetObjectCommandOutput,
   'ETag' | 'ContentLength' | 'ContentType' | 'CacheControl' | 'ContentEncoding' | 'ContentDisposition' | 'LastModified'
->;
+> & { mp3?: Mp3Facts };
 
 const MIB = 1024 * 1024;
 const DEFAULT_RANGE_PART_BYTES = 4 * MIB;
@@ -92,9 +93,9 @@ class RangedReadFailure extends Error {
   }
 }
 
-function receiptFor(etag: string | undefined): ObjectReceipt {
+function receiptFor(etag: string | undefined, mp3?: Mp3Facts): ObjectReceipt {
   if (!etag || !/^"[A-Za-z0-9._:-]{1,128}"$/.test(etag) || etag.at(-1) !== '"') throw objectConflict();
-  return { etag };
+  return mp3 ? { etag, mp3 } : { etag };
 }
 
 function assertExpiry(seconds: number): void {
@@ -248,7 +249,9 @@ export class R2StemStorage implements DirectStemStorage {
     const signal = AbortSignal.timeout(SEAL_TIMEOUT_MS);
     // A persisted verification only helps the copy promotion: the upload promotion needs the verified bytes on disk.
     const copying = this.promotion === 'copy';
-    const hint = copying ? options.verified : undefined;
+    // An MP3 hint is usable only with the facts of that same verification, and only when they describe this very stem.
+    const offered = copying ? options.verified : undefined;
+    const hint = offered && (expected.codec === 'pcm_s16le' || mp3FactsMatch(expected, offered.mp3)) ? offered : undefined;
     try {
       let existing: ObjectFacts | undefined;
       if (hint) {
@@ -256,15 +259,15 @@ export class R2StemStorage implements DirectStemStorage {
         // only this service can write the final key, and a copy keeps the MD5 ETag of the verified bytes.
         const probe = await this.probeFinalByEtag(finalKey, expected, hint.etag, signal, progress);
         this.emit({ phase: 'final-probe', ms: performance.now() - started });
-        if (typeof probe !== 'string') return probe;
+        if (typeof probe !== 'string') return receiptFor(probe.etag, hint.mp3);
         existing = probe === 'absent' ? undefined : await this.verifyObject(finalKey, expected, signal, { invalid: 'conflict', progress });
       } else {
         existing = await this.verifyObject(finalKey, expected, signal, { invalid: 'conflict', progress });
         this.emit({ phase: 'final-probe', ms: performance.now() - started });
       }
-      if (existing) return receiptFor(existing.ETag);
+      if (existing) return receiptFor(existing.ETag, existing.mp3);
       return await (copying
-        ? this.sealByCopy(stagingKey, finalKey, expected, signal, progress, options)
+        ? this.sealByCopy(stagingKey, finalKey, expected, signal, progress, { ...options, verified: hint })
         : this.sealFromStaging(stagingKey, finalKey, expected, signal, progress));
     } catch (error) {
       // A seal that hits the budget is aborted by the signal; record where the time was being spent.
@@ -367,15 +370,17 @@ export class R2StemStorage implements DirectStemStorage {
       if (progress) progress.phase = `${label}-verify`;
       const stats: VerifyStats | undefined = this.diagnostics && kind === 'upload' ? { waitMs: 0, hashMs: 0, writeMs: 0 } : undefined;
       const verifying = performance.now();
+      let result: Awaited<ReturnType<typeof verifyStemBytes>>;
       try {
-        await verifyStemBytes(body, expected, kind === 'upload' ? 422 : 409, snapshot, stats);
+        result = await verifyStemBytes(body, expected, kind === 'upload' ? 422 : 409, snapshot, stats);
       } catch (error) {
         if (error instanceof AppError) throw invalid();
         throw error;
       }
       if (stats) this.emit({ phase: 'staging-verify', ms: performance.now() - verifying, bytes: expected.sizeBytes, ...stats });
       signal.throwIfAborted();
-      return object;
+      const facts = mp3FactsOf(result);
+      return facts ? { ...object, mp3: facts } : object;
     } finally {
       body.destroy();
     }
@@ -415,8 +420,9 @@ export class R2StemStorage implements DirectStemStorage {
       fetchPart: (start, end, partSignal) => this.fetchPart(key, etag, start, end, expected.sizeBytes, partSignal),
     }), { objectMode: true, highWaterMark: 1 });
     try {
+      let result: Awaited<ReturnType<typeof verifyStemBytes>>;
       try {
-        await verifyStemBytes(body, expected, kind === 'upload' ? 422 : 409, snapshot, stats);
+        result = await verifyStemBytes(body, expected, kind === 'upload' ? 422 : 409, snapshot, stats);
       } catch (error) {
         // A read problem keeps its own status (409 or 503). Only a verification mismatch means an invalid upload.
         if (error instanceof RangedReadFailure) throw error.failure;
@@ -425,7 +431,8 @@ export class R2StemStorage implements DirectStemStorage {
       }
       if (stats) this.emit({ phase: 'staging-verify', ms: performance.now() - verifying, bytes: expected.sizeBytes, ...stats });
       signal.throwIfAborted();
-      return head;
+      const facts = mp3FactsOf(result);
+      return facts ? { ...head, mp3: facts } : head;
     } finally {
       body.destroy();
     }
@@ -507,8 +514,11 @@ export class R2StemStorage implements DirectStemStorage {
     const path = join(directory, `verified.${stemExtension(expected)}`);
     try {
       const snapshot = await open(path, 'wx', 0o600);
+      let verifiedFacts: Mp3Facts | undefined;
       try {
-        if (!(await this.verifyObject(stagingKey, expected, signal, { invalid: 'upload', snapshot, progress }))) throw uploadMissing();
+        const staging = await this.verifyObject(stagingKey, expected, signal, { invalid: 'upload', snapshot, progress });
+        if (!staging) throw uploadMissing();
+        verifiedFacts = staging.mp3;
       } finally {
         await snapshot.close();
       }
@@ -517,12 +527,12 @@ export class R2StemStorage implements DirectStemStorage {
         const putting = performance.now();
         const object = await this.uploadSnapshot(finalKey, expected, signal, path);
         this.emit({ phase: 'final-put', ms: performance.now() - putting, bytes: expected.sizeBytes });
-        return receiptFor(object.ETag);
+        return receiptFor(object.ETag, verifiedFacts);
       } catch (error) {
         if (!isPrecondition(error)) throw error;
         const existing = await this.verifyObject(finalKey, expected, signal, { invalid: 'conflict', progress });
         if (!existing) throw objectConflict();
-        return receiptFor(existing.ETag);
+        return receiptFor(existing.ETag, existing.mp3);
       }
     } finally {
       await deleteSnapshot(path, directory);
@@ -539,7 +549,7 @@ export class R2StemStorage implements DirectStemStorage {
     signal: AbortSignal,
     progress: SealProgress,
     { verified, onVerified }: SealOptions,
-  ): Promise<string> {
+  ): Promise<{ etag: string; mp3?: Mp3Facts }> {
     if (verified) {
       progress.phase = 'staging-head';
       const reuse = performance.now();
@@ -552,7 +562,8 @@ export class R2StemStorage implements DirectStemStorage {
       }
       if (head.ETag === verified.etag && head.LastModified?.getTime() === verified.lastModified && matchesManifest(head, expected)) {
         this.emit({ phase: 'verified-reuse', ms: performance.now() - reuse });
-        return receiptFor(head.ETag).etag;
+        const reused = receiptFor(head.ETag).etag;
+        return verified.mp3 ? { etag: reused, mp3: verified.mp3 } : { etag: reused };
       }
     }
     const staging = await this.verifyObject(stagingKey, expected, signal, { invalid: 'upload', progress });
@@ -565,12 +576,12 @@ export class R2StemStorage implements DirectStemStorage {
       const persisting = performance.now();
       progress.phase = 'persist-verification';
       await Promise.race([
-        onVerified({ etag, lastModified: staging.LastModified.getTime() }),
+        onVerified({ etag, lastModified: staging.LastModified.getTime(), ...(staging.mp3 ? { mp3: staging.mp3 } : {}) }),
         new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true })),
       ]).catch(() => undefined);
       this.emit({ phase: 'verification-persisted', ms: performance.now() - persisting });
     }
-    return etag;
+    return staging.mp3 ? { etag, mp3: staging.mp3 } : { etag };
   }
 
   // Single read of the staging bytes (header, size and SHA-256 verified), then a server-side copy that is only
@@ -584,7 +595,7 @@ export class R2StemStorage implements DirectStemStorage {
     progress: SealProgress,
     options: SealOptions,
   ): Promise<ObjectReceipt> {
-    const stagingEtag = await this.verifiedStagingEtag(stagingKey, expected, signal, progress, options);
+    const { etag: stagingEtag, mp3: stagingFacts } = await this.verifiedStagingEtag(stagingKey, expected, signal, progress, options);
     try {
       progress.phase = 'copy';
       const copying = performance.now();
@@ -603,7 +614,7 @@ export class R2StemStorage implements DirectStemStorage {
       if (head.ETag !== receipt.etag || !matchesManifest(head, expected) || head.ContentEncoding || head.ContentDisposition) {
         throw objectConflict();
       }
-      return receipt;
+      return receiptFor(receipt.etag, stagingFacts);
     } catch (error) {
       // The staging object vanished between verification and copy: the client may upload it again.
       if (isMissing(error)) throw uploadMissing();
@@ -612,7 +623,7 @@ export class R2StemStorage implements DirectStemStorage {
       // existing final object is accepted; otherwise the caller must retry from a clean state.
       const existing = await this.verifyObject(finalKey, expected, signal, { invalid: 'conflict', progress });
       if (!existing) throw objectConflict();
-      return receiptFor(existing.ETag);
+      return receiptFor(existing.ETag, existing.mp3);
     }
   }
 

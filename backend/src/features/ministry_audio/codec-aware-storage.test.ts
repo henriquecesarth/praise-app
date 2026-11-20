@@ -160,7 +160,7 @@ describe('storage-side MP3 verification profile', () => {
   });
 
   it('requires the six-stem set to be consistent, and one deviating stem breaks it', async () => {
-    const results = await Promise.all(STEM_IDS.map((id) => run(mp3, { ...expected, id })));
+    const results = (await Promise.all(STEM_IDS.map((id) => run(mp3, { ...expected, id })))) as Array<NonNullable<Awaited<ReturnType<typeof run>>>>;
     expect(() => assertConsistentMp3Stems(results)).not.toThrow();
     expect(() => assertConsistentMp3Stems(results.slice(0, 5))).not.toThrow(); // size is the schema's job (six stems)
     expect(() => assertConsistentMp3Stems([...results.slice(0, 5), { ...results[5], decoderDelayFrames: 530 }])).toThrow();
@@ -185,6 +185,12 @@ describe('R2 adapter with MP3 (offline)', () => {
     vi.spyOn(S3Client.prototype, 'send').mockImplementation(send);
   });
   afterEach(() => vi.restoreAllMocks());
+  // The server-derived facts of the verified bytes travel with the receipt (used for six-stem consistency).
+  const sealedFacts = expect.objectContaining({
+    id: 'vocals', sha256: expected.sha256, sizeBytes: expected.sizeBytes, decoderDelayFrames: 529, tagDelayFrames: 576,
+    mpegAudioFrames: expected.alignment.mpegAudioFrames, frames: expected.frames,
+  });
+  const run0 = async () => (await verifyStemBytes(Readable.from([mp3]), expected, 422))!;
   const commands = () => send.mock.calls.map(([command]) => command.constructor.name);
 
   it('signs a create-only audio/mpeg PUT only for an .mp3 staging key', async () => {
@@ -205,7 +211,7 @@ describe('R2 adapter with MP3 (offline)', () => {
         expect(await buffer(command.input.Body as Readable)).toEqual(mp3);
         return { ETag: etag };
       });
-    await expect(stores('upload').seal(staged, final, expected)).resolves.toEqual({ etag });
+    await expect(stores('upload').seal(staged, final, expected)).resolves.toEqual({ etag, mp3: sealedFacts });
   });
 
   it('promotes by copy with audio/mpeg metadata and confirms the final object', async () => {
@@ -218,7 +224,7 @@ describe('R2 adapter with MP3 (offline)', () => {
         return { CopyObjectResult: { ETag: stagingEtag } };
       })
       .mockResolvedValueOnce(object(mp3, stagingEtag));
-    await expect(stores('copy').seal(staged, final, expected)).resolves.toEqual({ etag: stagingEtag });
+    await expect(stores('copy').seal(staged, final, expected)).resolves.toEqual({ etag: stagingEtag, mp3: sealedFacts });
     expect(commands()).toEqual(['GetObjectCommand', 'GetObjectCommand', 'CopyObjectCommand', 'HeadObjectCommand']);
   });
 
@@ -261,7 +267,7 @@ describe('R2 adapter with MP3 (offline)', () => {
       if (command instanceof CopyObjectCommand) return { CopyObjectResult: { ETag: stagingEtag } };
       throw new Error('unexpected');
     });
-    await expect(ranged.seal(staged, final, expected)).resolves.toEqual({ etag: stagingEtag });
+    await expect(ranged.seal(staged, final, expected)).resolves.toEqual({ etag: stagingEtag, mp3: sealedFacts });
     // a ranged object whose bytes differ is rejected and never copied
     send.mockReset();
     const bad = flip(7000);
@@ -291,9 +297,44 @@ describe('R2 adapter with MP3 (offline)', () => {
     await expect(stores('upload').seal(staged, final, expected)).rejects.toMatchObject({ statusCode: 409 });
   });
 
+  it('keeps the server-derived facts across a failed copy: the persisted verification carries them and a retry reuses them', async () => {
+    let persisted: { etag: string; lastModified: number; mp3?: unknown } | undefined;
+    const lastModified = new Date('2026-11-20T12:00:00Z');
+    send.mockRejectedValueOnce(missing()).mockResolvedValueOnce(object(mp3, stagingEtag, { LastModified: lastModified }))
+      .mockRejectedValueOnce(new Error('network down during CopyObject'));
+    await expect(stores('copy').seal(staged, final, expected, { onVerified: async (v) => { persisted = v; } })).rejects.toMatchObject({ statusCode: 503 });
+    expect(persisted).toMatchObject({ etag: stagingEtag, lastModified: lastModified.getTime(), mp3: sealedFacts });
+    // retry: final absent, staging HEAD matches the persisted verification, so no staging bytes are read again
+    send.mockReset().mockRejectedValueOnce(providerError(404, 'NotFound'))
+      .mockResolvedValueOnce({ ...object(mp3, stagingEtag, { LastModified: lastModified }), Body: undefined })
+      .mockResolvedValueOnce({ CopyObjectResult: { ETag: stagingEtag } })
+      .mockResolvedValueOnce(object(mp3, stagingEtag));
+    await expect(stores('copy').seal(staged, final, expected, { verified: persisted as never })).resolves.toEqual({ etag: stagingEtag, mp3: sealedFacts });
+    expect(commands()).toEqual(['HeadObjectCommand', 'HeadObjectCommand', 'CopyObjectCommand', 'HeadObjectCommand']);
+    // an already promoted final object (same ETag) reports the facts of that verification with a single HEAD
+    send.mockReset().mockResolvedValueOnce(object(mp3, stagingEtag));
+    await expect(stores('copy').seal(staged, final, expected, { verified: persisted as never })).resolves.toEqual({ etag: stagingEtag, mp3: sealedFacts });
+    expect(commands()).toEqual(['HeadObjectCommand']);
+  });
+
+  it('ignores a persisted MP3 verification without facts, or with facts of another stem, and verifies in full', async () => {
+    const lastModified = new Date('2026-11-20T12:00:00Z');
+    const stale = [
+      { etag: stagingEtag, lastModified: lastModified.getTime() },
+      { etag: stagingEtag, lastModified: lastModified.getTime(), mp3: { ...(await run0()), id: 'drums' } },
+      { etag: stagingEtag, lastModified: lastModified.getTime(), mp3: { ...(await run0()), sha256: 'f'.repeat(64) } },
+    ];
+    for (const verified of stale) {
+      send.mockReset().mockRejectedValueOnce(missing()).mockResolvedValueOnce(object(mp3, stagingEtag, { LastModified: lastModified }))
+        .mockResolvedValueOnce({ CopyObjectResult: { ETag: stagingEtag } }).mockResolvedValueOnce(object(mp3, stagingEtag));
+      await expect(stores('copy').seal(staged, final, expected, { verified: verified as never })).resolves.toEqual({ etag: stagingEtag, mp3: sealedFacts });
+      expect(commands()).toEqual(['GetObjectCommand', 'GetObjectCommand', 'CopyObjectCommand', 'HeadObjectCommand']);
+    }
+  });
+
   it('resumes idempotently: an already sealed final object is verified and no staging is read', async () => {
     send.mockResolvedValueOnce(object(mp3, etag));
-    await expect(stores('copy').seal(staged, final, expected)).resolves.toEqual({ etag });
+    await expect(stores('copy').seal(staged, final, expected)).resolves.toEqual({ etag, mp3: sealedFacts });
     expect(commands()).toEqual(['GetObjectCommand']);
     expect(send.mock.calls[0][0].input.Key).toBe(final);
   });
@@ -309,7 +350,7 @@ describe('R2 adapter with MP3 (offline)', () => {
     send.mockRejectedValueOnce(missing()).mockResolvedValueOnce(object(mp3, stagingEtag))
       .mockRejectedValueOnce(providerError(412, 'PreconditionFailed'))
       .mockResolvedValueOnce(object(mp3, etag));
-    await expect(stores('copy').seal(staged, final, expected)).resolves.toEqual({ etag });
+    await expect(stores('copy').seal(staged, final, expected)).resolves.toEqual({ etag, mp3: sealedFacts });
     // the winner is a corrupted object: the loser must not accept it
     const altered = Buffer.from(mp3); altered[5000] ^= 1;
     send.mockReset().mockRejectedValueOnce(missing()).mockResolvedValueOnce(object(mp3, stagingEtag))

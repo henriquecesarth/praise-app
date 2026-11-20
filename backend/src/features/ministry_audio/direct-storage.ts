@@ -1,5 +1,6 @@
 import { AppError } from '../../middleware/error-handler';
 import { stemIdSchema } from './ministry-audio.schema';
+import type { Mp3ValidationResult } from './mp3-stream-validator';
 import type { StemExtension, StoredStem } from './stem-codec';
 
 export interface SignedObjectRequest {
@@ -7,8 +8,16 @@ export interface SignedObjectRequest {
   headers: Record<string, string>;
 }
 
+/**
+ * Facts derived by the server from the bytes of one MP3 object (never from the client): what assertConsistentMp3Stems
+ * compares across the six stems. They travel with the receipt/verification of the same attempt and ETag only.
+ */
+export type Mp3Facts = Omit<Mp3ValidationResult, 'peakBufferedBytes'>;
+
 export interface ObjectReceipt {
   etag: string;
+  /** Present for MP3 stems: the byte-verification result of exactly the object this receipt names. */
+  mp3?: Mp3Facts;
 }
 
 // Server-computed fact: the staging object identified by this ETag and last-modified time was fully read and its
@@ -17,6 +26,8 @@ export interface ObjectReceipt {
 export interface VerifiedStaging {
   etag: string;
   lastModified: number;
+  /** MP3 only: the result of that same full verification, so a resumed seal can still report it. */
+  mp3?: Mp3Facts;
 }
 
 export interface SealOptions {

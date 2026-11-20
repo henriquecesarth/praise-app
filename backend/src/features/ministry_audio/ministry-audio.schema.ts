@@ -99,7 +99,7 @@ export const mp3StemSchema = z.object({
 
 export const stemV2Schema = z.union([stemSchema, mp3StemSchema]);
 
-type StemV2 = z.infer<typeof stemV2Schema>;
+export type StemV2 = z.infer<typeof stemV2Schema>;
 
 function homogeneousStems(stems: StemV2[]): boolean {
   const first = stems[0];
@@ -140,15 +140,13 @@ export function selectUploadSchema(body: unknown): z.ZodType<UploadInput | Uploa
  * Fail-closed gate: a codec can be reserved only if the backend validates its bytes.
  * Returns the stems narrowed to the byte-validated v1 PCM shape.
  */
-export function requirePublishableStems(stems: StemV2[]): StemManifest[] {
-  const pcm: StemManifest[] = [];
+export function requirePublishableStems(stems: StemV2[]): StemV2[] {
   for (const stem of stems) {
-    if (stem.codec !== 'pcm_s16le' || !isPublishableCodec(stem.codec)) {
+    if (!isPublishableCodec(stem.codec)) {
       throw new AppError(422, 'Este codec de áudio ainda não está habilitado para publicação.', { code: 'AUDIO_CODEC_NOT_ENABLED' });
     }
-    pcm.push(stem);
   }
-  return pcm;
+  return stems;
 }
 
 export const listSchema = z.object({
@@ -165,11 +163,14 @@ export type ListInput = z.infer<typeof listSchema>;
 
 export type UploadInputV2 = z.infer<typeof uploadV2Schema>;
 
-/** Persisted manifests only ever hold byte-validated stems (see requirePublishableStems). */
+/**
+ * Persisted manifests only ever hold byte-validated stems (see requirePublishableStems).
+ * v1 holds PCM stems and is the only shape written today; v2 holds MP3 stems and is written only once a codec is enabled.
+ */
 export interface AudioManifest {
   schemaVersion: 1 | 2;
   recordingId: string;
   recordingVersion: string;
   model: UploadInput['model'];
-  stems: StemManifest[];
+  stems: StemV2[];
 }

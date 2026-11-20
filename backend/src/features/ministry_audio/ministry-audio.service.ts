@@ -1,10 +1,12 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { AppError } from '../../middleware/error-handler';
 import {
   MinistryAudioRepository, type AudioCursor, type AudioRecording, type AudioScope,
 } from './ministry-audio.repository';
 import { MAX_DIRECT_ATTEMPTS, recordingIdSchema, requirePublishableStems, STEM_IDS, type ListInput, type RecordingMetadata, type StemId, type UploadInput, type UploadInputV2 } from './ministry-audio.schema';
+import { assertEnabledCodecs, assertPublishableMp3Set, buildManifest, hash, isVisibleManifest, requestHashOf } from './audio-manifest';
+import { mp3FactsMatch } from './stem-codec';
 import type { StemStorage } from './storage';
 import { stemExtension } from './stem-codec';
 import type { DirectStemStorage, ObjectReceipt, VerifiedStaging } from './direct-storage';
@@ -15,7 +17,6 @@ const CLEANUP_LEASE_MS = 300_000;
 const DIRECT_UPLOAD_TTL_SECONDS = 300;
 const DIRECT_CLEANUP_GRACE_MS = 900_000;
 const SEARCH_BATCH_SIZE = 49;
-const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const searchText = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 // The extension follows the codec of the persisted manifest stem (always PCM/`wav` today: v1 keys are unchanged).
@@ -100,7 +101,8 @@ export class MinistryAudioService {
 
   private async published(scope: AudioScope, id: string) {
     const record = await this.repository.read(scope, id, false);
-    if (record.status !== 'published') throw new AppError(404, 'Gravação não encontrada.');
+    // A recording of a codec that is not enabled is never visible, even if a record of it exists.
+    if (record.status !== 'published' || !isVisibleManifest(record.manifest)) throw new AppError(404, 'Gravação não encontrada.');
     return record;
   }
 
@@ -109,15 +111,15 @@ export class MinistryAudioService {
     await this.repository.authorize(scope, true); // authorization first; read-only, no writes
     const stems = requirePublishableStems(input.stems);
     const id = hash([scope.ministryId, scope.userId, idempotencyKey]);
-    const orderedStems = [...stems].sort((a, b) => STEM_IDS.indexOf(a.id) - STEM_IDS.indexOf(b.id));
-    // PCM-only recordings keep the v1 manifest even when requested as v2: the shape is identical and
-    // already-deployed readers only understand v1. Only a future byte-validated codec persists v2.
-    const manifest = { schemaVersion: 1 as const, recordingId: id, recordingVersion: version, model, stems: orderedStems };
-    const now = this.now();
+    const manifest = buildManifest(id, version, model, stems);
     const direct = this.directStorage !== undefined;
+    if (!direct && stems.some((stem) => stem.codec !== 'pcm_s16le')) {
+      throw new AppError(409, 'Este codec exige armazenamento de envio direto.');
+    }
+    const now = this.now();
     const record = await this.repository.reserve(scope, {
       id, ministryId: scope.ministryId, createdBy: scope.userId, createdAt: now, updatedAt: now,
-      title, artist, version, requestHash: hash({ title, artist, version, manifest }), status: 'uploading',
+      title, artist, version, requestHash: requestHashOf({ title, artist, version }, manifest), status: 'uploading',
       manifest, uploadedStemIds: [], expiresAt: now + DAY_MS,
       ...(direct ? { transfer: 'direct' as const } : {}),
     }, this.now, direct ? DIRECT_CLEANUP_GRACE_MS : 0);
@@ -136,6 +138,7 @@ export class MinistryAudioService {
     if (length !== undefined && Number(length) !== expected.sizeBytes) {
       throw new AppError(422, 'O tamanho da faixa difere do manifesto.');
     }
+    if (expected.codec !== 'pcm_s16le') throw new AppError(409, 'Este codec exige URL de envio direto.');
     await this.storage.put(objectKey(record, stemId), bytes, expected);
     return this.uploadView(await this.repository.update(scope, id, (current) => {
       if (current.status === 'published') return;
@@ -196,6 +199,10 @@ export class MinistryAudioService {
       }
       throw error;
     }
+    // An MP3 receipt is only trusted with the facts the adapter derived from the bytes of this very stem.
+    if (!mp3FactsMatch(this.getStem(record, stemId), receipt.mp3)) {
+      throw new AppError(409, 'A verificação da faixa MP3 não pôde ser confirmada.');
+    }
     const completed = await this.repository.update(scope, id, (current) => {
       const storedAttempt = current.directAttempts?.[stemId];
       if (storedAttempt?.number === attempt && storedAttempt.receipt) return;
@@ -232,16 +239,21 @@ export class MinistryAudioService {
     const record = await this.repository.read(scope, id, true);
     if (record.status === 'published') return summary(record);
     this.assertReadyToPublish(record);
+    assertEnabledCodecs(record.manifest);
     if (record.transfer === 'direct') {
+      assertPublishableMp3Set(record);
       await this.assertDirectObjects(record, this.getDirect(record));
     } else {
       for (const stem of record.manifest.stems) {
+        if (stem.codec !== 'pcm_s16le') throw new AppError(409, 'Este codec exige envio direto.');
         await this.storage.verify(objectKey(record, stem.id), stem);
       }
     }
     const published = await this.repository.update(scope, id, (current) => {
       if (current.status === 'published') return;
       this.assertReadyToPublish(current);
+      assertEnabledCodecs(current.manifest);
+      assertPublishableMp3Set(current); // re-checked inside the transaction: a concurrent change cannot slip past
       const now = this.now();
       return {
         status: 'published', publishedAt: now, updatedAt: now, uploadedStemIds: [...STEM_IDS],
@@ -256,7 +268,8 @@ export class MinistryAudioService {
     const query = searchText(input.q);
     const binding = hash([scope.ministryId, query]);
     const cursor = parseCursor(input.cursor, binding);
-    const rows = await this.repository.list(scope, cursor, (query ? SEARCH_BATCH_SIZE : limit) + 1);
+    const rows = (await this.repository.list(scope, cursor, (query ? SEARCH_BATCH_SIZE : limit) + 1))
+      .filter((row) => isVisibleManifest(row.manifest));
     const items = [];
     let nextCursor: string | null = null;
     for (const [index, row] of rows.entries()) {
@@ -343,6 +356,7 @@ export class MinistryAudioService {
     const record = await this.published(scope, id);
     if (record.transfer === 'direct') throw new AppError(404, 'Faixa não encontrada.');
     const stem = this.getStem(record, stemId);
+    if (stem.codec !== 'pcm_s16le') throw new AppError(404, 'Faixa não encontrada.');
     const stream = await this.storage.open(objectKey(record, stemId), stem);
     try {
       await this.published(scope, id);

@@ -9,7 +9,7 @@ import {
 } from './direct-storage';
 import { CODEC_PROFILES } from './audio-codec';
 import { MAX_STEM_BYTES } from './ministry-audio.schema';
-import { isValidStoredStem, stemExtension, verifyStemBytes, type StoredStem } from './stem-codec';
+import { isValidStoredStem, mp3FactsOf, stemExtension, verifyStemBytes, type StoredStem } from './stem-codec';
 
 export const simulatedDirectObjectPath = '/api/local/ministry-audio-objects';
 const MAX_FIXTURE_BYTES = 64 * 1024 * 1024;
@@ -85,8 +85,9 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
     assertSealKeys(stagingKey, finalKey, expected.id, stemExtension(expected));
     const staged = this.objects.get(stagingKey);
     if (!staged) throw uploadMissing();
+    let facts;
     try {
-      await verifyStemBytes(Readable.from([staged.bytes]), expected, 422);
+      facts = mp3FactsOf(await verifyStemBytes(Readable.from([staged.bytes]), expected, 422));
     } catch (error) {
       if (error instanceof AppError && error.statusCode === 422) throw uploadInvalid(expected.codec);
       throw error;
@@ -98,7 +99,7 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
       if (this.storedBytes + this.reservedBytes + staged.bytes.length > MAX_FIXTURE_BYTES) throw objectConflict();
       this.store(finalKey, staged);
     }
-    return { etag: staged.etag };
+    return facts ? { etag: staged.etag, mp3: facts } : { etag: staged.etag };
   }
 
   async assertObject(key: string, expected: StoredStem, receipt: ObjectReceipt): Promise<void> {

@@ -294,7 +294,7 @@ export class Mp3StemStreamValidator {
 }
 
 /** The six stems of one recording must describe one timeline and one decoder-side delay. */
-export function assertConsistentMp3Stems(results: readonly Mp3ValidationResult[]): void {
+export function assertConsistentMp3Stems(results: readonly Omit<Mp3ValidationResult, 'peakBufferedBytes'>[]): void {
   const bad = (why: string): never => { throw new Mp3ValidationError('INCONSISTENT_SET', `Stems MP3 inconsistentes: ${why}.`); };
   if (results.length === 0) bad('conjunto vazio');
   if (new Set(results.map((r) => r.id)).size !== results.length) bad('ids repetidos');
@@ -302,7 +302,7 @@ export function assertConsistentMp3Stems(results: readonly Mp3ValidationResult[]
   for (const r of results) {
     if (r.sampleRate !== first.sampleRate || r.frames !== first.frames || r.mpegAudioFrames !== first.mpegAudioFrames ||
         r.tagDelayFrames !== first.tagDelayFrames || r.tagPaddingFrames !== first.tagPaddingFrames ||
-        r.decoderDelayFrames !== first.decoderDelayFrames) bad(`faixa ${r.id} diverge de ${first.id}`);
+        r.decoderDelayFrames !== first.decoderDelayFrames || r.encoder !== first.encoder) bad(`faixa ${r.id} diverge de ${first.id}`);
   }
 }
 
