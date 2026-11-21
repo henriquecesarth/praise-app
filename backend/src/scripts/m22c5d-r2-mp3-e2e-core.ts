@@ -18,6 +18,12 @@ export interface Limits {
   maxFetchMs: number;
   /** Largest body kept from a signed request that is not a successful GET. */
   maxFetchErrorBytes: number;
+  /** One local API call: the 38 s seal budget plus margin, never beyond the remaining run time. */
+  maxApiMs: number;
+  /** Longest wait for in-flight work to finish before cleanup; beyond it the run fails and keeps its journal. */
+  quiesceMs: number;
+  /** Pause before the second absence sweep, to catch a request that the client abandoned but R2 still applied. */
+  lateWriteSettleMs: number;
 }
 export const LIMITS: Limits = {
   /** Distinct recordings reserved in one run. */
@@ -32,6 +38,9 @@ export const LIMITS: Limits = {
   maxRunMs: 300_000,
   maxFetchMs: 20_000,
   maxFetchErrorBytes: 8 * 1024,
+  maxApiMs: 45_000,
+  quiesceMs: 60_000,
+  lateWriteSettleMs: 3_000,
 };
 
 /** Ranged parts of 4 KiB split the 10.8 KB fixture in three, exercising ordered parallel reads on a tiny object. */
@@ -142,6 +151,9 @@ export class CommandGuard {
   private pendingCopyFailures = 0;
   private readonly started: number;
   private readonly created = new Set<string>();
+  private active = 0;
+  private frozen = false;
+  private cleanup?: { client: unknown; guard: CommandGuard };
 
   constructor(
     private readonly bucket: string,
@@ -151,6 +163,20 @@ export class CommandGuard {
   ) {
     for (const ministry of ministries) if (!MINISTRY_PATTERN.test(ministry)) throw new GuardViolation('Invalid ministry.');
     this.started = now();
+  }
+
+  /** Commands sent to R2 that have not settled yet. */
+  get inflight(): number { return this.active; }
+  get isFrozen(): boolean { return this.frozen; }
+
+  /**
+   * After freezing, this guard refuses every new command (so a request the client abandoned can no longer write, copy or
+   * promote anything) except those of the one cleanup client, which are decided by the cleanup guard's own budgets.
+   */
+  freeze(): void { this.frozen = true; }
+  authorizeCleanup(client: unknown, guard: CommandGuard): void {
+    if (!this.frozen) throw new GuardViolation('Freeze the run before authorizing cleanup.');
+    this.cleanup = { client, guard };
   }
 
   failNextCopies(count: number): void {
@@ -171,6 +197,10 @@ export class CommandGuard {
     const guard = this;
     return function guarded(this: unknown, command: CommandLike, ...rest: A): Promise<R> {
       try {
+        if (guard.frozen) {
+          if (guard.cleanup && this === guard.cleanup.client) return guard.cleanup.guard.dispatch(inner, this, command, rest);
+          throw new GuardViolation('Run is frozen.');
+        }
         return guard.dispatch(inner, this, command, rest);
       } catch (error) {
         return Promise.reject(error);
@@ -178,7 +208,7 @@ export class CommandGuard {
     };
   }
 
-  private dispatch<A extends unknown[], R>(inner: (this: unknown, command: CommandLike, ...rest: A) => Promise<R>, self: unknown, command: CommandLike, rest: A): Promise<R> {
+  dispatch<A extends unknown[], R>(inner: (this: unknown, command: CommandLike, ...rest: A) => Promise<R>, self: unknown, command: CommandLike, rest: A): Promise<R> {
     const name = command?.constructor?.name ?? '';
     if (!ALLOWED_COMMANDS.has(name)) throw new GuardViolation('Command kind not allowed.');
     const input = command.input ?? {};
@@ -214,7 +244,15 @@ export class CommandGuard {
         return Promise.reject(new Error('Injected copy failure.'));
       }
     }
-    return inner.call(self, command, ...rest).then(
+    this.active += 1;
+    let pending: Promise<R>;
+    try {
+      pending = Promise.resolve(inner.call(self, command, ...rest));
+    } catch (error) {
+      this.active -= 1;
+      throw error;
+    }
+    return pending.finally(() => { this.active -= 1; }).then(
       (result) => {
         if (name === 'PutObjectCommand' || name === 'CopyObjectCommand') {
           if (!this.created.has(input.Key!)) { this.created.add(input.Key!); c.objectsCreated += 1; }
@@ -229,6 +267,92 @@ export class CommandGuard {
       },
     );
   }
+}
+
+/** Counts asynchronous work (HTTP requests, signed fetches) so that a run can prove nothing is still pending. */
+export class ActivityTracker {
+  private count = 0;
+  private closed = false;
+  get pending(): number { return this.count; }
+  get isClosed(): boolean { return this.closed; }
+  close(): void { this.closed = true; }
+  begin(): () => void {
+    if (this.closed) throw new GuardViolation('Tracker closed.');
+    this.count += 1;
+    let ended = false;
+    return () => { if (!ended) { ended = true; this.count -= 1; } };
+  }
+  async track<T>(work: () => Promise<T>): Promise<T> {
+    const end = this.begin();
+    try { return await work(); } finally { end(); }
+  }
+  /** Express-compatible: counts a request until its response is finished or its connection closed; refuses new ones once closed. */
+  middleware() {
+    return (_req: unknown, res: { once(event: string, listener: () => void): unknown; status(code: number): { json(body: unknown): unknown } }, next: () => void) => {
+      if (this.closed) { res.status(503).json({ error: 'closing' }); return; }
+      const end = this.begin();
+      res.once('close', end);
+      next();
+    };
+  }
+}
+
+export interface QuiescenceOptions {
+  timeoutMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+export interface Quiescence {
+  quiescent: boolean;
+  pendingCommands: number;
+  pendingWork: number;
+}
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Proves, rather than assumes, that nothing can still touch the bucket: the guard is frozen first (no new command can
+ * leave the process), the trackers refuse new work, and then every command already sent and every tracked request must
+ * have settled. A request the client abandoned may keep running in the service, but it can only fail from now on.
+ * Closing sockets is deliberately not part of the proof. If it does not hold within the limit the caller must NOT clean up.
+ */
+export async function quiesceRun(guard: CommandGuard, trackers: readonly ActivityTracker[], options: QuiescenceOptions = {}): Promise<Quiescence> {
+  const { timeoutMs = LIMITS.quiesceMs, pollMs = 25, sleep = wait, now = Date.now } = options;
+  guard.freeze();
+  for (const tracker of trackers) tracker.close();
+  const deadline = now() + timeoutMs;
+  const state = (): Quiescence => {
+    const pendingWork = trackers.reduce((sum, tracker) => sum + tracker.pending, 0);
+    return { quiescent: guard.inflight === 0 && pendingWork === 0, pendingCommands: guard.inflight, pendingWork };
+  };
+  for (;;) {
+    const current = state();
+    if (current.quiescent || now() >= deadline) return current;
+    await sleep(pollMs);
+  }
+}
+
+/** Timeout of one local API call: the seal budget, never more than what is left of the run. */
+export function apiTimeoutMs(now: number, deadline: number, limits: Limits = LIMITS): number {
+  const remaining = deadline - now;
+  if (remaining <= 0) throw new GuardViolation('Time budget exceeded.');
+  return Math.min(limits.maxApiMs, remaining);
+}
+
+/** Like Promise.all, but never settles before every promise has: results are kept and the first rejection is raised afterwards. */
+export async function settleAll<T>(promises: ReadonlyArray<Promise<T>>): Promise<T[]> {
+  const results = await Promise.allSettled(promises);
+  const rejected = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (rejected) throw rejected.reason;
+  return results.map((result) => (result as PromiseFulfilledResult<T>).value);
+}
+
+/** Second proof, after a pause: keys that a abandoned request might still have written late. Returns the keys still present. */
+export async function lateWriteSweep(journal: Journal, exists: (key: string) => Promise<boolean>, settleMs: number = LIMITS.lateWriteSettleMs, sleep: (ms: number) => Promise<void> = wait): Promise<number> {
+  await sleep(settleMs);
+  let present = 0;
+  for (const key of journal.entries.flatMap((entry) => entry.keys)) if (await exists(key)) present += 1;
+  return present;
 }
 
 export interface JournalEntry {

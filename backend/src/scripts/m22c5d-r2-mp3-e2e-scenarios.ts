@@ -1,6 +1,6 @@
 import { STEM_IDS, type StemId } from '../features/ministry_audio/ministry-audio.schema';
 import type { Mp3StemManifest } from '../features/ministry_audio/mp3-stream-validator';
-import { addJournalEntry, sha256, Report, ScenarioAborted, type CommandGuard, type Journal, type ModeTag } from './m22c5d-r2-mp3-e2e-core';
+import { addJournalEntry, settleAll, sha256, Report, ScenarioAborted, type CommandGuard, type Journal, type ModeTag } from './m22c5d-r2-mp3-e2e-core';
 
 // Storage-agnostic scenarios. The same code runs offline (fake bucket + Firestore Emulator) and, unchanged, against the
 // R2 development bucket: only the injected environment differs.
@@ -118,7 +118,8 @@ export async function runMp3Scenarios(env: ScenarioEnv): Promise<Report> {
       const repeated = await complete(id, 'vocals', sealed!.directAttempts.vocals.number);
       report.check('S1 flow', 'repeated /complete is idempotent and reads nothing', repeated === 200 && delta('commands', idempotentFrom) === 0);
 
-      const finals = await Promise.all([finalize(id), finalize(id), finalize(id)]);
+      // All three run to completion even if one fails: nothing is left in flight when the scenario stops.
+      const finals = await settleAll([finalize(id), finalize(id), finalize(id)]);
       report.check('S1 flow', 'three concurrent finalizations all answer 200', finals.every((s) => s === 200));
       report.check('S1 flow', 'recording is published exactly once', (await env.doc(env.ministries.a, id))?.status === 'published');
 
@@ -136,14 +137,14 @@ export async function runMp3Scenarios(env: ScenarioEnv): Promise<Report> {
 
       // S4 — isolation: a second ministry and a plain member cannot touch this recording, and R2 is never contacted.
       const isolationFrom = guard.counters.commands;
-      const attempts = await Promise.all([
+      const attempts = await settleAll([
         env.api(env.ministries.b, `${base}/${id}/stems/vocals/upload-url`, 'POST', env.tokens.adminB),
         env.api(env.ministries.b, `${base}/${id}/finalize`, 'POST', env.tokens.adminB),
         env.api(env.ministries.b, `/${id}/playback`, 'GET', env.tokens.adminB),
         env.api(env.ministries.a, `${base}/${id}/stems/vocals/upload-url`, 'POST', env.tokens.memberA),
         env.api(env.ministries.a, `${base}/${id}/stems/vocals/upload-url`, 'POST', env.tokens.adminB),
       ]);
-      const codes = await Promise.all(attempts.map(async (r) => { await r.arrayBuffer(); return r.status; }));
+      const codes = await settleAll(attempts.map(async (r) => { await r.arrayBuffer(); return r.status; }));
       report.check('S4 isolation', 'other ministry answers 404 and a plain member 403', codes[0] === 404 && codes[1] === 404 && codes[2] === 404 && codes[3] === 403 && [403, 404].includes(codes[4]));
       report.check('S4 isolation', 'no R2 command was needed to refuse them', delta('commands', isolationFrom) === 0);
     }

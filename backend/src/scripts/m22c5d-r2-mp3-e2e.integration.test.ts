@@ -20,7 +20,7 @@ import type { Mp3StemManifest } from '../features/ministry_audio/mp3-stream-vali
 import { R2StemStorage } from '../features/ministry_audio/r2-storage';
 import { UserRepository } from '../repositories/UserRepository';
 import {
-  cleanupJournal, CommandGuard, createJournalFile, EXPECTED_STEPS, MODES, ministryIds, parseJournal, RANGE_PART_BYTES, updateJournalFile, type Journal, type ModeTag,
+  cleanupJournal, CommandGuard, createJournalFile, EXPECTED_STEPS, MODES, ministryIds, parseJournal, quiesceRun, RANGE_PART_BYTES, updateJournalFile, type Journal, type ModeTag,
 } from './m22c5d-r2-mp3-e2e-core';
 import { runMp3Scenarios, type ScenarioEnv, type Signed } from './m22c5d-r2-mp3-e2e-scenarios';
 import { fakeR2, providerError } from './m22c5d-fake-r2';
@@ -50,7 +50,8 @@ async function startHarness(mode: ModeTag) {
   const journalPath = join(dir, 'run.journal.json');
   await createJournalFile(journalPath, journal);
   const calls: string[] = [];
-  const state = { tweak: undefined as Tweak | undefined };
+  const done: string[] = [];
+  const state = { tweak: undefined as Tweak | undefined, apiTimeoutMs: 20_000, pending: 0 };
   profile.serverByteValidation = false;
   const app = express();
   const server: Server = app.listen(0, '127.0.0.1');
@@ -83,12 +84,20 @@ async function startHarness(mode: ModeTag) {
     setCodec: (open) => { profile.serverByteValidation = open; },
     persistJournal: async () => { calls.push('journal'); await updateJournalFile(journalPath, journal); },
     api: async (tenant, path, method, token, body) => {
-      calls.push(`${method} ${path.replace(/[a-f0-9]{64}/, ':id')}`);
-      const response = await fetch(`${origin}/api/v1/ministries/${tenant}/audio-library${path}`, {
-        method, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
-        body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20_000),
-      });
-      return state.tweak?.(tenant, path, method, response) ?? response;
+      const label = `${method} ${path.replace(/[a-f0-9]{64}/, ':id')}`;
+      calls.push(label);
+      state.pending += 1;
+      try {
+        const response = await fetch(`${origin}/api/v1/ministries/${tenant}/audio-library${path}`, {
+          method, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+          body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(state.apiTimeoutMs),
+        });
+        if (path.endsWith('/finalize')) await response.clone().arrayBuffer(); // the server has fully answered
+        done.push(label);
+        return state.tweak?.(tenant, path, method, response) ?? response;
+      } finally {
+        state.pending -= 1;
+      }
     },
     // The browser's signed PUT: create-only, with the media type the grant demands.
     put: async (grant, bytes) => {
@@ -108,7 +117,7 @@ async function startHarness(mode: ModeTag) {
     doc: async (tenant, id) => (await db.collection('ministries').doc(tenant).collection('audio_recordings').doc(id).get()).data(),
   };
   return {
-    env, guard, journal, journalPath, bucket, calls, profile, state,
+    env, guard, journal, journalPath, bucket, calls, done, profile, state,
     async close() {
       profile.serverByteValidation = false;
       await new Promise<void>((resolve, reject) => { server.close((e) => (e ? reject(e) : resolve())); server.closeAllConnections(); });
@@ -225,12 +234,97 @@ describe.each(['su', 'rc'] as ModeTag[])('fail-fast (%s)', { timeout: 120_000 },
     expect(h.bucket.objects.size).toBe(0);
   });
 
+  it('one of three concurrent finalizations failing never leaves the others in flight', async () => {
+    let finalizes = 0;
+    h.state.tweak = (_t, path, method) => { if (method === 'POST' && path.endsWith('/finalize') && ++finalizes === 1) throw new Error('finalize failed'); return undefined; };
+    const before = h.calls.length;
+    const doneBefore = h.done.length;
+    await expect(runMp3Scenarios(h.env)).rejects.toThrow('finalize failed');
+    expect(h.calls.slice(before).filter((c) => c.endsWith('/finalize'))).toHaveLength(3);
+    expect(h.done.slice(doneBefore).filter((c) => c.endsWith('/finalize'))).toHaveLength(3); // all three answered before the failure surfaced
+    expect(h.state.pending).toBe(0);
+    expect(h.profile.serverByteValidation).toBe(false);
+    expect(h.guard.inflight).toBe(0);
+  });
+
   it('propagates an unexpected exception and still leaves the codec closed and the journal cleanable', async () => {
     h.state.tweak = (_t, path, method) => { if (method === 'POST' && path.endsWith('/finalize')) throw new Error('boom'); return undefined; };
     await expect(runMp3Scenarios(h.env)).rejects.toThrow('boom');
     expect(h.profile.serverByteValidation).toBe(false);
     const reread = parseJournal(await readFile(h.journalPath, 'utf8'), BUCKET);
     expect(reread.entries.length).toBe(h.journal.entries.length);
+  });
+});
+
+describe('quiescence before cleanup (offline)', { timeout: 60_000 }, () => {
+  let h: Awaited<ReturnType<typeof startHarness>>;
+  const events: string[] = [];
+  let writing = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  beforeAll(async () => {
+    h = await startHarness('su');
+    // The promotion to the final object is held: a seal that outlives the HTTP client's patience.
+    const delayed = async (command: any) => {
+      const isFinalWrite = command.constructor.name === 'PutObjectCommand' && String(command.input.Key).startsWith('objects/');
+      if (isFinalWrite) {
+        writing += 1;
+        events.push('promotion-started');
+        await gate;
+      }
+      try { return await h.bucket.impl(command); } finally {
+        if (isFinalWrite) { writing -= 1; events.push('promotion-finished'); }
+      }
+    };
+    vi.spyOn(S3Client.prototype, 'send').mockImplementation(h.guard.wrap(delayed as never) as never);
+  });
+  afterAll(async () => { release(); vi.restoreAllMocks(); await h.close(); });
+
+  it('an HTTP timeout before the seal ends leaves a pending promotion; cleanup waits for it and never overlaps it', async () => {
+    const { STEM_IDS } = await import('../features/ministry_audio/ministry-audio.schema');
+    h.env.setCodec(true);
+    h.state.apiTimeoutMs = 400;
+    const stems = STEM_IDS.map((id) => ({ ...fixture.manifest, id }));
+    const reserved = await h.env.api(h.env.ministries.a, '/uploads', 'POST', h.env.tokens.adminA, {
+      schemaVersion: 2, idempotencyKey: randomUUID(), confirmed: true, title: 'C0.2', artist: 'synthetic', version: 'q', model: { id: 'htdemucs_6s', version: 'm22c5d-c0' }, stems,
+    });
+    const id = ((await reserved.json()) as { id: string }).id;
+    const { addJournalEntry } = await import('./m22c5d-r2-mp3-e2e-core');
+    addJournalEntry(h.env.journal, h.env.ministries.a, id, stems.map((s) => ({ id: s.id, sha256: s.sha256 })));
+    await h.env.persistJournal();
+    const grantResponse = await h.env.api(h.env.ministries.a, `/uploads/${id}/stems/vocals/upload-url`, 'POST', h.env.tokens.adminA);
+    const grant = (await grantResponse.json()) as Signed & { attempt: number };
+    expect(await h.env.put(grant, fixture.bytes)).toBe(200);
+
+    // The client gives up after 400 ms; the service is still promoting.
+    await expect(h.env.api(h.env.ministries.a, `/uploads/${id}/stems/vocals/complete`, 'POST', h.env.tokens.adminA, { attempt: grant.attempt })).rejects.toBeDefined();
+    expect(h.state.pending).toBe(0); // the client call is over...
+    expect(h.guard.inflight).toBe(1); // ...but the promotion is not
+    expect(writing).toBe(1);
+
+    // Not quiescent: the proof fails, so no cleanup may start.
+    const early = await quiesceRun(h.guard, [], { timeoutMs: 300 });
+    expect(early).toMatchObject({ quiescent: false, pendingCommands: 1 });
+    expect(h.guard.isFrozen).toBe(true);
+    // Frozen: a straggler can no longer start anything new.
+    await expect(new S3Client({ region: 'auto' }).send(new HeadObjectCommand({ Bucket: BUCKET, Key: h.journal.entries[0].keys[0] }))).rejects.toThrow('frozen');
+
+    // The delayed R2 operation finally ends; only then is the run quiescent and cleanup allowed.
+    release();
+    const settled = await quiesceRun(h.guard, [], { timeoutMs: 5000 });
+    expect(settled).toEqual({ quiescent: true, pendingCommands: 0, pendingWork: 0 });
+    expect(events).toEqual(['promotion-started', 'promotion-finished']);
+
+    const client = new S3Client({ region: 'auto' });
+    h.guard.authorizeCleanup(client, new CommandGuard(BUCKET, [h.env.ministries.a, h.env.ministries.b]));
+    let overlapped = 0;
+    const outcome = await cleanupJournal(parseJournal(await readFile(h.journalPath, 'utf8'), BUCKET),
+      async (key) => { if (writing > 0 || h.guard.inflight > 0) overlapped += 1; await client.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key })); },
+      async (key) => { try { await client.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key })); return true; } catch { return false; } });
+    expect(overlapped).toBe(0);
+    expect(outcome).toMatchObject({ stillPresent: 0, failed: 0 });
+    expect(h.bucket.objects.size).toBe(0);
+    h.env.setCodec(false);
   });
 });
 

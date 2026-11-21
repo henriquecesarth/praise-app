@@ -6,8 +6,8 @@ import { STEM_IDS } from '../features/ministry_audio/ministry-audio.schema';
 import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { describe, expect, it } from 'vitest';
 import {
-  addJournalEntry, assertLiveIsolation, assertSignedTarget, cleanupJournal, CommandGuard, createJournalFile, GuardViolation, LIMITS, type Limits,
-  ministryIds, nodeJournalIo, parseJournal, plannedKeys, Report, ScenarioAborted, signedRequest, updateJournalFile, type Journal, type JournalIo,
+  ActivityTracker, addJournalEntry, apiTimeoutMs, assertLiveIsolation, assertSignedTarget, cleanupJournal, CommandGuard, createJournalFile, GuardViolation, lateWriteSweep, LIMITS, type Limits,
+  ministryIds, nodeJournalIo, parseJournal, plannedKeys, quiesceRun, Report, ScenarioAborted, settleAll, signedRequest, updateJournalFile, type Journal, type JournalIo,
 } from './m22c5d-r2-mp3-e2e-core';
 
 const BUCKET = 'louvaio-ministry-audio-dev';
@@ -384,5 +384,123 @@ describe('signed requests (outside the SDK guard)', () => {
       start(controller) { init.signal!.addEventListener('abort', () => controller.error(init.signal!.reason)); },
     }), { status: 200 })) as unknown as typeof fetch;
     await expect(signedRequest(grant, 'GET', undefined, target, { fetchImpl: hang, limits: { ...limits, maxFetchMs: 50 } })).rejects.toBeDefined();
+  });
+});
+
+describe('quiescence, frozen guard and bounded timeouts', () => {
+  const never = () => new Promise<never>(() => undefined);
+  const clock = () => { let t = 0; return { now: () => t, sleep: async (ms: number) => { t += ms; } }; };
+  const head = new HeadObjectCommand({ Bucket: BUCKET, Key: goodKey });
+
+  it('counts in-flight commands, including failed ones, until they settle', async () => {
+    const g = guard();
+    let release!: () => void;
+    const slow = (g.wrap(() => new Promise((resolve) => { release = () => resolve({}); })) as (c: never) => Promise<unknown>)(head as never);
+    expect(g.inflight).toBe(1);
+    release();
+    await slow;
+    expect(g.inflight).toBe(0);
+    const failing = (g.wrap(async () => { throw new Error('x'); }) as (c: never) => Promise<unknown>)(head as never);
+    await expect(failing).rejects.toThrow('x');
+    expect(g.inflight).toBe(0);
+    await expect((g.wrap(() => { throw new Error('sync'); }) as (c: never) => Promise<unknown>)(head as never)).rejects.toThrow('sync');
+    expect(g.inflight).toBe(0);
+  });
+
+  it('freezes: new commands are refused, except those of the single authorized cleanup client', async () => {
+    const g = guard();
+    const cleanup = guard();
+    const calls: unknown[] = [];
+    const inner = async function (this: unknown) { calls.push(this); return {}; };
+    const send = g.wrap(inner as never) as (this: unknown, c: never) => Promise<unknown>;
+    const run = {}, client = {};
+    expect(() => g.authorizeCleanup(client, cleanup)).toThrow(GuardViolation);
+    g.freeze();
+    g.authorizeCleanup(client, cleanup);
+    await expect(send.call(run, head as never)).rejects.toThrow('frozen');
+    await expect(send.call({}, head as never)).rejects.toThrow('frozen');
+    await expect(send.call(client, head as never)).resolves.toEqual({});
+    expect(calls).toEqual([client]);
+    expect(g.counters.commands).toBe(0);
+    expect(cleanup.counters.commands).toBe(1);
+    await expect(send.call(client, new ListObjectsV2Command({ Bucket: BUCKET }) as never)).rejects.toThrow(GuardViolation); // cleanup keeps every other rule
+  });
+
+  it('reports quiescence only when nothing is pending, and times out otherwise without cleaning', async () => {
+    const g = guard();
+    const tracker = new ActivityTracker();
+    const c1 = clock();
+    expect(await quiesceRun(g, [tracker], { timeoutMs: 100, ...c1 })).toEqual({ quiescent: true, pendingCommands: 0, pendingWork: 0 });
+    expect(g.isFrozen && tracker.isClosed).toBe(true);
+
+    const g2 = guard();
+    const t2 = new ActivityTracker();
+    void (g2.wrap(never as never) as (c: never) => Promise<unknown>)(head as never);
+    const c2 = clock();
+    expect(await quiesceRun(g2, [t2], { timeoutMs: 100, ...c2 })).toEqual({ quiescent: false, pendingCommands: 1, pendingWork: 0 });
+    expect(c2.now()).toBeGreaterThanOrEqual(100);
+
+    const g3 = guard();
+    const t3 = new ActivityTracker();
+    t3.begin();
+    expect(await quiesceRun(g3, [t3], { timeoutMs: 50, ...clock() })).toMatchObject({ quiescent: false, pendingWork: 1 });
+  });
+
+  it('waits for work that finishes during the grace period', async () => {
+    const g = guard();
+    const tracker = new ActivityTracker();
+    const end = tracker.begin();
+    const c = clock();
+    const result = await quiesceRun(g, [tracker], { timeoutMs: 1000, now: c.now, sleep: async (ms) => { await c.sleep(ms); if (c.now() >= 200) end(); } });
+    expect(result.quiescent).toBe(true);
+    expect(c.now()).toBeGreaterThanOrEqual(200);
+  });
+
+  it('tracker refuses new work once closed and its middleware answers 503', async () => {
+    const tracker = new ActivityTracker();
+    const listeners: Array<() => void> = [];
+    const res = { once: (_e: string, l: () => void) => { listeners.push(l); }, status: (code: number) => ({ json: () => { sent.push(code); } }) };
+    const sent: number[] = [];
+    let nexts = 0;
+    tracker.middleware()({}, res, () => { nexts += 1; });
+    expect(tracker.pending).toBe(1);
+    listeners[0]();
+    listeners[0]();
+    expect(tracker.pending).toBe(0);
+    tracker.close();
+    tracker.middleware()({}, res, () => { nexts += 1; });
+    expect(sent).toEqual([503]);
+    expect(nexts).toBe(1);
+    expect(() => tracker.begin()).toThrow(GuardViolation);
+    await expect(tracker.track(async () => 1)).rejects.toThrow(GuardViolation);
+  });
+
+  it('settleAll waits for every promise before raising the first failure', async () => {
+    const order: string[] = [];
+    const ok = (name: string, ms: number) => new Promise<string>((resolve) => setTimeout(() => { order.push(name); resolve(name); }, ms));
+    const bad = new Promise<string>((_resolve, reject) => setTimeout(() => { order.push('bad'); reject(new Error('first')); }, 5));
+    await expect(settleAll([ok('slow', 40), bad, ok('mid', 20)])).rejects.toThrow('first');
+    expect(order).toEqual(['bad', 'mid', 'slow']); // the rejection surfaced only after the slowest finished
+    await expect(settleAll([ok('a', 1), ok('b', 1)])).resolves.toEqual(['a', 'b']);
+  });
+
+  it('bounds the local API timeout by the seal budget and by what is left of the run', () => {
+    expect(LIMITS.maxApiMs).toBeGreaterThanOrEqual(38_000);
+    expect(LIMITS.maxApiMs).toBeLessThan(LIMITS.maxRunMs);
+    expect(apiTimeoutMs(0, 300_000)).toBe(LIMITS.maxApiMs);
+    expect(apiTimeoutMs(290_000, 300_000)).toBe(10_000);
+    expect(() => apiTimeoutMs(300_000, 300_000)).toThrow(GuardViolation);
+    expect(() => apiTimeoutMs(300_001, 300_000)).toThrow(GuardViolation);
+  });
+
+  it('late-write sweep pauses first, then checks every journaled key', async () => {
+    const j: Journal = { format: 'louvaio.m22c5d-r2-journal', version: 1, runId: run, bucket: BUCKET, entries: [] };
+    addJournalEntry(j, ids.su, rec, stems6);
+    const events: string[] = [];
+    const late = plannedKeys(ids.su, rec)[3];
+    const present = await lateWriteSweep(j, async (k) => { events.push('check'); return k === late; }, 7, async (ms) => { events.push(`sleep${ms}`); });
+    expect(present).toBe(1);
+    expect(events[0]).toBe('sleep7');
+    expect(events.filter((e) => e === 'check')).toHaveLength(24);
   });
 });

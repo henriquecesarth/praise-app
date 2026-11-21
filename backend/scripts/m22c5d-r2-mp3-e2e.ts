@@ -11,8 +11,8 @@ import { CODEC_PROFILES } from '../src/features/ministry_audio/audio-codec';
 import { getR2DevelopmentConfig } from '../src/features/ministry_audio/r2-development-config';
 import type { Mp3StemManifest } from '../src/features/ministry_audio/mp3-stream-validator';
 import {
-  assertLiveIsolation, cleanupJournal, CommandGuard, createJournalFile, EXPECTED_STEPS, GuardViolation, LIMITS, MODES, ministryIds,
-  RANGE_PART_BYTES, signedRequest, updateJournalFile, type Journal, type ModeTag,
+  ActivityTracker, apiTimeoutMs, assertLiveIsolation, cleanupJournal, CommandGuard, createJournalFile, EXPECTED_STEPS, GuardViolation, lateWriteSweep,
+  LIMITS, MODES, ministryIds, quiesceRun, RANGE_PART_BYTES, signedRequest, updateJournalFile, type Journal, type ModeTag,
 } from '../src/scripts/m22c5d-r2-mp3-e2e-core';
 import { runMp3Scenarios, type ScenarioEnv } from '../src/scripts/m22c5d-r2-mp3-e2e-scenarios';
 
@@ -113,10 +113,13 @@ async function main(): Promise<number> {
   const guard = new CommandGuard(bucket, [ministries.a, ministries.b]);
   (S3Client.prototype as { send: unknown }).send = guard.wrap(original as never);
   const app = express();
+  const requests = new ActivityTracker();
+  const signed = new ActivityTracker();
   const server: Server = app.listen(0, '127.0.0.1');
   try {
     await once(server, 'listening');
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    app.use(requests.middleware());
     app.use(express.json());
     app.use('/api/v1/ministries/:ministryId/audio-library', createMinistryAudioRouter({
       storage: {
@@ -145,15 +148,14 @@ async function main(): Promise<number> {
       idempotencyKey: () => randomUUID(),
       setCodec: (open) => { profile.serverByteValidation = open; },
       persistJournal: () => updateJournalFile(journalPath, journal),
-      api: (tenant, path, method, token, body) => {
-        if (Date.now() > deadline) throw new GuardViolation('Time budget exceeded.');
+      api: async (tenant, path, method, token, body) => {
         return fetch(`${origin}/api/v1/ministries/${tenant}/audio-library${path}`, {
           method, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
-          body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(LIMITS.maxFetchMs),
+          body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(apiTimeoutMs(Date.now(), deadline)),
         });
       },
-      put: async (grant, bytes) => (await signedRequest(grant, 'PUT', bytes, target)).status,
-      get: (grant) => signedRequest(grant, 'GET', undefined, target),
+      put: (grant, bytes) => signed.track(async () => (await signedRequest(grant, 'PUT', bytes, target)).status),
+      get: (grant) => signed.track(() => signedRequest(grant, 'GET', undefined, target)),
       doc: async (tenant, id) => (await db.collection('ministries').doc(tenant).collection('audio_recordings').doc(id).get()).data(),
     };
 
@@ -171,30 +173,44 @@ async function main(): Promise<number> {
     } finally {
       profile.serverByteValidation = false;
       console.log(`R2 commands: ${JSON.stringify(guard.counters)}`);
-      // No request may still be in flight when cleanup starts: stop the local server and wait for its handlers first.
-      await new Promise<void>((resolve) => { server.close(() => resolve()); server.closeAllConnections(); });
-      // S6 — cleanup runs on success, failure and exception, over the journaled keys only. A fresh guard: an exhausted run
-      // budget (time or commands) must never block the cleanup of the run's own keys.
-      (S3Client.prototype as { send: unknown }).send = new CommandGuard(bucket, [ministries.a, ministries.b]).wrap(original as never);
-      try {
-        const client = createR2Client(config);
-        const outcome = await cleanupJournal(journal,
-          async (key) => { await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })); },
-          async (key) => {
+      // Quiescence is PROVEN before any cleanup command: the run guard is frozen (no new R2 command can leave the process,
+      // so a request the client abandoned can only fail from now on), new work is refused, and every command and request
+      // already started must have settled. Closing sockets is not accepted as proof.
+      server.close();
+      const quiet = await quiesceRun(guard, [requests, signed]);
+      server.closeAllConnections();
+      if (!quiet.quiescent) {
+        cleanupFailures += 1;
+        console.log(`FAIL  NOT QUIESCENT: ${quiet.pendingCommands} R2 command(s) and ${quiet.pendingWork} request(s) still pending after ${LIMITS.quiesceMs} ms. Cleanup was NOT started and nothing new was begun.`);
+        console.log(`Journal preserved. Wait several minutes (an abandoned request may still be applied by R2 late; a second cleanup may be needed), then run: M22C5D_JOURNAL=${journalPath} npx --no-install tsx scripts/m22c5d-r2-mp3-cleanup.ts`);
+      } else {
+        // S6 — cleanup over the journaled keys only, through its own client and its own budgets (the run guard stays frozen).
+        try {
+          const client = createR2Client(config);
+          guard.authorizeCleanup(client, new CommandGuard(bucket, [ministries.a, ministries.b]));
+          const exists = async (key: string) => {
             try { await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key })); return true; }
             catch (error) { if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404) return false; throw error; }
-          });
-        const clean = outcome.stillPresent === 0 && outcome.failed === 0 && outcome.removed === outcome.attempted;
-        console.log(`${clean ? 'PASS' : 'FAIL'}  S6 cleanup: ${outcome.removed}/${outcome.attempted} keys absent, ${outcome.stillPresent} still present, ${outcome.failed} errors`);
-        if (!clean) cleanupFailures += 1;
-      } catch {
-        cleanupFailures += 1;
-        console.log('FAIL  S6 cleanup could not run');
+          };
+          const outcome = await cleanupJournal(journal, async (key) => { await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })); }, exists);
+          let late = 0;
+          try { late = outcome.failed === 0 ? await lateWriteSweep(journal, exists) : 0; } catch { late = -1; }
+          const clean = outcome.stillPresent === 0 && outcome.failed === 0 && outcome.removed === outcome.attempted && late === 0;
+          if (late !== 0) console.log('A late write (or an unverifiable sweep) needs a second cleanup: wait a few minutes, then run the standalone cleanup with the same journal.');
+          console.log(`${clean ? 'PASS' : 'FAIL'}  S6 cleanup: ${outcome.removed}/${outcome.attempted} keys absent, ${outcome.stillPresent} still present, ${outcome.failed} errors, ${late} late writes`);
+          if (!clean) cleanupFailures += 1;
+        } catch {
+          cleanupFailures += 1;
+          console.log('FAIL  S6 cleanup could not run');
+        }
       }
     }
   } finally {
-    (S3Client.prototype as { send: unknown }).send = original;
-    await new Promise<void>((resolve) => { server.close(() => resolve()); server.closeAllConnections(); }); // idempotent
+    // The guarded `send` stays installed for the rest of the process and is frozen: a request the client abandoned can
+    // keep running in the service, and must never fall back to an unguarded client. Nothing here restores the original.
+    guard.freeze();
+    server.close();
+    server.closeAllConnections();
   }
 
   const ok = failures === 0 && cleanupFailures === 0;

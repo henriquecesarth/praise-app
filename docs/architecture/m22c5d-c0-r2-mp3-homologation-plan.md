@@ -75,8 +75,19 @@ Automático em `finally` (sucesso, falha e aborto) sobre as chaves do journal do
 ## 9. Riscos
 Sem Safari/Firefox/Android; leitor remoto MP3 desligado; política `decoderDelayFrames` com um único encoder; revisão Codex indisponível (`gpt-6.2-sol`), exceção registrada; o harness abre o codec em memória dentro do próprio processo de dev (nunca no build publicável).
 
-### Riscos residuais (C0.1), a reavaliar antes da execução real
-- `Promise.all` (finalize ×3 e S4): se uma requisição falha, as demais já estão em voo; o cleanup só começa depois de fechar o servidor local.
+## Quiescência antes do cleanup (C0.2)
+- **Concorrência:** finalize ×3 e S4 usam `settleAll` (allSettled): a primeira rejeição só é levantada depois que todas as requisições terminam; o fail-fast dos cenários seguintes é preservado.
+- **Timeout da API local:** `min(45 s, tempo restante da execução)` por chamada (orçamento do seal de 38 s + margem; nunca além dos 300 s gerais).
+- **Prova de quiescência (não basta `closeAllConnections`):** (1) o guard da execução é **congelado** — nenhum comando novo sai do processo, exceto os do único cliente de cleanup autorizado, que passa por um guard próprio de orçamento novo; (2) o servidor deixa de aceitar requisições (503) e os rastreadores recusam trabalho novo; (3) todo comando R2 já enviado (`guard.inflight`) e toda requisição/fetch assinado rastreado precisam ter terminado. Uma requisição abandonada pelo cliente pode continuar no serviço, mas só pode falhar. Só então o cleanup começa; depois dele há um **segundo varrimento** de ausência após 3 s para pegar escrita tardia de uma requisição abortada que o R2 ainda aplicou.
+- **Sem quiescência em 60 s:** FAIL explícito, o cleanup **não** é iniciado, nenhuma operação nova de cenário começa, o journal é preservado e o script imprime o comando de cleanup standalone para execução controlada depois de aguardar.
+
+### Riscos residuais (C0.2), a reavaliar antes da execução real
+- Um PUT assinado abandonado pelo cliente (timeout) pode ser aplicado pelo R2 depois; mitigado pelo varrimento tardio e pelo cleanup standalone, não eliminado.
 - A resposta da API local (`env.api`) não tem limite de bytes (destino é o servidor local do próprio processo).
 - Uma exceção inesperada fora dos cenários não imprime os passos já executados.
 - Revisão Codex (`gpt-6.2-sol`) indisponível: revisão por subagente Claude somente leitura; sem conformidade integral com o AGENTS.md declarada.
+
+### Conclusão remota tardia e pendências antes do R2 real
+- **O R2 pode concluir tardiamente uma operação remota** (PUT assinado ou `CopyObject` abandonado pelo cliente por timeout). A quiescência é **local**: prova que nenhum comando/requisição do harness continua em voo e que nenhum comando novo pode sair, mas **não elimina** a possibilidade de o R2 aplicar depois uma operação já enviada. O varrimento tardio (3 s) apenas **detecta** objetos recriados nas chaves do próprio journal e reprova a execução; ele não amplia o escopo de exclusão (só chaves do journal) e nunca apaga por si. Um segundo cleanup standalone, com o mesmo journal e após alguns minutos, é o procedimento de nova verificação e remoção de resíduos.
+- O `send` com guard permanece instalado e congelado até o fim do processo; ele nunca é restaurado ao original.
+- Pendências antes da execução real: (1) revisão direta da sequência de encerramento do `main()` (sem teste automatizado); (2) garantia de que toda operação local rastreável terminou antes do cleanup; (3) risco de conclusão remota tardia de PUT/CopyObject; (4) procedimento de nova verificação e cleanup de resíduos; (5) o modo `rc` não será executado sem autorização separada, depois de PASS e limpeza confirmada em `su`.
