@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { open, rename, unlink } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { STEM_IDS } from '../features/ministry_audio/ministry-audio.schema';
 
 // M22-C.5D-C0 — development-only core of the MP3 v2 homologation against the R2 DEVELOPMENT bucket.
@@ -12,6 +14,10 @@ export interface Limits {
   maxObjectBytes: number;
   maxObjects: number;
   maxRunMs: number;
+  /** Wall clock of one signed PUT/GET, body included. */
+  maxFetchMs: number;
+  /** Largest body kept from a signed request that is not a successful GET. */
+  maxFetchErrorBytes: number;
 }
 export const LIMITS: Limits = {
   /** Distinct recordings reserved in one run. */
@@ -24,6 +30,8 @@ export const LIMITS: Limits = {
   maxObjects: 160,
   /** Wall clock of the whole run, cleanup excluded. */
   maxRunMs: 300_000,
+  maxFetchMs: 20_000,
+  maxFetchErrorBytes: 8 * 1024,
 };
 
 /** Ranged parts of 4 KiB split the 10.8 KB fixture in three, exercising ordered parallel reads on a tiny object. */
@@ -74,7 +82,8 @@ export function assertSignedTarget(rawUrl: string, accountId: string, bucket: st
   let url: URL;
   try { url = new URL(rawUrl); } catch { throw new GuardViolation('Signed URL rejected.'); }
   const prefix = `/${bucket}/`;
-  const key = url.pathname.startsWith(prefix) ? decodeURIComponent(url.pathname.slice(prefix.length)) : '';
+  let key = '';
+  try { key = url.pathname.startsWith(prefix) ? decodeURIComponent(url.pathname.slice(prefix.length)) : ''; } catch { throw new GuardViolation('Signed URL rejected.'); }
   const match = KEY_PATTERN.exec(key);
   const ministry = match?.[2] ?? match?.[4];
   if (url.protocol !== 'https:' || url.host !== `${accountId}.r2.cloudflarestorage.com` || url.username || url.password ||
@@ -242,18 +251,162 @@ export function addJournalEntry(journal: Journal, ministryId: string, recordingI
   journal.entries.push({ ministryId, recordingId, keys: plannedKeys(ministryId, recordingId), stems });
 }
 
+const CANONICAL_UUID = new RegExp(`^${UUID}$`);
+const JOURNAL_KEYS = ['bucket', 'entries', 'format', 'runId', 'version'];
+const ENTRY_KEYS = ['keys', 'ministryId', 'recordingId', 'stems'];
+const sameKeys = (value: object, expected: string[]) => JSON.stringify(Object.keys(value).sort()) === JSON.stringify(expected);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Strict, total validation. The file is a claim, never an authority: every identifier is checked against the run, every
+ * key is recomputed, and anything unexpected (extra fields, duplicates, another run's ministry) is refused whole.
+ */
 export function parseJournal(text: string, bucket: string): Journal {
   let value: unknown;
   try { value = JSON.parse(text); } catch { throw new GuardViolation('Journal unreadable.'); }
-  const j = value as Partial<Journal>;
-  if (!j || j.format !== 'louvaio.m22c5d-r2-journal' || j.version !== 1 || j.bucket !== bucket || !Array.isArray(j.entries) ||
-      j.entries.length > LIMITS.maxRecordings || typeof j.runId !== 'string') throw new GuardViolation('Journal rejected.');
-  for (const entry of j.entries) {
+  if (!isRecord(value) || !sameKeys(value, JOURNAL_KEYS) || value.format !== 'louvaio.m22c5d-r2-journal' || value.version !== 1 ||
+      value.bucket !== bucket || typeof value.runId !== 'string' || !CANONICAL_UUID.test(value.runId) ||
+      !Array.isArray(value.entries) || value.entries.length > LIMITS.maxRecordings) throw new GuardViolation('Journal rejected.');
+  const runId = value.runId;
+  const allowed = [`m22c5d-r2-${runId}-su`, `m22c5d-r2-${runId}-rc`];
+  const seen = new Set<string>();
+  let ministry: string | undefined;
+  for (const entry of value.entries as unknown[]) {
+    if (!isRecord(entry) || !sameKeys(entry, ENTRY_KEYS) || typeof entry.ministryId !== 'string' || typeof entry.recordingId !== 'string' ||
+        !RECORDING_PATTERN.test(entry.recordingId) || !allowed.includes(entry.ministryId)) throw new GuardViolation('Journal entry rejected.');
+    ministry ??= entry.ministryId;
+    if (entry.ministryId !== ministry) throw new GuardViolation('Journal mixes modes.');
+    if (seen.has(entry.recordingId)) throw new GuardViolation('Journal entry duplicated.');
+    seen.add(entry.recordingId);
+    const stems = entry.stems;
+    if (!Array.isArray(stems) || stems.length !== STEM_IDS.length || !stems.every((stem, index) =>
+      isRecord(stem) && sameKeys(stem, ['id', 'sha256']) && stem.id === STEM_IDS[index] && typeof stem.sha256 === 'string' && RECORDING_PATTERN.test(stem.sha256))) {
+      throw new GuardViolation('Journal stems rejected.');
+    }
     // Keys are recomputed, never trusted from the file: a tampered journal cannot widen the cleanup.
-    const expected = plannedKeys(entry.ministryId, entry.recordingId);
-    if (JSON.stringify(entry.keys) !== JSON.stringify(expected)) throw new GuardViolation('Journal keys rejected.');
+    if (JSON.stringify(entry.keys) !== JSON.stringify(plannedKeys(entry.ministryId, entry.recordingId))) throw new GuardViolation('Journal keys rejected.');
   }
-  return j as Journal;
+  return value as unknown as Journal;
+}
+
+/** Minimal file operations, injectable so that every failure point of the journal writer is testable. */
+export interface JournalIo {
+  open: typeof open;
+  rename: typeof rename;
+  unlink: typeof unlink;
+}
+export const nodeJournalIo: JournalIo = { open, rename, unlink };
+
+async function syncDirectory(path: string, io: JournalIo): Promise<void> {
+  try {
+    const handle = await io.open(dirname(path), 'r');
+    try { await handle.sync(); } finally { await handle.close(); }
+  } catch { /* directory fsync is best effort: not every platform allows it */ }
+}
+
+async function writeExclusive(path: string, text: string, io: JournalIo): Promise<void> {
+  const handle = await io.open(path, 'wx', 0o600);
+  try {
+    await handle.writeFile(text, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+function serialize(journal: Journal): string {
+  const text = `${JSON.stringify(journal, null, 2)}\n`;
+  parseJournal(text, journal.bucket); // a journal that would be refused later is never persisted
+  return text;
+}
+
+/** First write: exclusive creation (`wx`), owner-only. An existing file is never touched. */
+export async function createJournalFile(path: string, journal: Journal, io: JournalIo = nodeJournalIo): Promise<void> {
+  if (!path.endsWith('.journal.json')) throw new GuardViolation('Journal path must end with .journal.json.');
+  const text = serialize(journal);
+  let handle;
+  try {
+    handle = await io.open(path, 'wx', 0o600);
+  } catch (error) {
+    // Nothing was created by us: never unlink a path we did not create.
+    if ((error as { code?: string }).code === 'EEXIST') throw new GuardViolation('Journal already exists.');
+    throw error;
+  }
+  try {
+    await handle.writeFile(text, 'utf8');
+    await handle.sync();
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await io.unlink(path).catch(() => undefined); // our own, partially written file
+    throw error;
+  }
+  await handle.close();
+  await syncDirectory(path, io);
+}
+
+/**
+ * Later writes: a complete temporary file beside the journal (exclusive, owner-only, fsynced), then one atomic rename.
+ * Any failure leaves the previous journal exactly as it was and removes the temporary file.
+ */
+export async function updateJournalFile(path: string, journal: Journal, io: JournalIo = nodeJournalIo): Promise<void> {
+  if (!path.endsWith('.journal.json')) throw new GuardViolation('Journal path must end with .journal.json.');
+  const text = serialize(journal);
+  const temporary = join(dirname(path), `.${randomUUID()}.journal.tmp`);
+  try {
+    await writeExclusive(temporary, text, io);
+    await io.rename(temporary, path);
+  } catch (error) {
+    await io.unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+  await syncDirectory(path, io);
+}
+
+export interface SignedGrant {
+  url: string;
+  headers: Record<string, string>;
+}
+export interface SignedTarget {
+  accountId: string;
+  bucket: string;
+  ministries: readonly string[];
+}
+
+/**
+ * The client's signed PUT/GET bypasses the SDK guard, so it gets its own: target check BEFORE any request, no redirects,
+ * a hard timeout covering the body, an upload size cap, and a download cap enforced while streaming (never buffered
+ * past the limit).
+ */
+export async function signedRequest(
+  grant: SignedGrant, method: 'PUT' | 'GET', body: Buffer | undefined, target: SignedTarget,
+  deps: { fetchImpl?: typeof fetch; limits?: Limits } = {},
+): Promise<{ status: number; contentType: string | null; bytes: Buffer }> {
+  const limits = deps.limits ?? LIMITS;
+  assertSignedTarget(grant.url, target.accountId, target.bucket, target.ministries);
+  if (method === 'PUT' && (!body || body.length > limits.maxObjectBytes)) throw new GuardViolation('Upload exceeds the object limit.');
+  const response = await (deps.fetchImpl ?? fetch)(grant.url, {
+    method, headers: grant.headers, body: body ? new Uint8Array(body) : undefined, redirect: 'error', signal: AbortSignal.timeout(limits.maxFetchMs),
+  });
+  const cap = method === 'GET' && response.status === 200 ? limits.maxObjectBytes : limits.maxFetchErrorBytes;
+  const declared = Number(response.headers.get('content-length') ?? 0);
+  const reader = response.body?.getReader();
+  if (Number.isFinite(declared) && declared > cap) {
+    await reader?.cancel().catch(() => undefined);
+    throw new GuardViolation('Response exceeds the limit.');
+  }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (reader) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel().catch(() => undefined);
+      throw new GuardViolation('Response exceeds the limit.');
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return { status: response.status, contentType: response.headers.get('content-type'), bytes: Buffer.concat(chunks) };
 }
 
 export const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -263,12 +416,16 @@ export interface StepResult {
   step: string;
   pass: boolean;
 }
+/** Thrown by a failed mandatory check: nothing after it may run. */
+export class ScenarioAborted extends Error {}
 export class Report {
   readonly steps: StepResult[] = [];
-  check(scenario: string, step: string, condition: unknown): boolean {
+  /** A failed check is recorded and then aborts the scenarios immediately (fail-fast). */
+  check(scenario: string, step: string, condition: unknown): true {
     const pass = !!condition;
     this.steps.push({ scenario, step, pass });
-    return pass;
+    if (!pass) throw new ScenarioAborted(`${scenario}: ${step}`);
+    return true;
   }
   get failed(): StepResult[] { return this.steps.filter((s) => !s.pass); }
   get ok(): boolean { return this.steps.length > 0 && this.failed.length === 0; }

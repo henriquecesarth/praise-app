@@ -1,6 +1,6 @@
 import { STEM_IDS, type StemId } from '../features/ministry_audio/ministry-audio.schema';
 import type { Mp3StemManifest } from '../features/ministry_audio/mp3-stream-validator';
-import { addJournalEntry, sha256, Report, type CommandGuard, type Journal, type ModeTag } from './m22c5d-r2-mp3-e2e-core';
+import { addJournalEntry, sha256, Report, ScenarioAborted, type CommandGuard, type Journal, type ModeTag } from './m22c5d-r2-mp3-e2e-core';
 
 // Storage-agnostic scenarios. The same code runs offline (fake bucket + Firestore Emulator) and, unchanged, against the
 // R2 development bucket: only the injected environment differs.
@@ -24,6 +24,8 @@ export interface ScenarioEnv {
   setCodec(open: boolean): void;
   guard: CommandGuard;
   journal: Journal;
+  /** Durably records the journal. Awaited right after each reservation, before any upload URL is requested. */
+  persistJournal(): Promise<void>;
   fixture: { bytes: Buffer; manifest: Mp3StemManifest };
   idempotencyKey(): string;
 }
@@ -52,6 +54,7 @@ export async function runMp3Scenarios(env: ScenarioEnv): Promise<Report> {
     if (reserved.status !== 200) return undefined;
     // Write-ahead: the planned keys are journaled before the first upload URL exists.
     addJournalEntry(env.journal, env.ministries.a, reserved.body.id, list.map((s) => ({ id: s.id, sha256: s.sha256 })));
+    await env.persistJournal();
     return reserved.body.id as string;
   }
   async function issue(id: string, stem: StemId) {
@@ -64,10 +67,13 @@ export async function runMp3Scenarios(env: ScenarioEnv): Promise<Report> {
   async function uploadAndComplete(id: string, stem: StemId, bytes = env.fixture.bytes) {
     const grant = await issue(id, stem);
     if (!grant) return { grant: undefined, put: 0, complete: 0 };
+    // The grant must demand audio/mpeg and create-only BEFORE any byte is sent.
+    if (grant.headers['content-type'] !== 'audio/mpeg' || grant.headers['if-none-match'] !== '*') return { grant, put: 0, complete: 0 };
     const put = await env.put(grant, bytes);
     return { grant, put, complete: put === 200 ? await complete(id, stem, grant.attempt) : 0 };
   }
 
+  try {
   // S0 — the publication gate is closed by default: no document, no object, no R2 command.
   {
     const before = guard.counters.commands;
@@ -79,7 +85,6 @@ export async function runMp3Scenarios(env: ScenarioEnv): Promise<Report> {
   }
 
   env.setCodec(true);
-  try {
     // S1 — full flow: six stems, signed PUT audio/mpeg, streaming validation, promotion, receipts, finalization, reads.
     const id = await reserve(stems());
     report.check('S1 flow', 'MP3 v2 reservation accepted', !!id);
@@ -93,6 +98,7 @@ export async function runMp3Scenarios(env: ScenarioEnv): Promise<Report> {
         const r = await uploadAndComplete(id, stem);
         headersOk &&= r.grant?.headers['content-type'] === 'audio/mpeg' && r.grant?.headers['if-none-match'] === '*';
         allOk &&= r.put === 200 && r.complete === 200;
+        if (!headersOk || !allOk) break; // fail-fast: no further upload after the first failure
       }
       report.check('S1 flow', 'upload URLs demand audio/mpeg and create-only', headersOk);
       report.check('S1 flow', 'six uploads and six completions answered 200', allOk);
@@ -123,6 +129,7 @@ export async function runMp3Scenarios(env: ScenarioEnv): Promise<Report> {
         for (const track of playback.body.tracks as Array<Signed & { id: StemId }>) {
           const read = await env.get(track);
           readsOk &&= read.status === 200 && read.contentType === 'audio/mpeg' && sha256(read.bytes) === env.fixture.manifest.sha256;
+          if (!readsOk) break;
         }
       }
       report.check('S1 flow', 'every final object reads back as audio/mpeg with the manifest SHA-256', readsOk);
@@ -147,7 +154,8 @@ export async function runMp3Scenarios(env: ScenarioEnv): Promise<Report> {
       report.check('S2 resume', 'reservation accepted', !!rid);
       if (rid) {
         const grant = await issue(rid, 'vocals');
-        await env.put(grant!, env.fixture.bytes);
+        // Recorded only on failure, so the step count of a passing run is unchanged.
+        if (!grant || (await env.put(grant, env.fixture.bytes)) !== 200) report.check('S2 resume', 'upload URL issued and the staging object stored', false);
         const before = { ...guard.counters };
         guard.failNextCopies(1);
         const first = await complete(rid, 'vocals', grant!.attempt);
@@ -177,13 +185,19 @@ export async function runMp3Scenarios(env: ScenarioEnv): Promise<Report> {
         report.check('S3 malformed', 'nothing was promoted', delta('copyAttempted', before.copyAttempted) === 0 && delta('put', before.put) === 0);
         const doc = await env.doc(env.ministries.a, rid);
         report.check('S3 malformed', 'the attempt is marked invalid and the stem is not uploaded', JSON.stringify(doc?.directAttempts?.vocals) === JSON.stringify({ number: 1, invalid: true }) && !doc?.uploadedStemIds?.includes('vocals'));
-        for (const stem of STEM_IDS.filter((s) => s !== 'vocals')) await uploadAndComplete(rid, stem);
+        for (const stem of STEM_IDS.filter((s) => s !== 'vocals')) {
+          const r = await uploadAndComplete(rid, stem);
+          if (r.put !== 200 || r.complete !== 200) report.check('S3 malformed', `stem ${stem} uploads and completes`, false);
+        }
         report.check('S3 malformed', 'finalization is refused and nothing is published', (await finalize(rid)) === 409 && (await env.doc(env.ministries.a, rid))?.status === 'uploading');
         const pb = await env.api(env.ministries.a, `/${rid}/playback`, 'GET', env.tokens.memberA);
         await pb.arrayBuffer();
         report.check('S3 malformed', 'the recording is invisible to members', pb.status === 404);
       }
     }
+  } catch (error) {
+    // A failed mandatory check stops every later operation; the caller still cleans up what the journal lists.
+    if (!(error instanceof ScenarioAborted)) throw error;
   } finally {
     env.setCodec(false);
   }

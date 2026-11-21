@@ -27,11 +27,16 @@ passar o guard de isolamento.
 - As URLs assinadas usadas pelo cliente simulado (PUT/GET por `fetch`, fora do SDK) são validadas antes do uso: https, host `<accountId>.r2.cloudflarestorage.com`, bucket permitido e chave sintética desta execução.
 - O journal nunca sobrescreve um arquivo existente e exige nome `*.journal.json`.
 - Trace sem chaves, URLs, headers ou conteúdo; a saída do script imprime só nomes de passo, PASS/FAIL, contadores e o caminho do journal. URLs assinadas nunca são impressas.
-- Journal (arquivo 0600 em `$TMPDIR`, ou `M22C5D_JOURNAL`): chaves planejadas gravadas **antes** do primeiro `upload-url` de cada gravação; `parseJournal` recalcula as chaves e recusa journal de outro bucket, adulterado ou com chave fora do plano.
+- Journal (arquivo 0600 em `$TMPDIR`, ou `M22C5D_JOURNAL`, nome `*.journal.json`): criado de forma **exclusiva** (`wx`; nunca sobrescreve) e atualizado por **escrita atômica** (arquivo temporário exclusivo 0600 no mesmo diretório, fsync, `rename`); uma falha em qualquer ponto preserva o último journal válido e remove o temporário. As chaves planejadas são gravadas **antes** do primeiro `upload-url` de cada gravação. `parseJournal` é estrito: `runId` UUID canônico; todo ministério deve ser exatamente `m22c5d-r2-<runId>-su|rc` (um só modo); sem duplicatas, sem campos extras, `stems` completos e em ordem; chaves recalculadas. Um journal consistente de outro `runId` é recusado antes de qualquer comando R2.
+- O cleanup standalone limpa **qualquer** journal estritamente válido (inclusive de execuções anteriores interrompidas); ele recusa apenas journal inválido, de outro bucket ou com chaves fora do plano de seu próprio `runId`. Para a execução em curso, o cleanup automático usa o journal em memória.
+- O cleanup automático só começa depois de o servidor local ser fechado (nenhuma requisição em voo) e cada passo do cleanup é protegido por try/catch (falha ⇒ FAIL + dica de re-execução).
+- Requisições assinadas do cliente (`fetch`, fora do guard do SDK): alvo validado antes, `redirect: 'error'`, timeout de 20 s cobrindo o corpo, PUT ≤ 64 KiB, GET lido em streaming e cancelado ao passar de 64 KiB (corpos de erro ≤ 8 KiB), sem acumular além do limite.
 
 ## 4. Cenários
 S0 gate fechado (422, zero comandos R2) · S1 fluxo completo (reserva v2, PUT assinado `audio/mpeg`+`if-none-match:*`, validação streaming, promoção, recibos com fatos iguais nas seis faixas, finalização concorrente ×3, leitura dos seis objetos com SHA-256 do manifesto, `/complete` repetido sem comandos R2) · S4 isolamento (outro ministério 404, membro 403, **zero** comandos R2) · S2 (só ranged+copy) falha injetada de `CopyObject` após verificação completa, retomada sem reler o staging e recibo = fatos persistidos · S3 MP3 malformado com SHA-256 válido (422, nada promovido, finalização 409, invisível) · S6 cleanup exato e prova de ausência.
-Modos executados em sequência: `su` = stream + upload; `rc` = ranged (partes de 4 KiB ⇒ 3 por objeto) + copy.
+**Um modo por execução, escolhido explicitamente** (`--mode su` ou `--mode rc`; sem modo válido o script imprime o uso e sai com código 2, sem conexão). A homologação real começa **somente por `su`** (stream + upload). `rc` (ranged de 4 KiB ⇒ 3 partes por objeto + copy) exige autorização posterior, depois de PASS e limpeza confirmada em `su`.
+
+**Fail-fast (C0.1):** a primeira verificação obrigatória com FAIL interrompe imediatamente os cenários (nenhum upload, promoção ou cenário posterior); o cleanup das chaves já registradas roda sempre, inclusive após exceção.
 
 ## 5. Comandos preparados (zsh, a partir de `backend/`; **só após autorização**)
 ```zsh
@@ -45,7 +50,8 @@ npx --no-install firebase emulators:start --only firestore,auth --project demo-l
 export NODE_ENV=test FIREBASE_PROJECT_ID=demo-louvaio-c5dc0
 export FIRESTORE_EMULATOR_HOST=127.0.0.1:8186 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9098
 export M22C5D_R2_LIVE=1 M22C5D_R2_ALLOWED_BUCKET="$MINISTRY_AUDIO_R2_DEV_BUCKET"
-npx --no-install tsx scripts/m22c5d-r2-mp3-e2e.ts
+npx --no-install tsx scripts/m22c5d-r2-mp3-e2e.ts --mode su     # primeira (e única autorizada até aqui) execução
+# rc: somente com autorização posterior:  ... e2e.ts --mode rc
 
 # 3. cleanup isolado, caso a execução tenha sido interrompida (journal impresso no início)
 M22C5D_JOURNAL=<journal.json> npx --no-install tsx scripts/m22c5d-r2-mp3-cleanup.ts
@@ -68,3 +74,9 @@ Automático em `finally` (sucesso, falha e aborto) sobre as chaves do journal do
 
 ## 9. Riscos
 Sem Safari/Firefox/Android; leitor remoto MP3 desligado; política `decoderDelayFrames` com um único encoder; revisão Codex indisponível (`gpt-6.2-sol`), exceção registrada; o harness abre o codec em memória dentro do próprio processo de dev (nunca no build publicável).
+
+### Riscos residuais (C0.1), a reavaliar antes da execução real
+- `Promise.all` (finalize ×3 e S4): se uma requisição falha, as demais já estão em voo; o cleanup só começa depois de fechar o servidor local.
+- A resposta da API local (`env.api`) não tem limite de bytes (destino é o servidor local do próprio processo).
+- Uma exceção inesperada fora dos cenários não imprime os passos já executados.
+- Revisão Codex (`gpt-6.2-sol`) indisponível: revisão por subagente Claude somente leitura; sem conformidade integral com o AGENTS.md declarada.
