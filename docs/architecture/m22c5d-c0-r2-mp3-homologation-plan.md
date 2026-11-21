@@ -1,9 +1,14 @@
-# M22-C.5D-C0 — Plano de homologação MP3 v2 no R2 DEV (preparado, NÃO executado)
+# M22-C.5D-C0 — Plano de homologação MP3 v2 no R2 DEV
 
-Status: **preparado e provado offline; nenhuma chamada ao R2 foi feita** (nem listagem). A publicação MP3 continua bloqueada
-(`serverByteValidation: false`, `AUDIO_CODEC_NOT_ENABLED` nas rotas reais). O harness vive em `backend/scripts/` e
-`backend/src/scripts/`, fora do build publicável; ele abre o perfil MP3 **apenas na memória do próprio processo**, depois de
-passar o guard de isolamento.
+> **Status atualizado (M22-C.5D-C3): homologação real concluída em R2 DEV (modos `su` e `rc`), segundo o operador.** Resultados em
+> "Resultados da homologação real (C1/C2)" ao final. O texto abaixo (seções 1–9 e riscos) é o **plano original**, elaborado e
+> provado apenas offline **antes** de qualquer execução real; foi preservado como histórico. Onde ele diz "preparado, NÃO
+> executado" ou "precisa de R2 real", leia como o estado de então. A publicação MP3 continua bloqueada
+> (`serverByteValidation: false`, `AUDIO_CODEC_NOT_ENABLED` nas rotas reais).
+
+Estado no momento da elaboração: **preparado e provado offline; nenhuma chamada ao R2 havia sido feita** (nem listagem). O harness
+vive em `backend/scripts/` e `backend/src/scripts/`, fora do build publicável; ele abre o perfil MP3 **apenas na memória do
+próprio processo**, depois de passar o guard de isolamento.
 
 ## 1. Auditoria
 | Item | Estado |
@@ -91,3 +96,29 @@ Sem Safari/Firefox/Android; leitor remoto MP3 desligado; política `decoderDelay
 - **O R2 pode concluir tardiamente uma operação remota** (PUT assinado ou `CopyObject` abandonado pelo cliente por timeout). A quiescência é **local**: prova que nenhum comando/requisição do harness continua em voo e que nenhum comando novo pode sair, mas **não elimina** a possibilidade de o R2 aplicar depois uma operação já enviada. O varrimento tardio (3 s) apenas **detecta** objetos recriados nas chaves do próprio journal e reprova a execução; ele não amplia o escopo de exclusão (só chaves do journal) e nunca apaga por si. Um segundo cleanup standalone, com o mesmo journal e após alguns minutos, é o procedimento de nova verificação e remoção de resíduos.
 - O `send` com guard permanece instalado e congelado até o fim do processo; ele nunca é restaurado ao original.
 - Pendências antes da execução real: (1) revisão direta da sequência de encerramento do `main()` (sem teste automatizado); (2) garantia de que toda operação local rastreável terminou antes do cleanup; (3) risco de conclusão remota tardia de PUT/CopyObject; (4) procedimento de nova verificação e cleanup de resíduos; (5) o modo `rc` não será executado sem autorização separada, depois de PASS e limpeza confirmada em `su`.
+
+## Resultados da homologação real (C1/C2) — evidências reportadas pelo operador
+
+Os números abaixo foram **fornecidos pelo operador** a partir das execuções reais no bucket R2 de desenvolvimento, com o harness
+versionado no commit `937a5d1`. O agente **não** reexecutou estes testes nem tem acesso ao bucket; estão registrados como
+evidência reportada, não como verificação independente.
+
+| Execução | Run ID | Passos | Comandos SDK R2 | Cleanup inicial | Cleanup posterior independente |
+|---|---|---|---|---|---|
+| M22-C.5D-C1, `--mode su` (stream + upload) | `efff477c-fb39-4c46-8589-08fbc18d0c62` | 24/24 PASS | 59 | 48/48 chaves ausentes | 48/48 ausentes, 0 erros |
+| M22-C.5D-C2, `--mode rc` (ranged + CopyObject) | `b7f2416b-db5f-4413-b75e-25909cab7023` | 28/28 PASS | 116 (39 leituras parciais; 13 tentativas de `CopyObject`, uma falha injetada) | 72/72 ausentes | 72/72 ausentes, 0 erros |
+
+**Consolidado: 52/52 PASS, 175 comandos SDK, 120/120 chaves planejadas ausentes nas verificações finais.**
+
+Cobertura reportada: verificação streaming e promoção por upload (`su`); retomada de `CopyObject` sem reler o staging (`rc`);
+finalização concorrente, SHA-256 dos seis objetos, RBAC/isolamento ministerial e rejeição de MP3 malformado nos dois modos.
+O que o plano listava como "precisa de R2 real" (semântica real de cópia condicional, ETag, leitura por faixa) passa a ter
+evidência reportada de PASS nesses cenários sintéticos.
+
+### Limitações que permanecem
+- **Sem validação em outros dispositivos/navegadores:** o leitor MP3 foi medido apenas no Chrome 150 (macOS); Safari/iOS, Firefox e Chrome/Android não foram testados. O leitor remoto MP3 segue desligado.
+- **Sem arquivos grandes:** a homologação usou a fixture sintética real de ~10,9 kB (44,1 kHz, 12 000 frames); stems de até 300 s (≈ 10 MB cada), o orçamento de 38 s do seal e o consumo de memória/tempo nessas dimensões não foram exercitados no R2.
+- **Operações remotas tardias:** risco genérico, não eliminado. O R2 pode concluir tardiamente um PUT ou `CopyObject` já enviado; a quiescência local e o varrimento tardio apenas detectam e permitem novo cleanup pelo journal.
+- **Um encoder:** a política de `decoderDelayFrames` (529) tem evidência de um único perfil de encoder (`Lavc`).
+- **Revisão Codex pendente:** o gate do AGENTS.md (Sol 6.2 high) segue indisponível (`model_not_found`); as revisões foram por subagente Claude somente leitura (exceção documentada, sem conformidade integral declarada).
+- A homologação **não** habilita nem autoriza MP3 em produção.
