@@ -35,6 +35,18 @@ export interface AudioCursor {
   id: string;
 }
 
+export interface AudioListSlice {
+  rows: AudioListRow[];
+  /** Documents actually read, including any that could not be positioned (so "end of catalog" is judged on this count). */
+  read: number;
+}
+
+export interface AudioListRow {
+  cursor: AudioCursor;
+  /** Present only for an eligible published record; hidden-by-gate decisions belong to the service. */
+  record?: AudioRecording;
+}
+
 export class MinistryAudioRepository {
   private readonly ministries = new MinistryRepository();
 
@@ -111,18 +123,24 @@ export class MinistryAudioRepository {
     });
   }
 
-  async list(scope: AudioScope, cursor: AudioCursor | undefined, limit: number): Promise<AudioRecording[]> {
+  /**
+   * One ordered slice of the catalog (newest first). Every document read is reported with its own cursor position, whether
+   * or not it is an eligible published record, so that callers can advance past rows they will not show.
+   */
+  async list(scope: AudioScope, cursor: AudioCursor | undefined, limit: number): Promise<AudioListSlice> {
     return db.runTransaction(async (transaction) => {
       await this.authorize(scope, false, transaction);
       let query = this.recordings(scope.ministryId).orderBy('publishedAt', 'desc').orderBy(FieldPath.documentId(), 'desc');
       if (cursor) query = query.startAfter(cursor.publishedAt, cursor.id);
       const snapshot = await transaction.get(query.limit(limit));
-      return snapshot.docs.flatMap((doc) => {
+      const rows = snapshot.docs.flatMap((doc): AudioListRow[] => {
         const record = doc.data() as AudioRecording;
-        return record.status === 'published' && record.ministryId === scope.ministryId && record.id === doc.id
-          ? [record]
-          : [];
+        // A position needs an integer publishedAt; the service only ever writes one, so anything else is skipped.
+        if (!Number.isSafeInteger(record.publishedAt)) return [];
+        const eligible = record.status === 'published' && record.ministryId === scope.ministryId && record.id === doc.id;
+        return [{ cursor: { publishedAt: record.publishedAt as number, id: doc.id }, record: eligible ? record : undefined }];
       });
+      return { rows, read: snapshot.size };
     }, { readOnly: true });
   }
 

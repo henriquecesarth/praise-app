@@ -17,6 +17,9 @@ const CLEANUP_LEASE_MS = 300_000;
 const DIRECT_UPLOAD_TTL_SECONDS = 300;
 const DIRECT_CLEANUP_GRACE_MS = 900_000;
 const SEARCH_BATCH_SIZE = 49;
+// Raw catalog rows one list request may examine (shown or not), so hidden records can never cause an unbounded scan.
+const LIST_SCAN_LIMIT = 150;
+const LIST_SKIP_BATCH = 30;
 const searchText = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 // The extension follows the codec of the persisted manifest stem (always PCM/`wav` today: v1 keys are unchanged).
@@ -268,20 +271,44 @@ export class MinistryAudioService {
     const query = searchText(input.q);
     const binding = hash([scope.ministryId, query]);
     const cursor = parseCursor(input.cursor, binding);
-    const rows = (await this.repository.list(scope, cursor, (query ? SEARCH_BATCH_SIZE : limit) + 1))
-      .filter((row) => isVisibleManifest(row.manifest));
-    const items = [];
+    let batch = query ? SEARCH_BATCH_SIZE : limit;
+    const encode = (position: AudioCursor) =>
+      Buffer.from(JSON.stringify([position.publishedAt, position.id, binding])).toString('base64url');
+    const items: ReturnType<typeof summary>[] = [];
     let nextCursor: string | null = null;
-    for (const [index, row] of rows.entries()) {
-      if ([row.title, row.artist, row.version].some((value) => searchText(value).includes(query))) {
-        items.push(summary(row));
-      }
-      if (items.length === limit || index === SEARCH_BATCH_SIZE - 1) {
-        if (index + 1 < rows.length) {
-          nextCursor = Buffer.from(JSON.stringify([row.publishedAt, row.id, binding])).toString('base64url');
+    let after = cursor;
+    let lastShown: AudioCursor | undefined;
+    let scanned = 0;
+    let exhausted = false;
+    // Rows hidden by a closed codec gate still advance the position: the cursor always follows what was examined.
+    scan: while (scanned < LIST_SCAN_LIMIT) {
+      const take = Math.min(batch, LIST_SCAN_LIMIT - scanned);
+      const { rows, read } = await this.repository.list(scope, after, take + 1);
+      const page = rows.slice(0, take);
+      // Skipping hidden rows: read wider slices from now on so that few transactions cover the scan budget.
+      batch = Math.max(batch, LIST_SKIP_BATCH);
+      for (const row of page) {
+        scanned += 1;
+        after = row.cursor;
+        const { record } = row;
+        const shown = record && isVisibleManifest(record.manifest) &&
+          [record.title, record.artist, record.version].some((value) => searchText(value).includes(query));
+        if (!record || !shown) continue;
+        if (items.length === limit) {
+          nextCursor = encode(lastShown!); // a further visible match exists beyond this page
+          break scan;
         }
-        break;
+        items.push(summary(record));
+        lastShown = row.cursor;
       }
+      if (read <= take) { exhausted = true; break; } // nothing left in the catalog
+      if (page.length === 0) break; // defensive: no progress is possible
+    }
+    if (!nextCursor && !exhausted) {
+      // The scan budget ran out before the end of the catalog: continue from the last position examined (or, with a
+      // full page, from the last item shown). Never a cursor that would not advance.
+      const resume = items.length === limit ? lastShown : after;
+      if (resume && (items.length === limit || resume !== cursor)) nextCursor = encode(resume);
     }
     return { items, nextCursor };
   }
