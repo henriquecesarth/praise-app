@@ -4,17 +4,20 @@ import { tmpdir } from 'node:os';
 
 const apiOrigin = 'http://127.0.0.1:4315';
 const webOrigin = 'http://127.0.0.1:4176';
+const browserChannel = process.env.M22C_E2E_BROWSER_CHANNEL === 'chrome' ? 'chrome' : undefined;
 const directSimulator = process.env.MINISTRY_AUDIO_DIRECT_SIMULATOR === '1';
 
 export default defineConfig({
   testDir: './e2e',
-  testMatch: ['m22c-ministry-audio.spec.ts'],
+  testMatch: ['m22c-ministry-audio.spec.ts', 'm22c-local-separation.spec.ts'],
   outputDir: './test-results/m22c-playwright-output',
   workers: 1,
   timeout: 90_000,
   reporter: 'list',
   use: {
     baseURL: webOrigin,
+    // Opt-in system browser: M22C_E2E_BROWSER_CHANNEL=chrome. Unset keeps Playwright's bundled Chromium.
+    ...(browserChannel ? { channel: browserChannel } : {}),
     serviceWorkers: 'block',
   },
   webServer: [

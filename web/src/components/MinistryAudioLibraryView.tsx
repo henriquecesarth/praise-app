@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, getFriendlyErrorMessage } from '../api';
 import {
-  MAX_MINISTRY_AUDIO_SAMPLE_RATE,
-  MAX_MINISTRY_AUDIO_SECONDS,
-  MAX_MINISTRY_STEM_BYTES,
   type MinistryAudioMetadata,
   type MinistryAudioPage,
   type MinistryAudioRecord,
 } from '../audio/ministry-audio-contract';
 import { prepareMinistryMixerTracks } from '../audio/ministry-audio-files';
 import { SixStemMixerPanel } from '../audio/separation/SixStemMixerPanel';
-import { SixStemWebAudioMixerController, type SeparatedMixerMetadata, type SeparatedStemMixerInput } from '../audio/separation/six-stem-mixer';
+import type { SeparatedMixerMetadata, SeparatedStemMixerInput } from '../audio/separation/six-stem-mixer';
+import { createLibraryMixer } from './ministry-audio-mixer';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { MinistryAudioPublicationForm } from './MinistryAudioPublicationForm';
+import { MinistryAudioLocalSeparation } from './MinistryAudioLocalSeparation';
+import type { SeparationDraft } from '../audio/local-separation-draft';
 import { AUDIO_ACTIONS, AUDIO_CARD, AUDIO_FORM_INPUT, AudioMetadataFields, trimAudioMetadata, useAudioRequest } from './ministry-audio-form';
 
 interface LibraryPage extends MinistryAudioPage {
@@ -29,15 +29,6 @@ type Playback = { recording: MinistryAudioRecord } & (
 
 const EMPTY_PAGE: LibraryPage = { items: [], nextCursor: null, query: '', loading: true, error: null };
 
-const createLibraryMixer = () => new SixStemWebAudioMixerController({
-  limits: {
-    seconds: MAX_MINISTRY_AUDIO_SECONDS,
-    frames: MAX_MINISTRY_AUDIO_SECONDS * MAX_MINISTRY_AUDIO_SAMPLE_RATE,
-    wavBytes: MAX_MINISTRY_STEM_BYTES,
-  },
-  enableWavDownloads: false,
-});
-
 export default function MinistryAudioLibraryView({ ministryId, ministryName, userId, isAdmin, onBack }: {
   ministryId: string;
   ministryName: string;
@@ -48,7 +39,32 @@ export default function MinistryAudioLibraryView({ ministryId, ministryName, use
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(EMPTY_PAGE);
   const [playback, setPlayback] = useState<Playback | null>(null);
+  // The local-separation/publication flow belongs to ONE (ministry, user, role) scope. It is rendered only while that scope is
+  // the current one, decided during render, so a rerender with another scope never shows or submits the old draft; the
+  // effect below only releases the files afterwards.
+  const scope = `${ministryId}\u0000${userId}\u0000${isAdmin}`;
+  const [flowScope, setFlowScope] = useState(scope);
+  const flowLive = flowScope === scope;
   const [showPublisher, setShowPublisher] = useState(false);
+  const [showSeparation, setShowSeparation] = useState(false);
+  const [draft, setDraft] = useState<SeparationDraft | null>(null);
+  const draftRef = useRef<SeparationDraft | null>(null);
+  const closeDraft = useCallback(() => {
+    draftRef.current?.dispose();
+    draftRef.current = null;
+    setDraft(null);
+  }, []);
+  // Another ministry, user or role ends the local flow: the form and the generated files go away together, so no screen
+  // keeps a reference to a draft that was released. Unmounting (logout) releases the draft too.
+  useEffect(() => {
+    closeDraft();
+    setShowPublisher(false);
+    setShowSeparation(false);
+  }, [ministryId, userId, isAdmin, closeDraft]);
+  useEffect(() => () => {
+    draftRef.current?.dispose();
+    draftRef.current = null;
+  }, []);
   const [edit, setEdit] = useState<{ recording: MinistryAudioRecord; metadata: MinistryAudioMetadata } | null>(null);
   const [archive, setArchive] = useState<MinistryAudioRecord | null>(null);
   const [mutating, setMutating] = useState(false);
@@ -196,11 +212,23 @@ export default function MinistryAudioLibraryView({ ministryId, ministryName, use
           <input className={`${AUDIO_FORM_INPUT} flex-1`} type="search" aria-label="Buscar gravações" placeholder="Título, artista ou versão" maxLength={160} value={search} onChange={(event) => setSearch(event.target.value)} />
           <button className="btn btn-secondary min-h-[44px]" type="submit">Buscar</button>
         </form>
-        {isAdmin && !showPublisher && <button className="btn btn-primary min-h-[44px]" type="button" onClick={() => { setNotice(null); setShowPublisher(true); }}>Nova gravação</button>}
+        {isAdmin && !showPublisher && !showSeparation && (
+          <>
+            <button className="btn btn-primary min-h-[44px]" type="button" onClick={() => { setNotice(null); setFlowScope(scope); setShowPublisher(true); }}>Nova gravação</button>
+            <button className="btn btn-secondary min-h-[44px]" type="button" onClick={() => { setNotice(null); setFlowScope(scope); setShowSeparation(true); }}>Separar uma música localmente</button>
+          </>
+        )}
       </div>
 
-      {isAdmin && showPublisher && (
-        <MinistryAudioPublicationForm ministryId={ministryId} userId={userId} onCancel={() => setShowPublisher(false)} onPublished={() => {
+      {isAdmin && flowLive && showSeparation && (
+        <MinistryAudioLocalSeparation key={scope}
+          onClose={() => setShowSeparation(false)}
+          onPrepare={(prepared) => { draftRef.current?.dispose(); draftRef.current = prepared; setDraft(prepared); setShowSeparation(false); setShowPublisher(true); }}
+        />
+      )}
+      {isAdmin && flowLive && showPublisher && (
+        <MinistryAudioPublicationForm key={scope} ministryId={ministryId} userId={userId} draft={flowLive ? draft : null} onCancel={() => { closeDraft(); setShowPublisher(false); }} onPublished={() => {
+          closeDraft();
           setShowPublisher(false);
           setNotice('Gravação publicada.');
           void loadRecordings(listedQuery.current);
