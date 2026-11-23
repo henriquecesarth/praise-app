@@ -9,8 +9,11 @@ import '../features/auth/domain/auth_user.dart';
 import '../features/auth/presentation/controllers/auth_controller.dart';
 import '../features/dashboard/data/dashboard_repository.dart';
 import '../features/dashboard/presentation/controllers/dashboard_controller.dart';
+import '../features/ministry_audio/data/ministry_audio_download_manager.dart';
 import '../features/ministry_audio/data/ministry_audio_repository.dart';
 import '../features/ministry_audio/data/ministry_audio_storage_info.dart';
+import '../features/ministry_audio/data/ministry_audio_transfer_policy.dart';
+import '../features/ministry_audio/data/ministry_audio_transport.dart';
 import '../features/ministry_context/data/ministry_repository.dart';
 import '../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'environment/app_environment.dart';
@@ -180,6 +183,7 @@ void resetAuthenticatedFeatures(
   container.invalidate(rehearsalPackagesNotifierProvider);
   container.invalidate(songVersionAudioBindingsNotifierProvider);
   container.invalidate(ministryAudioRepositoryProvider);
+  container.invalidate(ministryAudioDownloadManagerProvider);
 
   container.invalidate(unreadNotificationCountProvider);
   container.invalidate(notificationListProvider);
@@ -533,6 +537,43 @@ final ministryAudioStorageInfoSourceProvider =
   return SafMinistryAudioStorageInfoSource(
     port: ref.watch(rehearsalPackageSafPortProvider),
   );
+});
+
+/// Secure six-stem WAV download/storage (no UI, no playback). Bound to the
+/// authenticated session and the ministry context stamp; disposed (cancelling
+/// any running transfer) on logout/account switch.
+final ministryAudioDownloadManagerProvider =
+    Provider<MinistryAudioDownloadManager>((ref) {
+  final notifier = ref.watch(ministryContextNotifierProvider.notifier);
+  final apiClient = ref.watch(apiClientProvider);
+  final transport = DioMinistryAudioTransport(
+    apiClient: apiClient,
+    policy: MinistryAudioTransferPolicy.forEnvironment(
+      ref.watch(appEnvironmentProvider),
+    ),
+  );
+  final manager = MinistryAudioDownloadManager(
+    repository: ref.watch(ministryAudioRepositoryProvider),
+    transport: transport,
+    storage: ref.watch(ministryAudioStorageInfoSourceProvider),
+    context: () {
+      final session = apiClient.sessionContextProvider?.call();
+      final stamp = notifier.contextStamp;
+      final ministryId = stamp?.ministryId;
+      if (session == null || stamp == null || ministryId == null) return null;
+      return MinistryAudioDownloadContext(
+        userId: session.userId,
+        sessionGeneration: session.sessionGeneration,
+        ministryId: ministryId,
+        epoch: stamp,
+      );
+    },
+  );
+  ref.onDispose(() {
+    manager.dispose();
+    transport.close();
+  });
+  return manager;
 });
 
 /// Provider for the create ministry state notifier.

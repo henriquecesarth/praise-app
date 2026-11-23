@@ -1,6 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
 
+import '../../../core/audio/rehearsal_package_validator.dart'
+    show IncrementalSha256;
 import '../../../core/errors/app_failure.dart';
 import '../../rehearsal_packages/data/rehearsal_package_saf_channel.dart';
 import '../domain/ministry_audio_models.dart';
@@ -17,7 +21,18 @@ abstract interface class MinistryAudioStorageInfoSource {
 
 final class MinistryAudioStorageStatus {
   static const String libraryDirName = 'ministry_audio_library';
+  static const String layoutVersionDir = 'v1';
+  static const String userNamespaceDomain = 'louvaio-ministry-audio-user-v1:';
+  static const String ministryNamespaceDomain =
+      'louvaio-ministry-audio-ministry-v1:';
   static final RegExp _userIdPattern = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
+  static final RegExp _absolutePattern = RegExp(r'^(/|[A-Za-z]:[\\/])');
+
+  /// Deterministic namespace (SHA-256 hex) of an id under a domain prefix, so
+  /// raw user/ministry ids never appear in paths and the two spaces never
+  /// collide with each other.
+  static String namespaceOf(String domain, String id) =>
+      IncrementalSha256.computeHex(utf8.encode('$domain$id'));
 
   const MinistryAudioStorageStatus({
     required this.filesDirPath,
@@ -30,9 +45,9 @@ final class MinistryAudioStorageStatus {
   final int availableBytes;
   final int totalBytes;
 
-  /// Planned private root: `<filesDir>/ministry_audio_library/users/<userId>/
-  /// ministries/<ministryId>`. Distinct from the rehearsal package storage
-  /// (`<filesDir>/rehearsal_packages/...`). Pure: no I/O.
+  /// Private root: `<filesDir>/ministry_audio_library/v1/users/<sha256(user)>/
+  /// ministries/<sha256(ministry)>`. Distinct from the rehearsal package
+  /// storage (`<filesDir>/rehearsal_packages/...`). Pure: no I/O.
   String privateRootFor({required String userId, required String ministryId}) {
     if (!_userIdPattern.hasMatch(userId) ||
         !MinistryAudioContract.ministryIdPattern.hasMatch(ministryId)) {
@@ -43,16 +58,19 @@ final class MinistryAudioStorageStatus {
       );
     }
     final base = filesDirPath;
-    if (!base.startsWith('/') ||
-        base.split('/').contains('..') ||
+    if (!_absolutePattern.hasMatch(base) ||
+        base.split(RegExp(r'[\\/]')).contains('..') ||
         base.contains('\u0000')) {
       throw const AppFailure(
         message: 'Diretório privado do app inválido.',
         code: 'AUDIO_STORAGE_INVALID_ROOT',
       );
     }
-    final trimmed = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
-    return '$trimmed/$libraryDirName/users/$userId/ministries/$ministryId';
+    final trimmed =
+        base.endsWith('/') ? base.substring(0, base.length - 1) : base;
+    final user = namespaceOf(userNamespaceDomain, userId);
+    final ministry = namespaceOf(ministryNamespaceDomain, ministryId);
+    return '$trimmed/$libraryDirName/$layoutVersionDir/users/$user/ministries/$ministry';
   }
 }
 

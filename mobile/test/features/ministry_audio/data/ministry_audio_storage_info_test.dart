@@ -128,9 +128,25 @@ void main() {
       final b = status.privateRootFor(userId: 'u2', ministryId: 'm1');
       final c = status.privateRootFor(userId: 'u1', ministryId: 'm2');
       expect({a, b, c}.length, 3);
+      final user = MinistryAudioStorageStatus.namespaceOf(
+          MinistryAudioStorageStatus.userNamespaceDomain, 'u1');
+      final ministry = MinistryAudioStorageStatus.namespaceOf(
+          MinistryAudioStorageStatus.ministryNamespaceDomain, 'm1');
       expect(a,
-          '/nonexistent_louvaio_test_root/files/ministry_audio_library/users/u1/ministries/m1');
+          '/nonexistent_louvaio_test_root/files/ministry_audio_library/v1/users/$user/ministries/$ministry');
       expect(a, isNot(contains('rehearsal_packages')));
+      // Raw ids never appear in the path.
+      expect(a, isNot(contains('/u1')));
+      expect(a, isNot(contains('/m1')));
+    });
+
+    test('user and ministry namespaces use distinct domain prefixes', () {
+      final asUser = MinistryAudioStorageStatus.namespaceOf(
+          MinistryAudioStorageStatus.userNamespaceDomain, 'same');
+      final asMinistry = MinistryAudioStorageStatus.namespaceOf(
+          MinistryAudioStorageStatus.ministryNamespaceDomain, 'same');
+      expect(asUser, isNot(asMinistry));
+      expect(asUser, matches(RegExp(r'^[a-f0-9]{64}$')));
     });
 
     test('is pure: creates nothing on disk', () {
