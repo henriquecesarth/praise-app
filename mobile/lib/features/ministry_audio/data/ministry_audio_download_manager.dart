@@ -12,6 +12,10 @@ import 'ministry_audio_repository.dart';
 import 'ministry_audio_storage_info.dart';
 import 'ministry_audio_transport.dart';
 
+// The cache shares this library's process-wide gate and local validation
+// (private by design), so it lives in the same library.
+part 'ministry_audio_cache.dart';
+
 /// Immutable identity of the context a download belongs to.
 ///
 /// Compared with `==` at every checkpoint: user, session generation, ministry
@@ -90,10 +94,21 @@ enum _CheckStatus { valid, invalid, unreadable }
 /// distinct from `invalid` (definitively not a complete, intact recording) so
 /// that a transient read error never leads to deleting a possibly good copy.
 final class _Check {
-  const _Check(this.status, [this.recording]);
+  const _Check(
+    this.status, [
+    this.recording,
+    this.manifestDigest,
+    this.totalBytes = 0,
+  ]);
 
   final _CheckStatus status;
   final MinistryAudioLocalRecording? recording;
+
+  /// Identity of the LOCAL manifest (see [_digestOfParts]); only for `valid`.
+  final String? manifestDigest;
+
+  /// Sum of the six stem sizes declared by the local manifest.
+  final int totalBytes;
 }
 
 abstract final class MinistryAudioDownloadCodes {
@@ -224,13 +239,17 @@ final class MinistryAudioDownloadManager {
     String ministryId,
     String recordingId,
     MinistryAudioDownloadContext captured,
-    CancelToken token,
-  ) async {
+    CancelToken token, {
+    MinistryAudioStorageStatus? knownStatus,
+    MinistryAudioPlayback? knownPlayback,
+    Future<int> Function(Directory root, int neededBytes, int availableBytes)?
+        makeRoom,
+  }) async {
     String? stagingPath;
     var promoted = false;
     try {
       _assertCurrent(captured, token); // may have waited in the gate queue
-      final status = await _storage.query();
+      final status = knownStatus ?? await _storage.query();
       _assertCurrent(captured, token);
       final root = Directory(
         status.privateRootFor(userId: captured.userId, ministryId: ministryId),
@@ -238,16 +257,23 @@ final class MinistryAudioDownloadManager {
       await _recover(root);
       _assertCurrent(captured, token);
 
-      var playback = await _repository.getPlayback(
-        ministryId: ministryId,
-        recordingId: recordingId,
-      );
+      var playback = knownPlayback ??
+          await _repository.getPlayback(
+            ministryId: ministryId,
+            recordingId: recordingId,
+          );
       _assertCurrent(captured, token);
       final baseline = playback.manifest;
 
       final needed =
           baseline.stems.fold<int>(0, (sum, s) => sum + s.sizeBytes);
-      if (status.availableBytes < needed + _reserveBytes) {
+      var available = status.availableBytes;
+      if (makeRoom != null) {
+        // Cache hook: enforce quota / evict LRU sets; returns bytes freed.
+        available += await makeRoom(root, needed, available);
+        _assertCurrent(captured, token);
+      }
+      if (available < needed + _reserveBytes) {
         throw const AppFailure(
           message: 'Espaço insuficiente para baixar a gravação.',
           code: MinistryAudioDownloadCodes.insufficientSpace,
@@ -718,6 +744,8 @@ final class MinistryAudioDownloadManager {
         byId[s['id'] as String] = s;
       }
       final paths = <MinistryStemId, String>{};
+      final stemParts = <String>[];
+      var total = 0;
       for (final id in MinistryStemId.values) {
         final entry = byId[id.name];
         final size = entry?['sizeBytes'];
@@ -740,7 +768,12 @@ final class MinistryAudioDownloadManager {
           return const _Check(_CheckStatus.invalid);
         }
         paths[id] = file.path;
+        total += size;
+        stemParts.add(
+          '${id.name}:${entry?['sampleRate']}:${entry?['frames']}:$size:$sha',
+        );
       }
+      final model = json['model'];
       return _Check(
         _CheckStatus.valid,
         MinistryAudioLocalRecording(
@@ -749,12 +782,50 @@ final class MinistryAudioDownloadManager {
           directoryPath: dir.path,
           stemPaths: paths,
         ),
+        _digestOfParts(
+          recordingId: recordingId,
+          version: version,
+          modelId: model is Map ? '${model['id']}' : '',
+          modelVersion: model is Map ? '${model['version']}' : '',
+          stemParts: stemParts,
+        ),
+        total,
       );
     } on FormatException {
       return const _Check(_CheckStatus.invalid);
     } catch (_) {
       return const _Check(_CheckStatus.unreadable);
     }
+  }
+
+  /// Identity of a manifest (id, version, model and every stem's rate, frames,
+  /// size and SHA-256), the same value whether derived from the online
+  /// manifest or from the local `manifest.json`.
+  static String _digestOfParts({
+    required String recordingId,
+    required String version,
+    required String modelId,
+    required String modelVersion,
+    required List<String> stemParts,
+  }) =>
+      IncrementalSha256.computeHex(utf8.encode(
+        'louvaio-ministry-audio-manifest-v1|$recordingId|$version|$modelId|'
+        '$modelVersion|${stemParts.join(';')}',
+      ));
+
+  static String _digestOfManifest(MinistryAudioManifest m) {
+    final parts = <String>[];
+    for (final id in MinistryStemId.values) {
+      final s = m.stems.firstWhere((x) => x.id == id);
+      parts.add('${id.name}:${s.sampleRate}:${s.frames}:${s.sizeBytes}:${s.sha256}');
+    }
+    return _digestOfParts(
+      recordingId: m.recordingId,
+      version: m.recordingVersion,
+      modelId: m.model.id,
+      modelVersion: m.model.version,
+      stemParts: parts,
+    );
   }
 
   Future<String> _sha256Of(File file) async {

@@ -183,6 +183,7 @@ void resetAuthenticatedFeatures(
   container.invalidate(rehearsalPackagesNotifierProvider);
   container.invalidate(songVersionAudioBindingsNotifierProvider);
   container.invalidate(ministryAudioRepositoryProvider);
+  container.invalidate(ministryAudioCacheProvider);
   container.invalidate(ministryAudioDownloadManagerProvider);
 
   container.invalidate(unreadNotificationCountProvider);
@@ -574,6 +575,16 @@ final ministryAudioDownloadManagerProvider =
     transport.close();
   });
   return manager;
+});
+
+/// Quota + LRU + online revalidation over the download manager (no UI, no
+/// playback). Disposed on logout/account switch with the manager.
+final ministryAudioCacheProvider = Provider<MinistryAudioCache>((ref) {
+  final cache = MinistryAudioCache(
+    manager: ref.watch(ministryAudioDownloadManagerProvider),
+  );
+  ref.onDispose(cache.dispose);
+  return cache;
 });
 
 /// Provider for the create ministry state notifier.
