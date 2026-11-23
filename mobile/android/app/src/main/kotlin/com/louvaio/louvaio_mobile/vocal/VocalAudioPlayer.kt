@@ -274,7 +274,9 @@ class VocalAudioPlayer internal constructor(
     private val focusController: AudioFocusController? = null,
     private val noisyMonitor: NoisyAudioMonitor? = null,
     private val dispatcher: CallbackDispatcher = CallbackDispatcher { it() },
-    private val tailStallTimeoutMs: Long = DEFAULT_TAIL_STALL_TIMEOUT_MS
+    private val tailStallTimeoutMs: Long = DEFAULT_TAIL_STALL_TIMEOUT_MS,
+    // Optional exclusion with the ministry audio engine (null = no arbitration).
+    private val outputArbiter: com.louvaio.louvaio_mobile.ministryaudio.AudioOutputArbiter? = null
 ) {
 
     constructor(bank: PianoBank) : this(bank, null)
@@ -285,7 +287,8 @@ class VocalAudioPlayer internal constructor(
         focusController = context?.let { AndroidAudioFocusController(it) },
         noisyMonitor = context?.let { AndroidNoisyAudioMonitor(it) },
         dispatcher = AndroidCallbackDispatcher(),
-        tailStallTimeoutMs = DEFAULT_TAIL_STALL_TIMEOUT_MS
+        tailStallTimeoutMs = DEFAULT_TAIL_STALL_TIMEOUT_MS,
+        outputArbiter = com.louvaio.louvaio_mobile.ministryaudio.AudioOutputArbiter.shared
     )
 
     enum class State {
@@ -297,6 +300,7 @@ class VocalAudioPlayer internal constructor(
         const val RENDER_THREAD_JOIN_MS = 600L
         const val DUCKED_MULTIPLIER = 0.25f
         const val FULL_VOLUME = 1.0f
+        const val ARBITER_OWNER = "vocal-exercises"
     }
 
     private val commandExecutor = Executors.newSingleThreadExecutor { runnable ->
@@ -359,6 +363,22 @@ class VocalAudioPlayer internal constructor(
         }
     }
 
+    @Volatile
+    private var vocalClaim: com.louvaio.louvaio_mobile.ministryaudio.AudioOutputArbiter.Claim? = null
+
+    private fun releaseVocalClaim() {
+        val claim = vocalClaim
+        vocalClaim = null
+        claim?.release()
+    }
+
+    /** Another audio owner took the output: stop this session (async). */
+    private fun stopFromArbiter(sessionId: Long) {
+        submitCommand {
+            if (sessionId == currentSessionId) stopInternal(fadeDurationMs = 15L)
+        }
+    }
+
     private fun signalPauseLock() {
         pauseLock.lock()
         try {
@@ -408,6 +428,9 @@ class VocalAudioPlayer internal constructor(
                     }
                     return@submitCommand
                 }
+
+                // Take the shared output: any ministry playback is stopped.
+                vocalClaim = outputArbiter?.claim(ARBITER_OWNER) { stopFromArbiter(activeSession) }
 
                 // Ensure piano bank is loaded
                 bank.loadAll()
@@ -560,6 +583,7 @@ class VocalAudioPlayer internal constructor(
         if (didComplete) {
             focusController?.abandonFocus()
             noisyMonitor?.unregister()
+            releaseVocalClaim()
         }
     }
 
@@ -781,6 +805,7 @@ class VocalAudioPlayer internal constructor(
         ) {
             focusController?.abandonFocus()
             noisyMonitor?.unregister()
+            releaseVocalClaim()
             return
         }
 
@@ -830,6 +855,7 @@ class VocalAudioPlayer internal constructor(
         isDucked = false
         focusController?.abandonFocus()
         noisyMonitor?.unregister()
+        releaseVocalClaim()
         currentState = State.STOPPED
     }
 

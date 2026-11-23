@@ -70,14 +70,37 @@ final class MinistryAudioCachedRecording {
     this.recording,
     this.fromCache,
     this.revalidatedAtMillis,
+    this.sampleRate,
+    this.frames,
     this._onRelease,
+    this._onDetach,
   );
 
   final MinistryAudioLocalRecording recording;
   final bool fromCache;
   final int revalidatedAtMillis;
+
+  /// Format declared by the online manifest that was just verified; the native
+  /// engine checks the WAV headers against it.
+  final int sampleRate;
+  final int frames;
   final void Function() _onRelease;
+  final void Function() _onDetach;
   bool _released = false;
+  bool _detached = false;
+
+  /// Transfers the duty to [release] from the cache to the caller.
+  ///
+  /// Normally `MinistryAudioCache.dispose()` (logout, ministry switch) drops
+  /// every lease it still holds. A player that has the files OPEN in native
+  /// code must instead keep the lease (so LRU cannot delete them) until the
+  /// native side CONFIRMS it closed them: after this call, `dispose()` no
+  /// longer releases this handle and only the owner may. Idempotent.
+  void takeOwnership() {
+    if (_released || _detached) return;
+    _detached = true;
+    _onDetach();
+  }
 
   /// Idempotent. Must be called when the caller no longer uses the files.
   void release() {
@@ -113,6 +136,10 @@ final class MinistryAudioCache {
   /// process like the gate itself.
   static final Map<String, int> _leases = {};
   static int _discardSeq = 0;
+
+  /// Number of leases currently active in this process (diagnostics/tests).
+  @visibleForTesting
+  static int get debugActiveLeases => _leases.values.fold(0, (a, b) => a + b);
 
   final MinistryAudioDownloadManager _m;
   final int quotaBytes;
@@ -250,7 +277,7 @@ final class MinistryAudioCache {
         ];
         await _saveIndex(root, entries);
         check();
-        return _lease(root, c.recording!, true);
+        return _lease(root, c.recording!, true, manifest);
       }
       if (c.status != _CheckStatus.unreadable) {
         // Diverged from the online manifest, corrupt or incomplete: useless.
@@ -282,7 +309,7 @@ final class MinistryAudioCache {
     ];
     await _saveIndex(root, updated);
     check();
-    return _lease(root, stored, false);
+    return _lease(root, stored, false, manifest);
   }
 
   Future<MinistryAudioPlayback> _revalidate(
@@ -388,6 +415,7 @@ final class MinistryAudioCache {
     Directory root,
     MinistryAudioLocalRecording recording,
     bool fromCache,
+    MinistryAudioManifest manifest,
   ) {
     final key = '${root.path}|${recording.recordingId}';
     _leases[key] = (_leases[key] ?? 0) + 1;
@@ -396,6 +424,8 @@ final class MinistryAudioCache {
       recording,
       fromCache,
       _m._now(),
+      manifest.sampleRate,
+      manifest.frames,
       () {
         final n = (_leases[key] ?? 1) - 1;
         if (n <= 0) {
@@ -405,6 +435,7 @@ final class MinistryAudioCache {
         }
         _held.remove(handle);
       },
+      () => _held.remove(handle),
     );
     _held.add(handle);
     return handle;

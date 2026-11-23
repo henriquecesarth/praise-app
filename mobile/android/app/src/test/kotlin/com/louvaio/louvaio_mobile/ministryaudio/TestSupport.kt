@@ -140,6 +140,8 @@ class FakeTrack(
     private val writeDelayMs: Long = 0L,
     private val failWritesAfter: Int = -1,
     private val freezeHead: Boolean = false,
+    /** false: a blocked write ignores pause()/flush() (a wedged device). */
+    private val unblockOnPause: Boolean = true,
 ) : StereoTrackHandle {
     private val lock = Any()
     private val samples = ArrayList<Short>()
@@ -165,7 +167,7 @@ class FakeTrack(
     override fun pause() {
         paused = true
         events.add("pause")
-        unblock.countDown()
+        if (unblockOnPause) unblock.countDown()
     }
 
     override fun write(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int {
@@ -178,7 +180,7 @@ class FakeTrack(
         if (blockFirstWrite && !blockedOnce) {
             blockedOnce = true
             writeEntered.countDown()
-            unblock.await(3, TimeUnit.SECONDS)
+            unblock.await(20, TimeUnit.SECONDS)
         } else {
             writeEntered.countDown()
         }

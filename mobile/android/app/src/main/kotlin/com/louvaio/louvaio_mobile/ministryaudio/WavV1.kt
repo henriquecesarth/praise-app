@@ -26,6 +26,9 @@ class MinistryAudioException(val code: String, message: String) : Exception(mess
         const val READ_FAILED = "AUDIO_NATIVE_READ_FAILED"
         const val OUTPUT_FAILED = "AUDIO_NATIVE_OUTPUT_FAILED"
         const val FOCUS_DENIED = "AUDIO_NATIVE_FOCUS_DENIED"
+        const val SHUTDOWN_PENDING = "AUDIO_NATIVE_SHUTDOWN_PENDING"
+        const val STALE_SESSION = "AUDIO_NATIVE_STALE_SESSION"
+        const val UNKNOWN_COMMAND = "AUDIO_NATIVE_UNKNOWN_COMMAND"
     }
 }
 

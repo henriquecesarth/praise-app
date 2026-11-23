@@ -57,6 +57,7 @@ class MinistryAudioEngineTest {
         events: MutableList<EngineState>? = null,
         factory: StereoTrackFactory? = null,
         tailMs: Long = 500,
+        joinMs: Long = 2000,
     ): MinistryAudioEngine {
         val f = factory ?: object : StereoTrackFactory {
             override fun create(sampleRate: Int, bufferFrames: Int): StereoTrackHandle = track
@@ -71,6 +72,7 @@ class MinistryAudioEngineTest {
             chunkFrames = chunk,
             tailStallTimeoutMs = tailMs,
             sourceFactory = { file -> TrackedSource(FileStemSource.open(file), stats) },
+            joinMs = joinMs,
         )
         engines.add(e)
         return e
@@ -251,6 +253,80 @@ class MinistryAudioEngineTest {
         assertTrue(noisy.unregisters.get() >= 1)
         assertNull(arbiter.activeOwner)
         e.stop() // idempotent
+    }
+
+    @Test
+    fun `stop with a wedged write is NOT confirmed, keeps files open and refuses new work`() {
+        val track = FakeTrack(blockFirstWrite = true, unblockOnPause = false)
+        val stats = SourceStats()
+        val arbiter = AudioOutputArbiter()
+        val e = engine(track, arbiter = arbiter, stats = stats, joinMs = 200)
+        e.load(newDir(), root)
+        e.play()
+        assertTrue(track.writeEntered.await(3, TimeUnit.SECONDS))
+
+        assertFalse("worker still running: must not confirm", e.stop())
+        assertEquals(EngineState.ERROR, e.state)
+        assertEquals(MinistryAudioException.SHUTDOWN_PENDING, e.lastErrorCode)
+        assertEquals("files must stay open while the worker lives", 0, stats.closed.get())
+        assertFalse(track.released)
+        assertEquals(1, renderThreadsAlive())
+        assertNull("the arbiter claim is not left stuck", arbiter.activeOwner)
+        assertCode(MinistryAudioException.INVALID_STATE) { e.play() }
+        assertCode(MinistryAudioException.INVALID_STATE) { e.load(newDir(100), root) }
+        assertFalse(e.stop()) // still wedged
+
+        track.release_unblock() // the device finally returns
+        assertTrue(waitUntil { renderThreadsAlive() == 0 })
+        assertTrue("confirmed once the worker is gone", e.stop())
+        assertTrue(track.released)
+        assertEquals(0, track.writesAfterRelease.get())
+        assertEquals(stats.opened.get(), stats.closed.get())
+        e.load(newDir(100), root) // usable again
+        assertEquals(EngineState.READY, e.state)
+    }
+
+    @Test
+    fun `dispose with a wedged write is unconfirmed and the worker closes the files when it ends`() {
+        val track = FakeTrack(blockFirstWrite = true, unblockOnPause = false)
+        val stats = SourceStats()
+        val e = engine(track, stats = stats, joinMs = 200)
+        e.load(newDir(), root)
+        e.play()
+        assertTrue(track.writeEntered.await(3, TimeUnit.SECONDS))
+
+        assertFalse(e.dispose())
+        assertEquals(EngineState.DISPOSED, e.state)
+        assertEquals(0, stats.closed.get())
+        assertFalse(e.dispose()) // idempotent, still not confirmed
+
+        track.release_unblock()
+        assertTrue(waitUntil { stats.closed.get() == stats.opened.get() })
+        assertTrue(waitUntil { renderThreadsAlive() == 0 })
+        assertTrue(e.dispose())
+        assertTrue(track.released)
+        assertEquals(0, track.writesAfterRelease.get())
+    }
+
+    @Test
+    fun `concurrent stop and dispose against a blocked write both end consistently`() {
+        val track = FakeTrack(blockFirstWrite = true) // pause() unblocks it
+        val stats = SourceStats()
+        val e = engine(track, stats = stats)
+        e.load(newDir(), root)
+        e.play()
+        assertTrue(track.writeEntered.await(3, TimeUnit.SECONDS))
+        val results = CopyOnWriteArrayList<Boolean>()
+        val ts = (0 until 4).map { i ->
+            Thread { results.add(if (i % 2 == 0) e.stop() else e.dispose()) }.apply { start() }
+        }
+        ts.forEach { it.join(10_000) }
+        assertEquals(4, results.size)
+        assertTrue(results.all { it })
+        assertEquals(EngineState.DISPOSED, e.state)
+        assertEquals(stats.opened.get(), stats.closed.get())
+        assertTrue(track.released)
+        assertEquals(0, track.writesAfterRelease.get())
     }
 
     @Test

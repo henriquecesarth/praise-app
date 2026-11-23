@@ -17,17 +17,18 @@ import com.louvaio.louvaio_mobile.vocal.CallbackDispatcher
 import com.louvaio.louvaio_mobile.vocal.NoisyAudioMonitor
 
 /**
- * Android bindings for [MinistryAudioEngine]. Nothing here is reachable from
- * Flutter yet (no MethodChannel is registered in this phase).
+ * Android bindings for [MinistryAudioEngine]. Reachable from Flutter only
+ * through [MinistryAudioChannel] / [MinistryAudioBridge].
  */
 fun createMinistryAudioEngine(
     context: Context,
     listener: MinistryAudioListener? = null,
+    dispatcher: CallbackDispatcher = AndroidMainDispatcher(),
 ): MinistryAudioEngine = MinistryAudioEngine(
     trackFactory = AndroidStereoTrackFactory(),
     focus = AndroidMinistryFocusController(context),
     noisy = AndroidMinistryNoisyMonitor(context),
-    dispatcher = AndroidMainDispatcher(),
+    dispatcher = dispatcher,
     listener = listener,
 )
 

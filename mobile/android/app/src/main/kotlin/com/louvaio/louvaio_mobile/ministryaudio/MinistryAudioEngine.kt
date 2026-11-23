@@ -103,8 +103,14 @@ class MinistryAudioEngine internal constructor(
     private val chunkFrames: Int = MixerCore.DEFAULT_CHUNK_FRAMES,
     private val tailStallTimeoutMs: Long = DEFAULT_TAIL_STALL_MS,
     private val sourceFactory: (File) -> StemSource = { FileStemSource.open(it) },
+    private val joinMs: Long = JOIN_MS,
 ) {
     private class Session(val gen: Long, val core: MixerCore) {
+        /** Counted down only when the render thread has fully finished. */
+        val done = java.util.concurrent.CountDownLatch(1)
+
+        /** Core whose files must be closed once the worker is really gone. */
+        var closeOnExit: MixerCore? = null
         @Volatile var track: StereoTrackHandle? = null
         @Volatile var thread: Thread? = null
         @Volatile var stopRequested = false
@@ -131,6 +137,8 @@ class MinistryAudioEngine internal constructor(
     private var header: WavHeader? = null
     private var session: Session? = null
     private var sessionSeq = 0L
+    private var disposing: Session? = null
+    private val closeLock = Any()
 
     @Volatile
     private var pendingSeek = -1L
@@ -173,6 +181,8 @@ class MinistryAudioEngine internal constructor(
             EngineState.DISPOSED, EngineState.PLAYING, EngineState.PAUSED -> invalidState()
             else -> Unit
         }
+        // A worker that has not been confirmed gone may still use the files.
+        if (session != null) invalidState()
         closeCoreLocked()
         setStateLocked(EngineState.LOADING)
         val opened = ArrayList<StemSource>()
@@ -266,17 +276,41 @@ class MinistryAudioEngine internal constructor(
         }
     }
 
-    /** Stops playback, releases the output and returns to READY at frame 0. */
-    fun stop() {
+    /**
+     * Stops playback, releases the output and returns to READY at frame 0.
+     *
+     * Returns true only when the render thread has REALLY finished (no more
+     * file or AudioTrack use). On false the worker is still running: the engine
+     * goes to ERROR([MinistryAudioException.SHUTDOWN_PENDING]), keeps its files
+     * open (nobody may release the cache lease) and a later [stop]/[dispose]
+     * re-checks.
+     */
+    fun stop(): Boolean {
         val s: Session?
+        var wasDisposed = false
         lock.withLock {
-            if (state == EngineState.DISPOSED) return
+            wasDisposed = state == EngineState.DISPOSED
             s = session
-            if (s != null) requestStopLocked(s)
+            if (!wasDisposed && s != null) requestStopLocked(s)
         }
-        if (s != null) endSession(s)
+        // Never wait for the worker while holding the lock it needs to exit.
+        if (wasDisposed) return disposeConfirmed()
+        if (s != null && !endSession(s)) {
+            lock.withLock {
+                if (state != EngineState.DISPOSED) {
+                    setStateLocked(EngineState.ERROR, MinistryAudioException.SHUTDOWN_PENDING)
+                }
+            }
+            return false
+        }
         lock.withLock {
-            if (state == EngineState.DISPOSED) return
+            if (state == EngineState.DISPOSED) return true
+            if (state == EngineState.ERROR && lastErrorCode == MinistryAudioException.SHUTDOWN_PENDING) {
+                closeCoreLocked() // worker finally gone: files can be closed now
+                lastErrorCode = null
+                setStateLocked(EngineState.ERROR, MinistryAudioException.OUTPUT_FAILED)
+                return true
+            }
             core?.let {
                 it.seek(0)
                 if (state == EngineState.PLAYING || state == EngineState.PAUSED ||
@@ -287,6 +321,7 @@ class MinistryAudioEngine internal constructor(
             }
             pendingSeek = -1L
         }
+        return true
     }
 
     @Throws(MinistryAudioException::class)
@@ -309,22 +344,56 @@ class MinistryAudioEngine internal constructor(
         }
     }
 
-    /** Idempotent. Releases the track, the files and the render thread. */
-    fun dispose() {
+    /**
+     * Idempotent. Releases the track, the files and the render thread.
+     * Returns true only once the worker is confirmed gone AND the files are
+     * closed; on false, the files are closed by the worker itself when it
+     * ends, and calling [dispose] again re-checks.
+     */
+    fun dispose(): Boolean {
         val s: Session?
-        val closing: MixerCore?
         lock.withLock {
-            if (state == EngineState.DISPOSED) return
-            s = session
-            closing = core
-            core = null
-            header = null
-            pendingSeek = -1L
-            if (s != null) requestStopLocked(s)
-            setStateLocked(EngineState.DISPOSED)
+            if (state != EngineState.DISPOSED) {
+                val closing = core
+                core = null
+                header = null
+                pendingSeek = -1L
+                val cur = session
+                if (cur != null) {
+                    requestStopLocked(cur)
+                    synchronized(closeLock) { cur.closeOnExit = closing }
+                    disposing = cur
+                } else {
+                    closing?.close()
+                }
+                setStateLocked(EngineState.DISPOSED)
+            }
+            s = disposing
         }
-        if (s != null) endSession(s)
-        closing?.close()
+        if (s == null) return true
+        return awaitDisposed(s)
+    }
+
+    private fun disposeConfirmed(): Boolean {
+        val s = lock.withLock { disposing } ?: return true
+        return awaitDisposed(s)
+    }
+
+    private fun awaitDisposed(s: Session): Boolean {
+        val ok = endSession(s)
+        if (ok) {
+            drainDeferredClose(s)
+            lock.withLock { if (disposing === s) disposing = null }
+        }
+        return ok
+    }
+
+    private fun drainDeferredClose(s: Session) {
+        synchronized(closeLock) {
+            val c = s.closeOnExit
+            s.closeOnExit = null
+            c?.close()
+        }
     }
 
     // --------------------------------------------------------------- session
@@ -391,18 +460,28 @@ class MinistryAudioEngine internal constructor(
         cond.signalAll()
     }
 
-    /** Joins the render thread (never under [lock]) and frees session state. */
-    private fun endSession(s: Session) {
-        val t = s.thread
-        if (t != null && t !== Thread.currentThread()) {
-            try {
-                t.join(JOIN_MS)
+    /**
+     * Waits (never under [lock]) for the render thread to REALLY finish.
+     * Returns false when it is still running after the timeout: the session
+     * then stays registered so no caller can mistake it for closed.
+     */
+    private fun endSession(s: Session): Boolean {
+        val confirmed = when {
+            s.thread == null -> true
+            s.thread === Thread.currentThread() -> false
+            else -> try {
+                s.done.await(joinMs, java.util.concurrent.TimeUnit.MILLISECONDS)
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
+                false
             }
         }
-        lock.withLock { if (session === s) session = null }
+        // Focus / receiver / arbiter claim are released even on timeout: the
+        // output is already paused and flushed, and a stuck claim would block
+        // the other audio owner forever. Files/lease are NOT (see return).
         finishSession(s)
+        if (confirmed) lock.withLock { if (session === s) session = null }
+        return confirmed
     }
 
     /** Focus / noisy receiver / arbiter claim; runs once per session. */
@@ -423,6 +502,16 @@ class MinistryAudioEngine internal constructor(
     // ---------------------------------------------------------- render thread
 
     private fun renderLoop(s: Session) {
+        try {
+            renderLoopBody(s)
+        } finally {
+            // Last thing the worker does: from here on it touches nothing.
+            s.done.countDown()
+            drainDeferredClose(s)
+        }
+    }
+
+    private fun renderLoopBody(s: Session) {
         val c = s.core
         val track = s.track ?: return
         val buf = ShortArray(chunkFrames * 2)
@@ -572,7 +661,7 @@ class MinistryAudioEngine internal constructor(
 
     private fun onPreempted(gen: Long) {
         val current = lock.withLock { session?.takeIf { it.gen == gen } }
-        if (current != null) stop()
+        if (current != null) stop() // false => ERROR(SHUTDOWN_PENDING), re-checked later
     }
 
     // ----------------------------------------------------------------- state

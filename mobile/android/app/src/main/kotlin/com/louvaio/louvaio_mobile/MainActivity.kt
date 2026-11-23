@@ -6,6 +6,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.ViewGroup
 import com.louvaio.louvaio_mobile.audio.RehearsalPackageSafHandler
+import com.louvaio.louvaio_mobile.ministryaudio.MinistryAudioChannel
 import com.louvaio.louvaio_mobile.pdf.SmartChordPdfHandler
 import com.louvaio.louvaio_mobile.vocal.PianoBank
 import com.louvaio.louvaio_mobile.vocal.VocalAudioPlayer
@@ -45,6 +46,7 @@ class MainActivity : FlutterActivity() {
     private var vocalPlayer: VocalAudioPlayer? = null
     private var vocalAudioChannel: MethodChannel? = null
     private var pdfExportChannel: MethodChannel? = null
+    private var ministryAudioChannel: MinistryAudioChannel? = null
     private var smartChordPdfHandler: SmartChordPdfHandler? = null
     private var rehearsalPackageSafChannel: MethodChannel? = null
     private var rehearsalPackageSafHandler: RehearsalPackageSafHandler? = null
@@ -276,6 +278,9 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        ministryAudioChannel?.dispose()
+        ministryAudioChannel = MinistryAudioChannel(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
+
         val safHandler = RehearsalPackageSafHandler(this)
         rehearsalPackageSafHandler = safHandler
         val safChannel = MethodChannel(
@@ -304,6 +309,7 @@ class MainActivity : FlutterActivity() {
             override fun notImplemented() {}
 
         })
+        ministryAudioChannel?.onAppStopped()
 
         super.onStop()
 
@@ -416,6 +422,8 @@ class MainActivity : FlutterActivity() {
         vocalPlayer?.release()
 
         vocalPlayer = null
+        ministryAudioChannel?.dispose()
+        ministryAudioChannel = null
         pdfExportChannel?.setMethodCallHandler(null)
         pdfExportChannel = null
         smartChordPdfHandler = null

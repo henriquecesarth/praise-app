@@ -10,6 +10,8 @@ import '../features/auth/presentation/controllers/auth_controller.dart';
 import '../features/dashboard/data/dashboard_repository.dart';
 import '../features/dashboard/presentation/controllers/dashboard_controller.dart';
 import '../features/ministry_audio/data/ministry_audio_download_manager.dart';
+import '../features/ministry_audio/data/ministry_audio_player_port.dart';
+import '../features/ministry_audio/presentation/controllers/ministry_audio_playback_controller.dart';
 import '../features/ministry_audio/data/ministry_audio_repository.dart';
 import '../features/ministry_audio/data/ministry_audio_storage_info.dart';
 import '../features/ministry_audio/data/ministry_audio_transfer_policy.dart';
@@ -182,6 +184,8 @@ void resetAuthenticatedFeatures(
   container.invalidate(customVocalExercisesNotifierProvider);
   container.invalidate(rehearsalPackagesNotifierProvider);
   container.invalidate(songVersionAudioBindingsNotifierProvider);
+  // Close the player first (it keeps its cache lease until native confirms).
+  container.invalidate(ministryAudioPlaybackControllerProvider);
   container.invalidate(ministryAudioRepositoryProvider);
   container.invalidate(ministryAudioCacheProvider);
   container.invalidate(ministryAudioDownloadManagerProvider);
@@ -585,6 +589,44 @@ final ministryAudioCacheProvider = Provider<MinistryAudioCache>((ref) {
   );
   ref.onDispose(cache.dispose);
   return cache;
+});
+
+/// The single native channel of the ministry audio player (typed commands,
+/// never paths or URLs).
+final ministryAudioPlayerPortProvider = Provider<MinistryAudioPlayerPort>((ref) {
+  final port = MethodChannelMinistryAudioPlayerPort();
+  ref.onDispose(port.dispose);
+  return port;
+});
+
+/// Playback orchestration (ensureCached -> native engine -> lease). Rebuilt
+/// (hence closed) whenever the cache is invalidated by logout/account switch,
+/// and told about every auth/ministry change. No UI is attached yet.
+final ministryAudioPlaybackControllerProvider = StateNotifierProvider<
+    MinistryAudioPlaybackController, MinistryAudioPlaybackState>((ref) {
+  final notifier = ref.watch(ministryContextNotifierProvider.notifier);
+  final apiClient = ref.watch(apiClientProvider);
+  final controller = MinistryAudioPlaybackController(
+    cache: ref.watch(ministryAudioCacheProvider),
+    port: ref.watch(ministryAudioPlayerPortProvider),
+    context: () {
+      final session = apiClient.sessionContextProvider?.call();
+      final stamp = notifier.contextStamp;
+      final ministryId = stamp?.ministryId;
+      if (session == null || stamp == null || ministryId == null) return null;
+      return MinistryAudioDownloadContext(
+        userId: session.userId,
+        sessionGeneration: session.sessionGeneration,
+        ministryId: ministryId,
+        epoch: stamp,
+      );
+    },
+  );
+  ref.listen(ministryContextNotifierProvider, (_, __) => controller.checkContext());
+  ref.listen(authNotifierProvider, (_, __) => controller.checkContext());
+  final lifecycle = MinistryAudioLifecycleBinding(controller.handleAppLifecycle);
+  ref.onDispose(lifecycle.dispose);
+  return controller;
 });
 
 /// Provider for the create ministry state notifier.
