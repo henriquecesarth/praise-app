@@ -40,21 +40,26 @@ abstract class MinistryAudioRepository {
 /// [contextChangedCode] failure is thrown. Cancelling is never relied upon:
 /// late responses are dropped here. Authorization stays in the backend.
 ///
-/// Limitation: a ministry switched away and back to the same id (A -> B -> A)
-/// while a request is pending cannot be distinguished from "unchanged". A
-/// context generation identifier is required before this repository is wired
-/// to the UI.
+/// A -> B -> A: when [contextEpoch] is supplied, its value is captured at the
+/// start and must compare equal (`==`) afterwards, so a ministry switched away
+/// and back is detected even though the ministry id matches. It must advance
+/// when a context change starts (see `MinistryContextStamp`). A `null` epoch
+/// while a provider is supplied fails closed. Without a provider only the
+/// ministry id is compared (the app wiring always supplies it).
 class HttpMinistryAudioRepository implements MinistryAudioRepository {
   static const String contextChangedCode = 'AUDIO_CONTEXT_CHANGED';
 
   final ApiClient _apiClient;
   final ActiveMinistryIdProvider _activeMinistryId;
+  final Object? Function()? _contextEpoch;
 
   HttpMinistryAudioRepository({
     required ApiClient apiClient,
     required ActiveMinistryIdProvider activeMinistryId,
+    Object? Function()? contextEpoch,
   })  : _apiClient = apiClient,
-        _activeMinistryId = activeMinistryId;
+        _activeMinistryId = activeMinistryId,
+        _contextEpoch = contextEpoch;
 
   @override
   Future<MinistryAudioPage> listRecordings({
@@ -130,11 +135,17 @@ class HttpMinistryAudioRepository implements MinistryAudioRepository {
         code: contextChangedCode,
       );
 
-  bool _isCurrent(AuthSessionContext? session, String ministryId) {
+  bool _isCurrent(
+    AuthSessionContext? session,
+    String ministryId,
+    Object? epoch,
+  ) {
     final now = _apiClient.sessionContextProvider?.call();
-    return session != null &&
-        now == session &&
-        _activeMinistryId() == ministryId;
+    if (session == null || now != session) return false;
+    if (_activeMinistryId() != ministryId) return false;
+    final provider = _contextEpoch;
+    if (provider == null) return true;
+    return epoch != null && provider() == epoch;
   }
 
   Future<T> _guarded<T>(
@@ -158,7 +169,8 @@ class HttpMinistryAudioRepository implements MinistryAudioRepository {
         code: 'SESSION_CHANGED',
       );
     }
-    if (!_isCurrent(session, ministryId)) throw _contextChanged;
+    final epoch = _contextEpoch?.call();
+    if (!_isCurrent(session, ministryId, epoch)) throw _contextChanged;
 
     final Response<dynamic> response;
     try {
@@ -174,10 +186,10 @@ class HttpMinistryAudioRepository implements MinistryAudioRepository {
         ),
       );
     } on DioException catch (e) {
-      if (!_isCurrent(session, ministryId)) throw _contextChanged;
+      if (!_isCurrent(session, ministryId, epoch)) throw _contextChanged;
       throw _apiClient.mapDioException(e);
     }
-    if (!_isCurrent(session, ministryId)) throw _contextChanged;
+    if (!_isCurrent(session, ministryId, epoch)) throw _contextChanged;
     return parse(response.data);
   }
 }

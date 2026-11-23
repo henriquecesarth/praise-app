@@ -77,12 +77,60 @@ class MinistryContextState {
       availableMinistries.length.hashCode;
 }
 
+/// Value-comparable snapshot of the ministry context, for fencing async work.
+///
+/// Two stamps are equal only if they come from the same notifier instance, the
+/// same context generation and the same selected ministry. The generation
+/// advances when any context change *starts* (select, refresh, bootstrap,
+/// reset), so A -> B -> A yields a different stamp even though the ministry id
+/// is the same, and a rebuilt notifier never collides with an older one.
+/// It is derived from the notifier's existing counter, not a second source of
+/// truth, and carries no authorization.
+final class MinistryContextStamp {
+  final int instanceId;
+  final int generation;
+  final String? ministryId;
+
+  const MinistryContextStamp({
+    required this.instanceId,
+    required this.generation,
+    required this.ministryId,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MinistryContextStamp &&
+          instanceId == other.instanceId &&
+          generation == other.generation &&
+          ministryId == other.ministryId;
+
+  @override
+  int get hashCode => Object.hash(instanceId, generation, ministryId);
+
+  @override
+  String toString() =>
+      'MinistryContextStamp($instanceId, $generation, $ministryId)';
+}
+
 /// Controller managing the ministry context lifecycle and non-authoritative selection.
 class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
+  static int _instanceSequence = 0;
+
   final MinistryRepository _repository;
   final PreferencesStorage _preferencesStorage;
+  final int _instanceId = ++_instanceSequence;
   int _contextGeneration = 0;
   String? _boundUserId;
+
+  /// Current context stamp, or `null` once this notifier is disposed.
+  MinistryContextStamp? get contextStamp => mounted
+      ? MinistryContextStamp(
+          instanceId: _instanceId,
+          generation: _contextGeneration,
+          ministryId: state.selectedMinistry?.id,
+        )
+      : null;
 
   MinistryContextNotifier({
     required MinistryRepository repository,

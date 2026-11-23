@@ -9,6 +9,8 @@ import '../features/auth/domain/auth_user.dart';
 import '../features/auth/presentation/controllers/auth_controller.dart';
 import '../features/dashboard/data/dashboard_repository.dart';
 import '../features/dashboard/presentation/controllers/dashboard_controller.dart';
+import '../features/ministry_audio/data/ministry_audio_repository.dart';
+import '../features/ministry_audio/data/ministry_audio_storage_info.dart';
 import '../features/ministry_context/data/ministry_repository.dart';
 import '../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
 import 'environment/app_environment.dart';
@@ -177,6 +179,7 @@ void resetAuthenticatedFeatures(
   container.invalidate(customVocalExercisesNotifierProvider);
   container.invalidate(rehearsalPackagesNotifierProvider);
   container.invalidate(songVersionAudioBindingsNotifierProvider);
+  container.invalidate(ministryAudioRepositoryProvider);
 
   container.invalidate(unreadNotificationCountProvider);
   container.invalidate(notificationListProvider);
@@ -506,6 +509,29 @@ final ministryContextNotifierProvider =
   return MinistryContextNotifier(
     repository: ref.watch(ministryRepositoryProvider),
     preferencesStorage: ref.watch(preferencesStorageProvider),
+  );
+});
+
+/// Read-only ministry audio library repository bound to the authenticated
+/// [ApiClient] session and to the active ministry context (id + generation
+/// stamp, so A -> B -> A and notifier rebuilds are detected).
+final ministryAudioRepositoryProvider = Provider<MinistryAudioRepository>((
+  ref,
+) {
+  final notifier = ref.watch(ministryContextNotifierProvider.notifier);
+  return HttpMinistryAudioRepository(
+    apiClient: ref.watch(apiClientProvider),
+    activeMinistryId: () => notifier.contextStamp?.ministryId,
+    contextEpoch: () => notifier.contextStamp,
+  );
+});
+
+/// Storage query for the future ministry audio library (reuses the single
+/// rehearsal SAF adapter; performs no writes).
+final ministryAudioStorageInfoSourceProvider =
+    Provider<MinistryAudioStorageInfoSource>((ref) {
+  return SafMinistryAudioStorageInfoSource(
+    port: ref.watch(rehearsalPackageSafPortProvider),
   );
 });
 
