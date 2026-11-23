@@ -158,6 +158,10 @@ class MinistryAudioPlaybackController
   MinistryAudioDownloadContext? _captured;
   Future<bool>? _closing;
 
+  /// Advances on every user-driven position change (seek/stop) so a snapshot
+  /// requested BEFORE it can never move the position back afterwards.
+  int _positionStamp = 0;
+
   bool get _active => _session != null;
 
   // ------------------------------------------------------------------ open
@@ -240,13 +244,17 @@ class MinistryAudioPlaybackController
   Future<void> resume() => _command((s) => _port.resume(s));
 
   Future<void> stop() => _command((s) async {
+        _positionStamp++;
         await _port.stop(s);
+        _positionStamp++;
         _setIfCurrent(s, state.copyWith(positionFrames: 0));
       });
 
   Future<void> seek(int frame) => _command((s) async {
         final clamped = frame.clamp(0, state.durationFrames);
+        _positionStamp++;
         await _port.seek(s, clamped);
+        _positionStamp++;
         _setIfCurrent(s, state.copyWith(positionFrames: clamped));
       });
 
@@ -277,9 +285,13 @@ class MinistryAudioPlaybackController
   Future<void> refresh() async {
     final sid = _session;
     if (sid == null || !_prepared || !_usable()) return;
+    final stamp = _positionStamp;
     try {
       final snap = await _port.snapshot(sid);
       if (_session != sid || _disposed) return; // late answer of an old session
+      // A seek/stop happened while the snapshot was in flight: it is older
+      // than what the user just did and must not move the position back.
+      if (stamp != _positionStamp) return;
       _setIfCurrent(
         sid,
         state.copyWith(

@@ -123,6 +123,27 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
   int _contextGeneration = 0;
   String? _boundUserId;
 
+  final List<void Function()> _invalidationListeners = [];
+
+  /// Registers [listener] to run SYNCHRONOUSLY the instant the context
+  /// generation advances (start of select/refresh/bootstrap/reset), before any
+  /// async work finishes and without waiting for a state change. Players and
+  /// lists use it to stop serving a stale ministry immediately. Returns the
+  /// function that unregisters it.
+  void Function() addContextInvalidationListener(void Function() listener) {
+    _invalidationListeners.add(listener);
+    return () => _invalidationListeners.remove(listener);
+  }
+
+  int _bumpGeneration() {
+    final generation = ++_contextGeneration;
+    for (final l in List<void Function()>.of(_invalidationListeners)) {
+      try {
+        l();
+      } catch (_) {}
+    }
+    return generation;
+  }
   /// Current context stamp, or `null` once this notifier is disposed.
   MinistryContextStamp? get contextStamp => mounted
       ? MinistryContextStamp(
@@ -149,7 +170,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
   ///    - If found: select it, transition to [MinistryBootstrapStatus.ready].
   ///    - If not found or stale: discard preference, transition to [MinistryBootstrapStatus.needsSelection].
   Future<void> bootstrap({String? userId}) async {
-    final requestGen = ++_contextGeneration;
+    final requestGen = _bumpGeneration();
     if (userId != null) _boundUserId = userId;
     state = state.copyWith(
       status: MinistryBootstrapStatus.loading,
@@ -180,7 +201,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
 
   /// Refreshes memberships from backend, validating existing context selection.
   Future<void> refresh() async {
-    final requestGen = ++_contextGeneration;
+    final requestGen = _bumpGeneration();
     final currentSelectedId = state.selectedMinistry?.id;
 
     try {
@@ -250,7 +271,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
     String targetMinistryId, {
     String? expectedUserId,
   }) async {
-    final requestGen = ++_contextGeneration;
+    final requestGen = _bumpGeneration();
 
     try {
       final ministries = await _repository.getMyMinistries();
@@ -326,7 +347,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
       return;
     }
 
-    final requestGen = ++_contextGeneration;
+    final requestGen = _bumpGeneration();
     await _setSavedMinistryId(ministry.id);
     if (!mounted || requestGen != _contextGeneration) return;
     state = state.copyWith(
@@ -338,7 +359,7 @@ class MinistryContextNotifier extends StateNotifier<MinistryContextState> {
 
   /// Resets state and clears stored preference (called on logout or user switch).
   Future<void> reset({bool preserveSavedSelection = false}) async {
-    final resetGen = ++_contextGeneration;
+    final resetGen = _bumpGeneration();
     final userId = _boundUserId;
     if (!preserveSavedSelection && mounted) {
       state = const MinistryContextState.initial();

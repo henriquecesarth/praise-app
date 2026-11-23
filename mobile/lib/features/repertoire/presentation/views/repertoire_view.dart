@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../app/providers.dart';
 import '../../domain/artist.dart';
 import '../../domain/repertoire_folder.dart';
@@ -363,6 +364,21 @@ class _RepertoireViewState extends ConsumerState<RepertoireView> {
                     ),
                   ),
                 ),
+
+                // Dev/staging only: never shown unless the flag is enabled.
+                if (ref.watch(ministryAudioLibraryEnabledProvider))
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: TextButton.icon(
+                        key: const ValueKey('open_ministry_audio_library'),
+                        onPressed: () => context.push('/ministry-audio'),
+                        icon: const Icon(Icons.library_music_outlined, size: 18),
+                        label: const Text('Biblioteca de Áudio'),
+                      ),
+                    ),
+                  ),
 
                 if (_activeTab == _RepertoireTab.songs) ...[
                   // Search bar and Classification chips

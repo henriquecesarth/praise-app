@@ -9,6 +9,9 @@ import '../../features/ministry_context/presentation/ministry_empty_screen.dart'
 import '../../features/ministry_context/presentation/ministry_selector_screen.dart';
 import '../providers.dart';
 import '../shell/app_shell.dart';
+import '../../features/ministry_audio/domain/ministry_audio_models.dart';
+import '../../features/ministry_audio/presentation/views/ministry_audio_library_screen.dart';
+import '../../features/ministry_audio/presentation/views/ministry_audio_mixer_screen.dart';
 import '../../features/vocal/presentation/vocal_player_screen.dart';
 import '../../features/rehearsal_packages/presentation/views/rehearsal_packages_screen.dart';
 
@@ -45,6 +48,21 @@ GoRouter createRouter(Ref ref) {
         return isLoggingIn ? null : '/login';
       }
 
+      // Ministry audio library: dev/staging opt-in only (never production),
+      // signed in AND with a ready ministry; direct navigation included.
+      if (loc.startsWith(MinistryAudioLibraryScreen.routePath)) {
+        final allowed = ref.read(ministryAudioLibraryEnabledProvider) &&
+            !ref.read(appEnvironmentProvider).isProduction &&
+            ministry.isReady;
+        if (!allowed) return '/';
+        if (loc.contains('/mixer/') &&
+            !MinistryAudioContract.recordingIdPattern
+                .hasMatch(state.pathParameters['recordingId'] ?? '')) {
+          return MinistryAudioLibraryScreen.routePath;
+        }
+        return null;
+      }
+
       // Authenticated users can access the vocal and offline rehearsal modules offline or online.
       if (loc == '/vocal' || loc == '/rehearsal-packages') return null;
 
@@ -78,6 +96,31 @@ GoRouter createRouter(Ref ref) {
       return null;
     },
     routes: [
+      GoRoute(
+        path: MinistryAudioLibraryScreen.routePath,
+        name: 'ministry-audio-library',
+        builder: (_, __) => const MinistryAudioLibraryScreen(),
+        routes: [
+          GoRoute(
+            path: 'mixer/:recordingId',
+            name: 'ministry-audio-mixer',
+            builder: (_, state) {
+              final extra = state.extra;
+              final rec = extra is MinistryAudioRecording ? extra : null;
+              return MinistryAudioMixerScreen(
+                recordingId: state.pathParameters['recordingId']!,
+                title: rec?.title,
+                subtitle: rec == null
+                    ? null
+                    : [
+                        if (rec.artist.isNotEmpty) rec.artist,
+                        if (rec.version.isNotEmpty) 'Versão ${rec.version}',
+                      ].join(' • '),
+              );
+            },
+          ),
+        ],
+      ),
       GoRoute(
         path: '/vocal',
         name: 'vocal-player',

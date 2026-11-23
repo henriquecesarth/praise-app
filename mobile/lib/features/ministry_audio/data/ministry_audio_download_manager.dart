@@ -189,7 +189,10 @@ final class MinistryAudioDownloadManager {
 
   static Future<T> _serialized<T>(Future<T> Function() action) {
     final previous = _gateTail;
-    final done = Completer<void>();
+    // Created in the root zone: the gate is process-wide, so its future must
+    // not be bound to a short-lived zone (e.g. a widget test's FakeAsync),
+    // whose microtask queue stops running once that zone ends.
+    final done = Zone.root.run(() => Completer<void>());
     _gateTail = done.future;
     return previous.then((_) => action()).whenComplete(done.complete);
   }
