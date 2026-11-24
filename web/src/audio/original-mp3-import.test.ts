@@ -93,19 +93,19 @@ describe('inspectOriginalMp3 (structure and duration from frames, before any dec
     expect(codeOf(() => inspectOriginalMp3(badSyncsafe))).toBe('CORRUPT');
   });
 
-  it('rejects a song longer than 180 s from the frames alone, without decoding', () => {
+  it('rejects a song longer than 300 s from the frames alone, without decoding', () => {
     const one = CBR_ID3();
     const start = inspectOriginalMp3(one).id3v2Bytes;
     const audio = one.subarray(start);
-    const copies = 50; // ~200 s
+    const copies = 80; // ~320 s
     const long = new Uint8Array(start + audio.length * copies);
     long.set(one.subarray(0, start));
     for (let i = 0; i < copies; i++) long.set(audio, start + i * audio.length);
     expect(codeOf(() => inspectOriginalMp3(long))).toBe('TOO_LONG');
-    const justUnder = new Uint8Array(start + audio.length * 44); // ~176 s
+    const justUnder = new Uint8Array(start + audio.length * 70); // ~280 s
     justUnder.set(one.subarray(0, start));
-    for (let i = 0; i < 44; i++) justUnder.set(audio, start + i * audio.length);
-    expect(inspectOriginalMp3(justUnder).durationSeconds).toBeLessThanOrEqual(180);
+    for (let i = 0; i < 70; i++) justUnder.set(audio, start + i * audio.length);
+    expect(inspectOriginalMp3(justUnder).durationSeconds).toBeLessThanOrEqual(300);
   });
 
   it('routes by content sniffing only', () => {

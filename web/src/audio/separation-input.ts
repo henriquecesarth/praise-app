@@ -9,7 +9,7 @@ import {
   looksLikeWav,
   type OriginalMp3ImportResult,
 } from './original-mp3-import';
-import { MAX_AUDIO_WAV_BYTES } from './separation/demucs-onnx-separator';
+import { DEFAULT_MAX_AUDIO_SECONDS, MAX_AUDIO_WAV_BYTES } from './separation/demucs-onnx-separator';
 import type { Mp3DecodeBackend } from './mp3-stem-decoder';
 
 export type SeparationInputKind = 'wav' | 'mp3';
@@ -33,7 +33,7 @@ export async function prepareSeparationInput(file: File, options: PrepareSeparat
   if (file.size <= 0) throw new Mp3ImportError('EMPTY', 'O arquivo está vazio.');
   // The largest accepted input is the WAV ceiling; MP3 has its own, tighter ceiling checked on the structure.
   if (file.size > MAX_AUDIO_WAV_BYTES) {
-    throw new Mp3ImportError('TOO_LARGE', `O arquivo precisa ter até ${MAX_AUDIO_WAV_BYTES / (1024 * 1024)} MiB (WAV) ou 24 MiB (MP3), com até 180 segundos.`);
+    throw new Mp3ImportError('TOO_LARGE', `O arquivo precisa ter até ${MAX_AUDIO_WAV_BYTES / (1024 * 1024)} MiB (WAV) ou 24 MiB (MP3), com até ${DEFAULT_MAX_AUDIO_SECONDS} segundos.`);
   }
   const bytes = await file.arrayBuffer();
   if (signal?.aborted) throw new Mp3ImportError('CANCELLED', 'Importação cancelada.');

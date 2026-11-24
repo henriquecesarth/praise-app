@@ -682,7 +682,7 @@ describe('DemucsSeparationWorkerClient (M22-B)', () => {
     hashWorker.emitMessage(corruptMsg);
     await expect(pCorruptWav).rejects.toMatchObject({ code: 'CORRUPT_WAV' });
 
-    // 7. Small (< 36 MiB) valid 8-bit mono WAV exceeding MAX_SEPARATION_TOTAL_FRAMES fails RAM cap before cloning/Worker
+    // 7. Small (< MAX_AUDIO_WAV_BYTES) valid 8-bit mono WAV exceeding MAX_SEPARATION_TOTAL_FRAMES fails RAM cap before cloning/Worker
     const hugeCount = MAX_SEPARATION_TOTAL_FRAMES + 2;
     const amplificationWav = new Uint8Array(44 + hugeCount);
     const ampView = new DataView(amplificationWav.buffer);
@@ -746,16 +746,16 @@ describe('DemucsSeparationWorkerClient (M22-B)', () => {
       digestRejectSpy.mockRestore();
     }
 
-    // 9. 8 kHz 180s+ WAV inside 36 MiB cap rejects BEFORE Worker transfer (not only in decoder)
+    // 9. 8 kHz 300s+ WAV inside the WAV byte cap rejects BEFORE Worker transfer (not only in decoder)
     const lowRateDescriptor = {
       ...testDescriptor,
       sampleRate: 8000,
     };
-    const over180sFrames = 8000 * 180 + 2;
-    const lowRateWav = new Uint8Array(44 + over180sFrames);
+    const over300sFrames = 8000 * 300 + 2;
+    const lowRateWav = new Uint8Array(44 + over300sFrames);
     const lrView = new DataView(lowRateWav.buffer);
     lowRateWav.set([0x52, 0x49, 0x46, 0x46], 0);
-    lrView.setUint32(4, 36 + over180sFrames, true);
+    lrView.setUint32(4, 36 + over300sFrames, true);
     lowRateWav.set([0x57, 0x41, 0x56, 0x45], 8);
     lowRateWav.set([0x66, 0x6d, 0x74, 0x20], 12);
     lrView.setUint32(16, 16, true);
@@ -766,7 +766,7 @@ describe('DemucsSeparationWorkerClient (M22-B)', () => {
     lrView.setUint16(32, 1, true);
     lrView.setUint16(34, 8, true);
     lowRateWav.set([0x64, 0x61, 0x74, 0x61], 36);
-    lrView.setUint32(40, over180sFrames, true);
+    lrView.setUint32(40, over300sFrames, true);
     const postedBefore8k = hashWorker.postedMessages.length;
     await expect(
       client.separate({

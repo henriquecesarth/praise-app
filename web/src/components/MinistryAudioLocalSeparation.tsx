@@ -159,7 +159,7 @@ export function MinistryAudioLocalSeparation({ onPrepare, onClose, createWorkerC
     <section className={AUDIO_CARD} aria-label="Separar música localmente">
       <h3 className="text-lg font-semibold">Separar música neste dispositivo</h3>
       <p className="text-sm text-[var(--text-secondary)]">
-        O processamento acontece no seu navegador, sem enviar o áudio para nenhum serviço de separação. Selecione uma música em MP3 ou WAV com até 180 segundos (o MP3 é convertido aqui mesmo, sem você precisar ajustar taxa de amostragem ou canais) e o modelo ONNX HT-Demucs 6 faixas (fp16) já baixado por você.
+        O processamento acontece no seu navegador, sem enviar o áudio para nenhum serviço de separação. Selecione uma música em MP3 ou WAV com até 300 segundos (5 minutos; o MP3 é convertido aqui mesmo, sem você precisar ajustar taxa de amostragem ou canais) e o modelo ONNX HT-Demucs 6 faixas (fp16) já baixado por você.
         O desempenho e a memória dependem do dispositivo e não são garantidos.
       </p>
       <fieldset disabled={busy} className="grid min-w-0 gap-3">

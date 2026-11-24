@@ -17,7 +17,7 @@ import {
 } from './separation/demucs-onnx-separator';
 
 export const ORIGINAL_MP3_TARGET_SAMPLE_RATE = 44_100;
-/** Compressed input ceiling. 180 s at 320 kbps is ~7 MB; the rest is headroom for ID3 cover art. */
+/** Compressed input ceiling. 300 s at 320 kbps is ~12 MB; the rest is headroom for ID3 cover art. */
 export const MAX_ORIGINAL_MP3_BYTES = 24 * 1024 * 1024;
 /** Bounded reads: a hostile ID3v2 size can never make the scanner skip more than this. */
 const MAX_ID3_BYTES = 16 * 1024 * 1024;

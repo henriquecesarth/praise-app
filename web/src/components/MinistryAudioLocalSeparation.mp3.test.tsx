@@ -50,7 +50,7 @@ describe('Separação local: importação de MP3', () => {
     expect(screen.getByText('Arquivo da música')).toBeInTheDocument();
     expect(input.accept).toContain('.mp3');
     expect(input.accept).toContain('.wav');
-    expect(screen.getByText(/MP3 ou WAV com até 180 segundos/)).toBeInTheDocument();
+    expect(screen.getByText(/MP3 ou WAV com até 300 segundos/)).toBeInTheDocument();
     expect(screen.queryByText('WAV da música')).not.toBeInTheDocument();
   });
 

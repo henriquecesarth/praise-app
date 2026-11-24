@@ -22,10 +22,10 @@ publicar/armazenar stems MP3; esta importação é uma funcionalidade distinta (
 
 | Limite | Valor |
 | --- | --- |
-| Duração | 180 s (`DEFAULT_MAX_AUDIO_SECONDS`), checada nos frames **e** no PCM decodificado |
+| Duração | 300 s (`DEFAULT_MAX_AUDIO_SECONDS`, M22-E2; antes 180 s), checada nos frames **e** no PCM decodificado |
 | Entrada MP3 comprimida | 24 MiB (folga para capa em ID3) |
-| WAV de saída / entrada WAV | 36 MiB (`MAX_AUDIO_WAV_BYTES`) |
-| Frames | `MAX_SEPARATION_TOTAL_FRAMES` (44 100 × 180) |
+| WAV de saída / entrada WAV | 56 MiB (`MAX_AUDIO_WAV_BYTES`; 300 s PCM16 estéreo = 50,5 MiB) |
+| Frames | `MAX_SEPARATION_TOTAL_FRAMES` (44 100 × 300 = 13 230 000) |
 | ID3v2 | até 16 MiB; tamanho syncsafe validado |
 | Ressincronização | até 16 eventos / 256 KiB pulados; trailer ID3v1/lixo final curto tolerado |
 
@@ -68,3 +68,9 @@ RTF 4,33, pico de ~2,3 GB no Chrome, interface sem travar (maior intervalo de fr
 - Chromium real + modelo real (opt-in): `npx playwright test -c playwright.m22e1.config.ts` (`web/e2e/m22e1-mp3-import.spec.ts`; modelo em
   `~/.cache/louvaio-models/htdemucs_6s_fp16weights.onnx` ou `LOUVAIO_M22A_MODEL_PATH`).
 - Fixtures sintéticas (tons senoidais gerados para o repositório) em `web/e2e/fixtures/original-mp3/`; nenhuma música comercial.
+
+## Ampliação para 300 s (M22-E2)
+
+- Limites derivados de `DEFAULT_MAX_AUDIO_SECONDS = 300`. O contrato de publicação (`MAX_MINISTRY_AUDIO_SECONDS = 300`, backend `PCM_MAX_SECONDS = 300`) e o validador Android (1800 s) já comportavam 300 s. Nenhuma validação foi afrouxada: continuam as checagens por frames, bytes e tamanho do MP3 comprimido (24 MiB).
+- Memória por frame no worker ao fim da separação: acumuladores 48 B + soma Float64 16 B + pesos 4 B + entrada 8 B + 6 WAVs 24 B, ou seja ~100 B/frame (~1,3 GB a 300 s). Na thread principal ficam left/right/WAV dos seis stems (72 B/frame, ~0,95 GB).
+- Medição real (WASM, 4 threads, COI, entrada de 300 s montada a partir de música de teste não versionada): 51 chunks, inferência 909 s, total 972 s (RTF 3,03), pico do Chrome 2,7 GB, heap JS final 1,1 GB, seis stems íntegros (13 230 000 frames). A RAM livre do host chegou a ~0,5 GB (host de 7,9 GB com outros aplicativos), então não há folga em máquinas com menos RAM.

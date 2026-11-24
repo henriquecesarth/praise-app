@@ -23,8 +23,9 @@ export const STEM_DISPLAY_LABELS_PT_BR: Record<CanonicalStemId, string> = {
 export type ExecutionProviderName = 'wasm' | 'webgpu';
 
 export const MAX_MODEL_BYTES = 512 * 1024 * 1024;
-export const MAX_AUDIO_WAV_BYTES = 36 * 1024 * 1024;
-export const DEFAULT_MAX_AUDIO_SECONDS = 180;
+export const DEFAULT_MAX_AUDIO_SECONDS = 300;
+// 300 s of 44.1 kHz stereo PCM16 is 44 + 52,920,000 bytes; 56 MiB leaves ~11% header/extra-chunk headroom.
+export const MAX_AUDIO_WAV_BYTES = 56 * 1024 * 1024;
 export const MAX_SEPARATION_TOTAL_FRAMES = 44100 * DEFAULT_MAX_AUDIO_SECONDS;
 
 /**
