@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createSeparationDraft, type SeparationDraft } from '../audio/local-separation-draft';
+import type { Mp3DecodeBackend } from '../audio/mp3-stem-decoder';
+import { Mp3ImportError } from '../audio/original-mp3-import';
+import { prepareSeparationInput } from '../audio/separation-input';
 import {
   AudioSeparationError,
   HTDEMUCS_6S_ONNX_DESCRIPTOR,
-  MAX_AUDIO_WAV_BYTES,
   type SeparationProgressEvent,
 } from '../audio/separation/demucs-onnx-separator';
 import { DemucsSeparationWorkerClient } from '../audio/separation/demucs-worker-client';
@@ -25,18 +27,21 @@ const PHASE_LABEL: Record<SeparationProgressEvent['phase'], string> = {
 };
 
 const isCancel = (reason: unknown) =>
-  (reason instanceof AudioSeparationError && reason.code === 'CANCELLED') || (reason instanceof DOMException && reason.name === 'AbortError');
+  (reason instanceof Mp3ImportError && reason.code === 'CANCELLED') || (reason instanceof AudioSeparationError && reason.code === 'CANCELLED') || (reason instanceof DOMException && reason.name === 'AbortError');
 
-export function MinistryAudioLocalSeparation({ onPrepare, onClose, createWorkerClient }: {
+export function MinistryAudioLocalSeparation({ onPrepare, onClose, createWorkerClient, mp3Backend }: {
   onPrepare: (draft: SeparationDraft) => void;
   onClose: () => void;
   /** Test seam; production always uses the real Worker client. */
   createWorkerClient?: () => DemucsSeparationWorkerClient;
+  /** Test seam for the MP3 decoder: undefined uses the browser's OfflineAudioContext, null simulates a browser without it. */
+  mp3Backend?: Mp3DecodeBackend | null;
 }) {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [modelFile, setModelFile] = useState<File | null>(null);
   const [status, setStatus] = useState<Status>('idle');
   const [progress, setProgress] = useState<SeparationProgressEvent | null>(null);
+  const [preparingAudio, setPreparingAudio] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<SeparationDraft | null>(null);
   const run = useRef(0);
@@ -70,12 +75,7 @@ export function MinistryAudioLocalSeparation({ onPrepare, onClose, createWorkerC
   async function separate() {
     if (status === 'separating') return;
     if (!audioFile || !modelFile) {
-      setError('Selecione o WAV da música e o arquivo do modelo ONNX.');
-      setStatus('error');
-      return;
-    }
-    if (audioFile.size <= 0 || audioFile.size > MAX_AUDIO_WAV_BYTES) {
-      setError(`O WAV precisa ter até ${MAX_AUDIO_WAV_BYTES / (1024 * 1024)} MiB (até 180 segundos a 44,1 kHz).`);
+      setError('Selecione o arquivo da música (MP3 ou WAV) e o arquivo do modelo ONNX.');
       setStatus('error');
       return;
     }
@@ -92,11 +92,17 @@ export function MinistryAudioLocalSeparation({ onPrepare, onClose, createWorkerC
     discardDraft();
     setError(null);
     setProgress(null);
+    setPreparingAudio(false);
     setStatus('separating');
     const current = () => run.current === mine && !abort.signal.aborted;
     try {
-      const wav = await audioFile.arrayBuffer();
+      // WAV passes through untouched; MP3 is decoded here into PCM16 stereo 44.1 kHz. Cancelling drops a late decode result.
+      const input = await prepareSeparationInput(audioFile, {
+        signal: abort.signal, backend: mp3Backend, onDecoding: () => { if (current()) setPreparingAudio(true); },
+      });
       abort.signal.throwIfAborted();
+      setPreparingAudio(false);
+      const wav = input.wavBytes;
       client.current = factory.current ? factory.current() : new DemucsSeparationWorkerClient();
       const result = await client.current.separate({
         descriptor: HTDEMUCS_6S_ONNX_DESCRIPTOR,
@@ -126,6 +132,7 @@ export function MinistryAudioLocalSeparation({ onPrepare, onClose, createWorkerC
       setStatus('error');
     } finally {
       if (run.current === mine) {
+        setPreparingAudio(false);
         // The model and the ONNX session are released as soon as the job ends: they are the largest buffers in the flow.
         releaseWorker();
         controller.current = null;
@@ -152,13 +159,13 @@ export function MinistryAudioLocalSeparation({ onPrepare, onClose, createWorkerC
     <section className={AUDIO_CARD} aria-label="Separar música localmente">
       <h3 className="text-lg font-semibold">Separar música neste dispositivo</h3>
       <p className="text-sm text-[var(--text-secondary)]">
-        O processamento acontece no seu navegador, sem enviar o áudio para nenhum serviço de separação. Use um WAV estéreo de 44,1 kHz com até 180 segundos e o modelo ONNX HT-Demucs 6 faixas (fp16) já baixado por você.
+        O processamento acontece no seu navegador, sem enviar o áudio para nenhum serviço de separação. Selecione uma música em MP3 ou WAV com até 180 segundos (o MP3 é convertido aqui mesmo, sem você precisar ajustar taxa de amostragem ou canais) e o modelo ONNX HT-Demucs 6 faixas (fp16) já baixado por você.
         O desempenho e a memória dependem do dispositivo e não são garantidos.
       </p>
       <fieldset disabled={busy} className="grid min-w-0 gap-3">
         <label className={AUDIO_FORM_FIELD}>
-          WAV da música
-          <input type="file" accept=".wav,audio/wav,audio/x-wav" className={AUDIO_FORM_INPUT} data-testid="separation-audio"
+          Arquivo da música
+          <input type="file" accept=".mp3,.wav,audio/mpeg,audio/mp3,audio/wav,audio/x-wav"className={AUDIO_FORM_INPUT} data-testid="separation-audio"
             onChange={(event) => setAudioFile(event.target.files?.[0] ?? null)} />
         </label>
         <label className={AUDIO_FORM_FIELD}>
@@ -169,7 +176,9 @@ export function MinistryAudioLocalSeparation({ onPrepare, onClose, createWorkerC
       </fieldset>
       {busy && (
         <p role="status">
-          {progress ? `${PHASE_LABEL[progress.phase]} ${Math.round(progress.fraction * 100)}%` : 'Preparando a separação…'}
+          {progress
+            ? `${PHASE_LABEL[progress.phase]} ${Math.round(progress.fraction * 100)}%`
+            : preparingAudio ? 'Preparando áudio… decodificando o MP3 e convertendo para a separação.' : 'Preparando a separação…'}
         </p>
       )}
       {error && <p role="alert">{error}</p>}

@@ -58,7 +58,8 @@ function modelFile(size = HTDEMUCS_6S_ONNX_DESCRIPTOR.expectedModelBytes) {
 }
 function wavFile() {
   const file = new File(['RIFF'], 'musica.wav');
-  Object.defineProperty(file, 'arrayBuffer', { value: async () => new ArrayBuffer(8) });
+  // The format is decided from the content: the worker is mocked, but the screen still sniffs a RIFF/WAVE header.
+  Object.defineProperty(file, 'arrayBuffer', { value: async () => new TextEncoder().encode('RIFF\0\0\0\0WAVEfmt ').buffer });
   return file;
 }
 async function openSeparation() {
