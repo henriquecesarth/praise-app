@@ -77,6 +77,11 @@ define: { 'globalThis.__LOUVAIO_VERIFIED_API__': JSON.stringify(['preview','prod
   worker: {
     format: 'es',
   },
+  // Dev only: pre-bundling moves onnxruntime-web into node_modules/.vite/deps, where its .wasm files do not exist
+  // (the dev server answers with index.html and the session fails with "expected magic word"). The production build is unaffected.
+  optimizeDeps: {
+    exclude: ['onnxruntime-web'],
+  },
   server: {
     port: 5173,
     proxy: process.env.VITE_PROXY_TARGET ? {
