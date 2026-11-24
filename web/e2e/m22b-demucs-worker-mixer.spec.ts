@@ -372,6 +372,8 @@ async function withHarnessViteServer<T>(
     viteServer = await createServer({
       configFile: false,
       root: WEB_DIR,
+      // Own optimizer cache: sharing node_modules/.vite with the E3/dev server invalidated its pre-bundled deps (HTTP 504).
+      cacheDir: path.join(WEB_DIR, 'node_modules', '.vite-m22b-harness'),
       plugins: [react(), harnessPlugin],
       optimizeDeps: {
         entries: ['src/audio/separation/DemucsOnnxBenchmarkHarness.tsx'],

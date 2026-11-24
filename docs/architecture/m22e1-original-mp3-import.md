@@ -40,6 +40,28 @@ divergente da estimativa por frames (> 1 s), amostras não finitas e saída acim
 - `decodeAudioData` não é interrompível: o cancelamento rejeita na hora (`CANCELLED`) e o resultado tardio é descartado, nunca chegando ao Demucs.
   Execuções concorrentes continuam isoladas pelo contador `run` da tela.
 
+## Desempenho local e ambiente de desenvolvimento (M22-E1.1)
+
+Medido em i5-3550 (4 núcleos/4 threads), 7,9 GB de RAM, Intel HD Graphics (D3D11, sem adaptador WebGPU), Chrome 158 com interface gráfica,
+mesmo modelo `htdemucs_6s` fp16 e entrada sintética (tons), um benchmark por vez:
+
+| Variante (4 s, 1 chunk) | Modelo | Inferência | Total | RTF |
+| --- | --- | --- | --- | --- |
+| WASM 1 thread | 50,4 s | 38,7 s | 89,5 s | 9,67 |
+| WASM 2 threads | 47,8 s | 26,1 s | 74,3 s | 6,53 |
+| WASM 4 threads (COI) | 45,8 s | 24,9 s | 71,0 s | 6,22 |
+| WebGPU | indisponível: `requestAdapter()` retorna `null` | — | — | — |
+
+WASM 4 threads com 61 s de áudio: decodificação MP3 0,2 s, modelo 41 s, inferência 264,6 s (11 chunks), codificação 2,6 s, total 308,8 s,
+RTF 4,33, pico de ~2,3 GB no Chrome, interface sem travar (maior intervalo de frame 84 ms), seis stems íntegros. 180 s **não** foi medido.
+
+- Multi-thread exige `crossOriginIsolated`. Sem COOP/COEP o app roda em 1 thread (comportamento padrão, inalterado).
+- `LOUVAIO_DEV_COI=1` (somente `vite serve`, opt-in) envia `COOP: same-origin` e `COEP: credentialless`. Nunca é aplicado por padrão nem no
+  build. COOP `same-origin` quebra popups OAuth/Firebase (o E3 usa token do emulator) e COEP afeta recursos de terceiros; `credentialless`
+  mantém funcionando subrecursos no-cors. Verificado: API local, Worker, ONNX com 4 threads e PUT assinado ao R2 de desenvolvimento
+  (CORS ok). Produção, PWA e Firebase real não foram avaliados.
+- Os harnesses E2E (`m22a`, `m22b`, `m22e1`) usam `cacheDir` próprio para não invalidar as dependências otimizadas do servidor de dev (HTTP 504).
+
 ## Validação
 
 - Unitários/componente: `original-mp3-import.test.ts`, `MinistryAudioLocalSeparation.mp3.test.tsx` (+ regressão em `MinistryAudioLocalSeparation.test.tsx`).

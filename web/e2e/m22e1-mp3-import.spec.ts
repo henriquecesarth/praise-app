@@ -80,7 +80,8 @@ test.beforeAll(async () => {
     },
   };
   server = await createServer({
-    configFile: false, root: WEB_DIR, plugins: [react(), plugin],
+    // Own optimizer cache: sharing node_modules/.vite with the E3/dev server invalidated its pre-bundled deps (HTTP 504).
+    configFile: false, root: WEB_DIR, cacheDir: path.join(WEB_DIR, 'node_modules', '.vite-m22e1-harness'), plugins: [react(), plugin],
     optimizeDeps: { entries: ['src/components/MinistryAudioLocalSeparation.tsx'], exclude: ['onnxruntime-web'] },
     server: { host: '127.0.0.1', port: 0 },
   });

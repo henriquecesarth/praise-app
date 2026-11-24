@@ -84,6 +84,13 @@ define: { 'globalThis.__LOUVAIO_VERIFIED_API__': JSON.stringify(['preview','prod
   },
   server: {
     port: 5173,
+    // Dev only and OPT-IN (LOUVAIO_DEV_COI=1): cross-origin isolation enables SharedArrayBuffer, so the Demucs ONNX Runtime can use
+    // multi-threaded WASM. COOP same-origin breaks OAuth/Firebase popups and COEP affects third-party resources, so it is never
+    // applied by default and never to the production build. `credentialless` keeps no-cors third-party subresources working.
+    headers: process.env.LOUVAIO_DEV_COI === '1' && command === 'serve' ? {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+    } : undefined,
     proxy: process.env.VITE_PROXY_TARGET ? {
       '/api/v1': {
         target: process.env.VITE_PROXY_TARGET,
