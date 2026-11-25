@@ -109,6 +109,7 @@ export function MinistryAudioLocalSeparation({ onPrepare, onClose, createWorkerC
         modelSource: modelFile,
         audioWavBytes: wav,
         transferInputBuffer: true,
+        retainPcmChannels: false, // the draft only needs the six WAVs: skip ~48 B/frame of Float32 PCM end to end
         preferredProviders: ['webgpu', 'wasm'],
         verifyModelChecksum: true, // the pinned SHA-256 is always enforced
         useModelBytesCache: false,

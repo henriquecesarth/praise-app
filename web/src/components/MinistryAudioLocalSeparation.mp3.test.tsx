@@ -119,10 +119,13 @@ describe('Separação local: importação de MP3', () => {
 
   it('cancels during decoding: no worker is created and the late decode result is discarded', async () => {
     let release!: (value: DecodedBufferLike) => void;
-    mount(backend(() => new Promise((resolve) => { release = resolve; })));
+    const slowBackend = backend(() => new Promise((resolve) => { release = resolve; }));
+    mount(slowBackend);
     pick('separation-audio', mp3('cbr-stereo-44k-id3.mp3'));
     pick('separation-model', model());
     start();
+    // The decode must really be in flight before cancelling, otherwise there is nothing to release (was a ~1-in-3 flake).
+    await waitFor(() => expect(slowBackend.decode).toHaveBeenCalled());
     fireEvent.click(await screen.findByRole('button', { name: 'Cancelar separação' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('cancelada');
     release(decoded(4 * 44_100));

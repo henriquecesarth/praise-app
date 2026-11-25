@@ -257,6 +257,61 @@ describe('DemucsSeparationWorkerClient (M22-B)', () => {
     ).rejects.toMatchObject({ code: 'WORKER_DISPOSED' });
   });
 
+  it('M22-M1: retainPcmChannels=false asks the worker for WAV only and accepts stems without PCM buffers', async () => {
+    const worker = new FakeDemucsWorker();
+    const client = new DemucsSeparationWorkerClient({ createWorker: () => worker });
+    const run = client.separate({
+      descriptor: testDescriptor,
+      modelSource: '/models/test.onnx',
+      audioWavBytes: sampleWav,
+      wasmPaths: '/ort/',
+      preferredProviders: ['wasm'],
+      retainPcmChannels: false,
+    });
+    const req = worker.postedMessages[0].message as DemucsWorkerRequest;
+    if (req.type !== 'run_separation') throw new Error('expected run_separation');
+    expect(req.retainPcmChannels).toBe(false);
+    const msg = await buildCompletedPayload(req.jobId, testDescriptor, 12);
+    if (msg.type !== 'completed') throw new Error('expected completed');
+    worker.emitMessage({
+      ...msg,
+      orderedStems: msg.orderedStems.map((s) => ({ ...s, leftBuffer: null, rightBuffer: null })),
+    });
+    const result = await run;
+    expect(result.orderedStems).toHaveLength(6);
+    for (const stem of result.orderedStems) {
+      expect(stem.left.length).toBe(0);
+      expect(stem.right.length).toBe(0);
+      expect(stem.wavBytes.byteLength).toBe(44 + 12 * 4);
+    }
+    client.dispose();
+  });
+
+  it('M22-M1: fails closed when PCM buffers arrive although they were not requested, or are missing when they were', async () => {
+    for (const retain of [false, true]) {
+      const worker = new FakeDemucsWorker();
+      const client = new DemucsSeparationWorkerClient({ createWorker: () => worker });
+      const run = client.separate({
+        descriptor: testDescriptor,
+        modelSource: '/models/test.onnx',
+        audioWavBytes: sampleWav,
+        wasmPaths: '/ort/',
+        preferredProviders: ['wasm'],
+        retainPcmChannels: retain,
+      });
+      const req = worker.postedMessages[0].message as DemucsWorkerRequest;
+      if (req.type !== 'run_separation') throw new Error('expected run_separation');
+      const msg = await buildCompletedPayload(req.jobId, testDescriptor, 12);
+      if (msg.type !== 'completed') throw new Error('expected completed');
+      worker.emitMessage(
+        retain
+          ? { ...msg, orderedStems: msg.orderedStems.map((s) => ({ ...s, leftBuffer: null, rightBuffer: null })) }
+          : msg // still carries Float32 PCM although retainPcmChannels=false
+      );
+      await expect(run).rejects.toMatchObject({ code: 'INFERENCE_FAILED' });
+      client.dispose();
+    }
+  });
   it('rejects a worker result whose frames disagree with the input WAV', async () => {
     const worker = new FakeDemucsWorker();
     const client = new DemucsSeparationWorkerClient({ createWorker: () => worker });
@@ -581,7 +636,7 @@ describe('DemucsSeparationWorkerClient (M22-B)', () => {
       12
     );
     if (nanMsg.type === 'completed') {
-      new Float32Array(nanMsg.orderedStems[0].leftBuffer)[0] = Number.NaN;
+      new Float32Array(nanMsg.orderedStems[0].leftBuffer!)[0] = Number.NaN;
     }
     workers[1].emitMessage(nanMsg);
     await expect(pNan).rejects.toMatchObject({ code: 'NON_FINITE_OUTPUT' });

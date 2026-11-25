@@ -254,6 +254,13 @@ export interface SeparateStereoAudioOptions {
   executionContext?: SeparationExecutionContext;
   signal?: AbortSignal;
   yieldBetweenChunks?: boolean;
+  /**
+   * Default `true`: every stem keeps its final Float32 `left`/`right` channels next to its WAV (the historical contract).
+   * `false` (M22-M1): stems are finalised while the chunks are processed, only a segment-sized overlap window is kept for
+   * the accumulators and each stem's PCM16 WAV is written in place; `left`/`right` come back as empty arrays. The WAV
+   * bytes, SHA-256, rms, peak and reconstruction error are bit-identical to the default path.
+   */
+  retainPcmChannels?: boolean;
   onProgress?: (event: SeparationProgressEvent) => void;
 }
 
@@ -538,9 +545,11 @@ export const DEFAULT_SEPARATION_MODEL_REGISTRY =
 export async function computeSha256Hex(bytes: Uint8Array): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
   if (subtle && typeof subtle.digest === 'function') {
-    const bufferCopy = new Uint8Array(bytes.byteLength);
-    bufferCopy.set(bytes);
-    const digest = await subtle.digest('SHA-256', bufferCopy.buffer);
+    // SubtleCrypto hashes exactly the bytes of a view, so no defensive copy is needed (a 300 s stem is ~50 MiB, hashed
+    // up to four times per run). Only a SharedArrayBuffer-backed view, which digest() rejects, is copied first.
+    const shared = typeof SharedArrayBuffer !== 'undefined' && bytes.buffer instanceof SharedArrayBuffer;
+    const source: Uint8Array = shared ? bytes.slice() : bytes;
+    const digest = await subtle.digest('SHA-256', source as unknown as BufferSource);
     const view = new Uint8Array(digest);
     let hex = '';
     for (let i = 0; i < view.length; i++) {
@@ -1040,6 +1049,69 @@ export function decodeWavToStereoFloat32(
   };
 }
 
+/**
+ * Incremental twin of `decodeWavToStereoFloat32` (M22-M1): decodes straight into caller-owned channel arrays (e.g. the
+ * channels of an AudioBuffer) in slices, yielding between slices so a 300 s stem never blocks the main thread for seconds
+ * and no intermediate left/right pair is allocated. Same validation and the same per-frame conversion, so the samples
+ * are identical; `rms`/`peak` use the mixer's formula. Resolves `null` when `isCancelled()` turns true.
+ */
+export async function decodeWavIntoChannels(
+  buffer: ArrayBuffer,
+  targetLeft: Float32Array,
+  targetRight: Float32Array,
+  options: {
+    expectedSampleRate?: number | null;
+    maxFrames?: number;
+    sliceFrames?: number;
+    yieldFn?: () => Promise<void>;
+    isCancelled?: () => boolean;
+  } = {}
+): Promise<{ totalFrames: number; rms: number; peak: number } | null> {
+  const header = parseStrictWavDescriptor(buffer);
+  if (
+    options.expectedSampleRate !== undefined &&
+    options.expectedSampleRate !== null &&
+    header.sampleRate !== options.expectedSampleRate
+  ) {
+    throw new AudioSeparationError(
+      'SAMPLE_RATE_MISMATCH',
+      `Expected ${formatDiagValue(options.expectedSampleRate)} Hz WAV, got ${header.sampleRate} Hz.`
+    );
+  }
+  const maxFrames = options.maxFrames ?? Math.min(header.sampleRate * DEFAULT_MAX_AUDIO_SECONDS, MAX_SEPARATION_TOTAL_FRAMES);
+  if (!Number.isSafeInteger(maxFrames) || maxFrames <= 0) {
+    throw new AudioSeparationError('INVALID_AUDIO', `Invalid maxFrames decode cap: ${formatDiagValue(maxFrames)}.`);
+  }
+  if (header.totalFrames > maxFrames) {
+    throw new AudioSeparationError(
+      'INVALID_AUDIO',
+      `WAV frame count (${header.totalFrames}) exceeds decode cap (${maxFrames} frames).`
+    );
+  }
+  const totalFrames = header.totalFrames;
+  if (targetLeft.length < totalFrames || targetRight.length < totalFrames) {
+    throw new AudioSeparationError('INVALID_AUDIO', 'Decode target is shorter than the WAV frame count.');
+  }
+  const view = new DataView(buffer);
+  const slice = Math.max(1024, options.sliceFrames ?? 262_144);
+  let sumSq = 0;
+  let peak = 0;
+  for (let from = 0; from < totalFrames; from += slice) {
+    if (options.isCancelled?.()) return null;
+    const to = Math.min(totalFrames, from + slice);
+    for (let frame = from; frame < to; frame++) {
+      const [l, r] = readStereoWavFrame(view, header, frame);
+      targetLeft[frame] = l;
+      targetRight[frame] = r;
+      sumSq += l * l + r * r;
+      const absMax = Math.max(Math.abs(l), Math.abs(r));
+      if (absMax > peak) peak = absMax;
+    }
+    if (to < totalFrames && options.yieldFn) await options.yieldFn();
+  }
+  return { totalFrames, rms: totalFrames > 0 ? Math.sqrt(sumSq / (totalFrames * 2)) : 0, peak };
+}
+
 /** Encode planar stereo Float32 audio into a canonical PCM16 WAV byte array. */
 export function encodeStereoPcm16Wav(audio: {
   sampleRate: number;
@@ -1110,6 +1182,39 @@ export function encodeStereoPcm16Wav(audio: {
     view.setInt16(offset + 2, rInt, true);
   }
 
+  return out;
+}
+
+/** The exact float -> int16 conversion of `encodeStereoPcm16Wav` (clamp, asymmetric scale, round, clamp). */
+export function quantizePcm16(value: number): number {
+  const clamped = Math.max(-1, Math.min(1, value));
+  return Math.max(
+    -32768,
+    Math.min(32767, Math.round(clamped < 0 ? clamped * 32768 : clamped * 32767))
+  );
+}
+
+/** A zero-filled canonical stereo PCM16 WAV (header identical to `encodeStereoPcm16Wav`) ready to be filled in place. */
+export function allocatePcm16WavBuffer(sampleRate: number, totalFrames: number): Uint8Array {
+  const dataBytes = totalFrames * 4;
+  const out = new Uint8Array(44 + dataBytes);
+  const view = new DataView(out.buffer);
+  const writeAscii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+  writeAscii(0, 'RIFF');
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(8, 'WAVE');
+  writeAscii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 2, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 4, true);
+  view.setUint16(32, 4, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, 'data');
+  view.setUint32(40, dataBytes, true);
   return out;
 }
 
@@ -2301,19 +2406,33 @@ export async function separateStereoAudio(
       : Math.ceil((totalFrames - segmentSamples) / stride) + 1;
 
   // Allocate working buffers before acquiring an owned ONNX session so OOM fails before session creation.
+  // retainPcmChannels === false (M22-M1): the accumulators only cover one segment (a sliding overlap window) and every
+  // stem's PCM16 WAV is written in place as soon as its frames can no longer change, instead of keeping the whole
+  // track as Float32 (and two Float64 sums) until the end. Same arithmetic, same order => bit-identical output.
+  const retainPcm = options.retainPcmChannels !== false;
+  const accLen = retainPcm ? totalFrames : segmentSamples;
   const stemAccumulators = new Map<
     CanonicalStemId,
     { left: Float32Array; right: Float32Array }
   >();
   for (const stemId of descriptor.canonicalStemOrder) {
     stemAccumulators.set(stemId, {
-      left: new Float32Array(totalFrames),
-      right: new Float32Array(totalFrames),
+      left: new Float32Array(accLen),
+      right: new Float32Array(accLen),
     });
   }
-  const weightSum = new Float32Array(totalFrames);
-  const sumLeft = new Float64Array(totalFrames);
-  const sumRight = new Float64Array(totalFrames);
+  const weightSum = new Float32Array(accLen);
+  const sumLeft = new Float64Array(retainPcm ? totalFrames : 0);
+  const sumRight = new Float64Array(retainPcm ? totalFrames : 0);
+  const streamSinks = retainPcm
+    ? null
+    : descriptor.canonicalStemOrder.map((stemId) => {
+        const wav = allocatePcm16WavBuffer(descriptor.sampleRate, totalFrames);
+        return { stemId, wav, view: new DataView(wav.buffer), acc: stemAccumulators.get(stemId)!, sumSquares: 0, peak: 0 };
+      });
+  let streamFinalizedUpTo = 0;
+  let streamReconstructionMaxAbsError = 0;
+  let streamFinalizeMs = 0;
   const mixChunk = new Float32Array(2 * segmentSamples);
   const stemCount = descriptor.rawOutputStemOrder.length;
   const expectedSegmentOutputLen = stemCount * 2 * segmentSamples;
@@ -2379,6 +2498,7 @@ export async function separateStereoAudio(
       const start = chunkIdx * stride;
       const end = Math.min(start + segmentSamples, totalFrames);
       const copyLen = end - start;
+      const accBase = retainPcm ? start : 0;
 
       mixChunk.fill(0);
       mixChunk.set(audio.left.subarray(start, end), 0);
@@ -2418,13 +2538,75 @@ export async function separateStereoAudio(
           const sl = rawOutput[leftBase + t];
           const sr = rawOutput[rightBase + t];
           const w = window[t];
-          acc.left[start + t] += sl * w;
-          acc.right[start + t] += sr * w;
+          acc.left[accBase + t] += sl * w;
+          acc.right[accBase + t] += sr * w;
         }
       }
 
       for (let t = 0; t < copyLen; t++) {
-        weightSum[start + t] += window[t];
+        weightSum[accBase + t] += window[t];
+      }
+
+      if (streamSinks) {
+        // Frames before the next chunk's start receive no further contribution: finalise them now (all of them after the last chunk).
+        const finalizeStartMs = nowMs();
+        const isLastChunk = chunkIdx + 1 === totalChunks;
+        const limit = isLastChunk ? totalFrames : (chunkIdx + 1) * stride;
+        const sinks = streamSinks;
+        for (let t = streamFinalizedUpTo; t < limit; t++) {
+          const r = t - start;
+          const w = weightSum[r];
+          let sumL = 0;
+          let sumR = 0;
+          for (let s = 0; s < sinks.length; s++) {
+            const sink = sinks[s];
+            const l = sink.acc.left[r] / w;
+            const rr = sink.acc.right[r] / w;
+            if (!Number.isFinite(l) || !Number.isFinite(rr)) {
+              throw new AudioSeparationError(
+                'NON_FINITE_OUTPUT',
+                `Normalized stem "${sink.stemId}" produced non-finite sample at frame ${t}.`
+              );
+            }
+            sumL += l;
+            sumR += rr;
+            sink.sumSquares += l * l + rr * rr;
+            const absMax = Math.max(Math.abs(l), Math.abs(rr));
+            if (absMax > sink.peak) {
+              sink.peak = absMax;
+            }
+            // Same value the Float32 accumulator held after normalisation, quantised exactly like encodeStereoPcm16Wav.
+            const offset = 44 + t * 4;
+            sink.view.setInt16(offset, quantizePcm16(Math.fround(l)), true);
+            sink.view.setInt16(offset + 2, quantizePcm16(Math.fround(rr)), true);
+          }
+          const frameErr = Math.max(
+            Math.abs(audio.left[t] - sumL),
+            Math.abs(audio.right[t] - sumR)
+          );
+          if (!Number.isFinite(frameErr)) {
+            throw new AudioSeparationError(
+              'NON_FINITE_OUTPUT',
+              `Non-finite reconstruction error at frame ${t}.`
+            );
+          }
+          if (frameErr > streamReconstructionMaxAbsError) {
+            streamReconstructionMaxAbsError = frameErr;
+          }
+        }
+        streamFinalizedUpTo = limit;
+        if (!isLastChunk) {
+          // Keep only the overlap with the next chunk, moved to the start of the window.
+          for (const sink of sinks) {
+            sink.acc.left.copyWithin(0, stride, segmentSamples);
+            sink.acc.right.copyWithin(0, stride, segmentSamples);
+            sink.acc.left.fill(0, overlapSamples);
+            sink.acc.right.fill(0, overlapSamples);
+          }
+          weightSum.copyWithin(0, stride, segmentSamples);
+          weightSum.fill(0, overlapSamples);
+        }
+        streamFinalizeMs += Math.max(0, nowMs() - finalizeStartMs);
       }
 
       options.onProgress?.({
@@ -2440,7 +2622,8 @@ export async function separateStereoAudio(
       }
     }
 
-    const encodeStartMs = nowMs();
+    // In the streaming path the PCM16 encoding already happened chunk by chunk: count it in encodeMs.
+    const encodeStartMs = nowMs() - streamFinalizeMs;
     options.onProgress?.({
       phase: 'encoding',
       chunkIndex: totalChunks,
@@ -2452,7 +2635,37 @@ export async function separateStereoAudio(
     const stemsRecord = {} as Record<CanonicalStemId, SeparatedStemOutput>;
     const orderedStems: SeparatedStemOutput[] = [];
 
-    for (const stemId of descriptor.canonicalStemOrder) {
+    for (const sink of streamSinks ?? []) {
+      checkAborted(options.signal);
+      const wavBytes = sink.wav;
+      const sha256 = await computeSha256Hex(wavBytes);
+      checkAborted(options.signal);
+      const rms = Math.sqrt(sink.sumSquares / (totalFrames * 2));
+      if (!Number.isFinite(rms) || !Number.isFinite(sink.peak)) {
+        throw new AudioSeparationError(
+          'NON_FINITE_OUTPUT',
+          `Non-finite signal diagnostics computed for stem "${sink.stemId}".`
+        );
+      }
+      const stemOutput: SeparatedStemOutput = {
+        id: sink.stemId,
+        labelPtBr: STEM_DISPLAY_LABELS_PT_BR[sink.stemId],
+        sampleRate: descriptor.sampleRate,
+        channels: 2,
+        totalFrames,
+        left: new Float32Array(0),
+        right: new Float32Array(0),
+        wavBytes,
+        byteLength: wavBytes.byteLength,
+        sha256,
+        rms,
+        peak: sink.peak,
+      };
+      stemsRecord[sink.stemId] = stemOutput;
+      orderedStems.push(stemOutput);
+    }
+
+    for (const stemId of streamSinks ? [] : descriptor.canonicalStemOrder) {
       checkAborted(options.signal);
       const acc = stemAccumulators.get(stemId)!;
       let sumSquares = 0;
@@ -2513,8 +2726,8 @@ export async function separateStereoAudio(
       orderedStems.push(stemOutput);
     }
 
-    let reconstructionMaxAbsError = 0;
-    for (let t = 0; t < totalFrames; t++) {
+    let reconstructionMaxAbsError = streamSinks ? streamReconstructionMaxAbsError : 0;
+    for (let t = 0; t < (streamSinks ? 0 : totalFrames); t++) {
       const errL = Math.abs(audio.left[t] - sumLeft[t]);
       const errR = Math.abs(audio.right[t] - sumRight[t]);
       const frameErr = Math.max(errL, errR);

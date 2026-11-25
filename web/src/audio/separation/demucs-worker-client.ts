@@ -53,6 +53,8 @@ export interface SeparateInWorkerOptions {
   useModelBytesCache?: boolean;
   reuseWarmSession?: boolean;
   transferInputBuffer?: boolean;
+  /** Default true (stems carry Float32 left/right). false: WAV only; left/right are empty arrays and use much less memory. */
+  retainPcmChannels?: boolean;
   signal?: AbortSignal;
   onProgress?: (event: SeparationProgressEvent) => void;
 }
@@ -62,6 +64,7 @@ interface ActiveWorkerJob {
   descriptor: AudioSeparationModelDescriptor;
   requestedPreferredProviders: readonly ExecutionProviderName[];
   expectedTotalFrames: number;
+  retainPcmChannels: boolean;
   expectedOverlapSamples: number;
   onProgress?: (event: SeparationProgressEvent) => void;
   resolve: (result: SeparationResult) => void;
@@ -405,8 +408,9 @@ export class DemucsSeparationWorkerClient {
           stem.sampleRate !== job.descriptor.sampleRate ||
           stem.channels !== 2 ||
           stem.totalFrames !== telemetry.totalFrames ||
-          !(stem.leftBuffer instanceof ArrayBuffer) ||
-          !(stem.rightBuffer instanceof ArrayBuffer) ||
+          (job.retainPcmChannels
+            ? !(stem.leftBuffer instanceof ArrayBuffer) || !(stem.rightBuffer instanceof ArrayBuffer)
+            : stem.leftBuffer !== null || stem.rightBuffer !== null) ||
           !(stem.wavBuffer instanceof ArrayBuffer)
         ) {
           throw new AudioSeparationError(
@@ -415,29 +419,29 @@ export class DemucsSeparationWorkerClient {
           );
         }
         if (
-          seenBuffers.has(stem.leftBuffer) ||
-          seenBuffers.has(stem.rightBuffer) ||
+          (stem.leftBuffer !== null && seenBuffers.has(stem.leftBuffer)) ||
+          (stem.rightBuffer !== null && seenBuffers.has(stem.rightBuffer)) ||
           seenBuffers.has(stem.wavBuffer) ||
-          stem.leftBuffer === stem.rightBuffer ||
-          stem.leftBuffer === stem.wavBuffer ||
-          stem.rightBuffer === stem.wavBuffer
+          (stem.leftBuffer !== null && stem.leftBuffer === stem.rightBuffer) ||
+          (stem.leftBuffer !== null && stem.leftBuffer === stem.wavBuffer) ||
+          (stem.rightBuffer !== null && stem.rightBuffer === stem.wavBuffer)
         ) {
           throw new AudioSeparationError(
             'INFERENCE_FAILED',
             `Worker stem "${stem.id}" returned aliased or shared channel/WAV buffers.`
           );
         }
-        seenBuffers.add(stem.leftBuffer);
-        seenBuffers.add(stem.rightBuffer);
+        if (stem.leftBuffer !== null) seenBuffers.add(stem.leftBuffer);
+        if (stem.rightBuffer !== null) seenBuffers.add(stem.rightBuffer);
         seenBuffers.add(stem.wavBuffer);
 
-        const left = new Float32Array(stem.leftBuffer);
-        const right = new Float32Array(stem.rightBuffer);
+        const left = stem.leftBuffer ? new Float32Array(stem.leftBuffer) : new Float32Array(0);
+        const right = stem.rightBuffer ? new Float32Array(stem.rightBuffer) : new Float32Array(0);
         const wavBytes = new Uint8Array(stem.wavBuffer);
         const expectedWavBytes = 44 + telemetry.totalFrames * 4;
         if (
-          left.length !== telemetry.totalFrames ||
-          right.length !== telemetry.totalFrames ||
+          left.length !== (job.retainPcmChannels ? telemetry.totalFrames : 0) ||
+          right.length !== (job.retainPcmChannels ? telemetry.totalFrames : 0) ||
           wavBytes.byteLength !== expectedWavBytes ||
           stem.byteLength !== expectedWavBytes ||
           !Number.isFinite(stem.rms) ||
@@ -707,6 +711,7 @@ export class DemucsSeparationWorkerClient {
         descriptor,
         requestedPreferredProviders: Object.freeze([...preferredProviders]),
         expectedTotalFrames: inputWavHeader.totalFrames,
+        retainPcmChannels: options.retainPcmChannels !== false,
         expectedOverlapSamples,
         onProgress: options.onProgress,
         resolve,
@@ -739,6 +744,7 @@ export class DemucsSeparationWorkerClient {
         ...(options.reuseWarmSession !== undefined
           ? { reuseWarmSession: options.reuseWarmSession }
           : {}),
+        ...(options.retainPcmChannels === false ? { retainPcmChannels: false } : {}),
       };
 
       try {

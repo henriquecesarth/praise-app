@@ -20,6 +20,8 @@ export interface DemucsWorkerRunRequest {
   verifyModelChecksum?: boolean;
   useModelBytesCache?: boolean;
   reuseWarmSession?: boolean;
+  /** Default true. false: the worker keeps no Float32 PCM and the stems come back as WAV only (M22-M1). */
+  retainPcmChannels?: boolean;
 }
 
 export interface DemucsWorkerCancelRequest {
@@ -49,8 +51,9 @@ export interface TransferredStemPayload {
   sampleRate: number;
   channels: 2;
   totalFrames: number;
-  leftBuffer: ArrayBuffer;
-  rightBuffer: ArrayBuffer;
+  /** null when the request set retainPcmChannels=false: the PCM is not transferred. */
+  leftBuffer: ArrayBuffer | null;
+  rightBuffer: ArrayBuffer | null;
   wavBuffer: ArrayBuffer;
   byteLength: number;
   sha256: string;

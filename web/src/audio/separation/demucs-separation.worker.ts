@@ -105,11 +105,13 @@ async function handleRunSeparation(req: DemucsWorkerRunRequest): Promise<void> {
       );
     }
 
-    const inputBytes = new Uint8Array(req.audioWavBytes);
-    const inputSha256 = await computeSha256Hex(inputBytes);
+    const inputSha256 = await computeSha256Hex(new Uint8Array(req.audioWavBytes));
     const decoded = decodeWavToStereoFloat32(req.audioWavBytes, {
       expectedSampleRate: frozenDescriptor.sampleRate,
     });
+    // The decoded Float32 channels are the only input copy needed from here on: drop the transferred WAV (4 B/frame).
+    (req as { audioWavBytes: ArrayBuffer | null }).audioWavBytes = null;
+    const retainPcmChannels = req.retainPcmChannels !== false;
 
     if (abortController.signal.aborted) {
       throw new AudioSeparationError(
@@ -155,6 +157,7 @@ async function handleRunSeparation(req: DemucsWorkerRunRequest): Promise<void> {
       executionContext: 'web_worker',
       signal: abortController.signal,
       yieldBetweenChunks: false,
+      retainPcmChannels,
       onProgress: (event) => {
         if (!abortController.signal.aborted && activeJobId === req.jobId) {
           workerScope.postMessage({
@@ -237,10 +240,11 @@ async function handleRunSeparation(req: DemucsWorkerRunRequest): Promise<void> {
     const transferables: ArrayBuffer[] = [];
     const orderedStems: TransferredStemPayload[] = result.orderedStems.map(
       (stem) => {
-        const leftBuffer = toOwnedArrayBuffer(stem.left);
-        const rightBuffer = toOwnedArrayBuffer(stem.right);
+        const leftBuffer = retainPcmChannels ? toOwnedArrayBuffer(stem.left) : null;
+        const rightBuffer = retainPcmChannels ? toOwnedArrayBuffer(stem.right) : null;
         const wavBuffer = toOwnedArrayBuffer(stem.wavBytes);
-        transferables.push(leftBuffer, rightBuffer, wavBuffer);
+        if (leftBuffer && rightBuffer) transferables.push(leftBuffer, rightBuffer);
+        transferables.push(wavBuffer);
         return {
           id: stem.id,
           labelPtBr: stem.labelPtBr,

@@ -6,7 +6,7 @@ import {
   MAX_SEPARATION_TOTAL_FRAMES,
   STEM_DISPLAY_LABELS_PT_BR,
   computeSha256Hex,
-  decodeWavToStereoFloat32,
+  decodeWavIntoChannels,
   parseStrictWavDescriptor,
   type CanonicalStemId,
   type SeparatedStemOutput,
@@ -196,25 +196,6 @@ function clampUnitVolume(value: number): number {
     return 1;
   }
   return Math.max(0, Math.min(1, value));
-}
-
-function computeSignalStats(left: Float32Array, right: Float32Array): {
-  rms: number;
-  peak: number;
-} {
-  let sumSq = 0;
-  let peak = 0;
-  for (let i = 0; i < left.length; i++) {
-    const l = left[i];
-    const r = right[i];
-    sumSq += l * l + r * r;
-    const absMax = Math.max(Math.abs(l), Math.abs(r));
-    if (absMax > peak) {
-      peak = absMax;
-    }
-  }
-  const rms = left.length > 0 ? Math.sqrt(sumSq / (left.length * 2)) : 0;
-  return { rms, peak };
 }
 
 interface InternalStemState {
@@ -792,15 +773,16 @@ export class SixStemWebAudioMixerController {
         const finalSampleRate = resolvedSampleRate!;
         const finalTotalFrames = resolvedTotalFrames!;
         ctx ??= this.ensureAudioGraph(finalSampleRate);
-        // Allocate only one temporary decoded pair at a time while staging final AudioBuffers.
-        const { left, right } = decodeWavToStereoFloat32(stem.wavBytes.buffer as ArrayBuffer, {
+        // Decode straight into the AudioBuffer channels, in slices that yield to the main thread: no temporary Float32 pair.
+        const audioBuffer = ctx.createBuffer(2, finalTotalFrames, finalSampleRate);
+        const decoded = await decodeWavIntoChannels(stem.wavBytes.buffer as ArrayBuffer, audioBuffer.getChannelData(0), audioBuffer.getChannelData(1), {
           expectedSampleRate: finalSampleRate,
           maxFrames: stem.wavMaxFrames,
+          yieldFn: this.yieldToMainThreadFn,
+          isCancelled: () => loadGen !== this.generation || this.disposed,
         });
-        const { rms, peak } = computeSignalStats(left, right);
-        const audioBuffer = ctx.createBuffer(2, finalTotalFrames, finalSampleRate);
-        audioBuffer.getChannelData(0).set(left);
-        audioBuffer.getChannelData(1).set(right);
+        if (decoded === null) return this.getSnapshot();
+        const { rms, peak } = decoded;
 
         let downloadUrl: string | null = null;
         if (this.enableWavDownloads) {
