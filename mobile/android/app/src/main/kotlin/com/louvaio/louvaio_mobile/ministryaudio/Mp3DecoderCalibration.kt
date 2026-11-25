@@ -13,11 +13,17 @@ import kotlin.math.abs
  * positions within [TOLERANCE_FRAMES]. A device whose decoder behaves differently fails closed: MP3 is refused, nothing
  * is padded or shifted to compensate.
  */
+/** Gate that must pass before any MP3 is decoded on this device. */
+fun interface Mp3Gate {
+    @Throws(MinistryAudioException::class)
+    fun requireVerified()
+}
+
 class Mp3DecoderCalibration(
     private val decoder: Mp3PcmDecoder,
     private val scratchDir: File,
     private val openAsset: (String) -> InputStream,
-) {
+) : Mp3Gate {
     private data class Case(val asset: String, val rate: Int, val frames: Long, val alignment: Mp3Alignment, val bursts: IntArray)
 
     @Volatile
@@ -26,7 +32,7 @@ class Mp3DecoderCalibration(
     /** Throws [MinistryAudioException] unless this device is verified. The outcome is cached for the process. */
     @Synchronized
     @Throws(MinistryAudioException::class)
-    fun requireVerified() {
+    override fun requireVerified() {
         when (val r = result) {
             "" -> return
             null -> Unit

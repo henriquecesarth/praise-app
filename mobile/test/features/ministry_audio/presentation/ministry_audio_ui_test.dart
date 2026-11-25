@@ -149,6 +149,7 @@ class _Port implements MinistryAudioPlayerPort {
     required String recordingId,
     required int sampleRate,
     required int frames,
+    MinistryAudioMp3Alignment? mp3Alignment,
   }) async {
     calls.add('prepare:$ministryId');
     if (prepareGate != null) await prepareGate!.future;
@@ -904,6 +905,7 @@ class _SlowClosePort implements MinistryAudioPlayerPort {
     required String recordingId,
     required int sampleRate,
     required int frames,
+    MinistryAudioMp3Alignment? mp3Alignment,
   }) =>
       _inner.prepare(
         sessionId: sessionId,
@@ -912,6 +914,7 @@ class _SlowClosePort implements MinistryAudioPlayerPort {
         recordingId: recordingId,
         sampleRate: sampleRate,
         frames: frames,
+        mp3Alignment: mp3Alignment,
       );
   @override
   Future<void> play(String s) => _inner.play(s);

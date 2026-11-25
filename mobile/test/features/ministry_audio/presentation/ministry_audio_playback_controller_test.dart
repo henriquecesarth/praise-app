@@ -12,6 +12,7 @@ import 'package:louvaio_mobile/features/ministry_audio/domain/ministry_audio_mod
 import 'package:louvaio_mobile/features/ministry_audio/presentation/controllers/ministry_audio_playback_controller.dart';
 
 import '../data/ministry_audio_cache_test.dart' show idN, mk, playbackFor;
+import '../data/ministry_audio_mp3_cache_test.dart' show idA, mp3Payload, mp3Playback;
 import '../data/ministry_audio_download_manager_test.dart'
     show FakeStorage, FakeTransport, payloadOf;
 
@@ -69,6 +70,7 @@ class _Port implements MinistryAudioPlayerPort {
     required String recordingId,
     required int sampleRate,
     required int frames,
+    MinistryAudioMp3Alignment? mp3Alignment,
   }) async {
     calls.add('prepare:$sessionId');
     prepareArgs.add({
@@ -78,6 +80,7 @@ class _Port implements MinistryAudioPlayerPort {
       'recordingId': recordingId,
       'sampleRate': sampleRate,
       'frames': frames,
+      if (mp3Alignment != null) 'mp3Alignment': mp3Alignment,
     });
     if (prepareGate != null) await prepareGate!.future;
     if (prepareError != null) throw prepareError!;
@@ -250,6 +253,31 @@ void main() {
     expect(c.state.phase, MinistryAudioPlaybackPhase.idle);
     expect(port.calls.last, 'close:session-1');
     await expectLater(c.play(), throwsA(isA<AppFailure>()));
+  });
+
+  test('an MP3 set is prepared with its manifest alignment and nothing else new crosses the channel', () async {
+    repo.byId[idA] = mp3Playback(id: idA);
+    transport = FakeTransport(behavior: (s, a, t) => Stream.value(mp3Payload(s.name)));
+    final c = build();
+    await c.open(idA);
+    expect(c.state.phase, MinistryAudioPlaybackPhase.ready);
+    expect(c.state.sampleRate, 44100);
+    expect(c.state.durationFrames, 3000);
+    final args = port.prepareArgs.single;
+    expect(args.keys.toSet(), {'sessionId', 'userId', 'ministryId', 'recordingId', 'sampleRate', 'frames', 'mp3Alignment'});
+    final al = args['mp3Alignment']! as MinistryAudioMp3Alignment;
+    expect(al.encoderDelayFrames, 1105);
+    expect('${port.prepareArgs} ${port.calls}'.contains(temp.path), isFalse);
+    expect(leases(), 1);
+    expect(await c.close(), isTrue);
+    expect(leases(), 0);
+  });
+
+  test('a WAV set never sends an alignment', () async {
+    final c = build();
+    await c.open(idN(0));
+    expect(port.prepareArgs.single.containsKey('mp3Alignment'), isFalse);
+    await c.close();
   });
 
   test('native messages carry identifiers only: no path, no URL, no secret',

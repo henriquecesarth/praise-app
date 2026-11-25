@@ -197,15 +197,6 @@ class MinistryAudioPlaybackController
         cached.release(); // never reached native: no files open
         throw _contextFailure();
       }
-      if (cached.recording.codec != MinistryAudioCodec.pcm) {
-        // Not playable yet: fail closed before anything reaches native code.
-        cached.release();
-        throw const AppFailure(
-          message: 'Este formato de áudio ainda não é suportado no app.',
-          statusCode: 422,
-          code: MinistryAudioContract.unsupportedCodecCode,
-        );
-      }
       cached.takeOwnership();
       _lease = cached;
       final sid = _newSessionId();
@@ -218,6 +209,7 @@ class MinistryAudioPlaybackController
         recordingId: recordingId,
         sampleRate: cached.sampleRate,
         frames: cached.frames,
+        mp3Alignment: cached.recording.mp3Alignment,
       );
       if (_stale(epoch, captured)) throw _contextFailure();
       _prepared = true;

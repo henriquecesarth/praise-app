@@ -11,6 +11,13 @@ fun interface MinistryBridgeEvents {
     fun emit(event: Map<String, Any?>)
 }
 
+/** Optional MP3 capability (experimental): decoder, per-device calibration gate and free-space source. */
+class Mp3Support(
+    val decoder: Mp3PcmDecoder,
+    val calibration: Mp3Gate,
+    val usableSpace: (File) -> Long = { it.usableSpace },
+)
+
 /**
  * Typed command surface between Flutter and [MinistryAudioEngine].
  *
@@ -33,6 +40,7 @@ class MinistryAudioBridge(
     private val filesDir: File,
     private val events: MinistryBridgeEvents,
     private val engineFactory: (MinistryAudioListener) -> MinistryAudioEngine,
+    private val mp3: Mp3Support? = null,
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, COMMAND_THREAD).apply { isDaemon = true }
     },
@@ -48,16 +56,27 @@ class MinistryAudioBridge(
         @Volatile var master = 1.0
         @Volatile var sampleRate = 0
         @Volatile var frames = 0L
+
+        /** Private decoded PCM of an MP3 recording; deleted only after the engine is confirmed gone. */
+        @Volatile var tempDir: File? = null
+    }
+
+    private class PrepareToken(val id: String) {
+        @Volatile var cancelled = false
     }
 
     private val lock = Any()
     private var current: BridgeSession? = null
     private var disposed = false
 
+    @Volatile private var preparing: PrepareToken? = null
+    private var sweptAll = false
+
     // ------------------------------------------------------------------ entry
 
     /** Asynchronous entry point for the platform channel. */
     fun submit(method: String, args: Map<*, *>?, callback: (Reply) -> Unit) {
+        if (method == M_CLOSE) cancelPreparing(args)
         if (method == M_SNAPSHOT) {
             callback(run(method, args))
             return
@@ -71,12 +90,19 @@ class MinistryAudioBridge(
 
     /** Synchronous variant (tests). */
     fun callBlocking(method: String, args: Map<*, *>? = null): Reply {
+        if (method == M_CLOSE) cancelPreparing(args)
         if (method == M_SNAPSHOT) return run(method, args)
         return try {
             executor.submit<Reply> { run(method, args) }.get()
         } catch (_: RejectedExecutionException) {
             fail(MinistryAudioException.INVALID_STATE, "Áudio indisponível.")
         }
+    }
+
+    /** A close for the session whose MP3 is being decoded interrupts the decoding instead of waiting behind it. */
+    private fun cancelPreparing(args: Map<*, *>?) {
+        val id = args?.get(K_SESSION) as? String ?: return
+        preparing?.takeIf { it.id == id }?.cancelled = true
     }
 
     private fun run(method: String, args: Map<*, *>?): Reply = try {
@@ -137,7 +163,12 @@ class MinistryAudioBridge(
     // --------------------------------------------------------------- commands
 
     private fun prepare(a: Map<*, *>): Map<String, Any?> {
-        exactKeys(a, setOf(K_SESSION, K_USER, K_MINISTRY, K_RECORDING, K_RATE, K_FRAMES))
+        val isMp3 = a.containsKey(K_CODEC)
+        exactKeys(
+            a,
+            if (isMp3) setOf(K_SESSION, K_USER, K_MINISTRY, K_RECORDING, K_RATE, K_FRAMES, K_CODEC, K_DELAY, K_PADDING, K_MPEG)
+            else setOf(K_SESSION, K_USER, K_MINISTRY, K_RECORDING, K_RATE, K_FRAMES),
+        )
         val id = sessionIdArg(a)
         val user = idArg(a, K_USER)
         val ministry = idArg(a, K_MINISTRY)
@@ -146,6 +177,18 @@ class MinistryAudioBridge(
         val rate = longArg(a, K_RATE)
         val frames = longArg(a, K_FRAMES)
         if (rate !in 8_000L..48_000L || frames <= 0L) arg("Manifesto de áudio inválido.")
+        var alignment: Mp3Alignment? = null
+        if (isMp3) {
+            if (a[K_CODEC] != MP3_CODEC) throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "Codec não suportado.")
+            if (rate != 44_100L && rate != 48_000L || frames > rate * 300L) arg("Manifesto de áudio inválido.")
+            val al = Mp3Alignment(
+                longArg(a, K_DELAY).coerceIn(-1L, 1_000_000L).toInt(),
+                longArg(a, K_PADDING).coerceIn(-1L, 1_000_000L).toInt(),
+                longArg(a, K_MPEG).coerceIn(-1L, 1_000_000L).toInt(),
+            )
+            if (!al.isConsistent(frames)) arg("Alinhamento MP3 inválido.")
+            alignment = al
+        }
 
         // A previous session must be CONFIRMED closed (worker gone, files
         // closed) before anything new is opened.
@@ -166,6 +209,29 @@ class MinistryAudioBridge(
         )
         val directory = File(ministryRoot, "recordings/$recording")
 
+        // Nothing is open at this point: stale decoded PCM (process death, unconfirmed shutdown) is ours to remove.
+        sweepTemp(ministryRoot)
+
+        var loadDir = directory
+        var tempDir: File? = null
+        if (alignment != null) {
+            val support = mp3 ?: throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "MP3 indisponível.")
+            val token = PrepareToken(id)
+            preparing = token
+            try {
+                support.calibration.requireVerified()
+                val dir = File(File(ministryRoot, TEMP_DIR), id)
+                tempDir = dir
+                decodeStems(support, directory, ministryRoot, dir, rate.toInt(), frames, alignment, token)
+                loadDir = dir
+            } catch (e: Throwable) {
+                tempDir?.let { deleteTree(it) } // no engine holds these files yet
+                throw e
+            } finally {
+                preparing = null
+            }
+        }
+
         var ref: BridgeSession? = null
         val engine = engineFactory { state, code ->
             val own = ref
@@ -184,15 +250,19 @@ class MinistryAudioBridge(
             }
         }
         val session = BridgeSession(id, engine)
+        session.tempDir = tempDir
         synchronized(lock) { current = session }
         ref = session
         try {
-            val h = engine.load(directory, ministryRoot, rate.toInt(), frames)
+            val h = engine.load(loadDir, ministryRoot, rate.toInt(), frames)
             session.sampleRate = h.sampleRate
             session.frames = h.frames
         } catch (e: Throwable) {
             val confirmed = runCatching { engine.dispose() }.getOrDefault(false)
-            if (confirmed) synchronized(lock) { if (current === session) current = null }
+            if (confirmed) {
+                tempDir?.let { deleteTree(it) }
+                synchronized(lock) { if (current === session) current = null }
+            }
             throw e
         }
         return mapOf(K_SESSION to id, "sampleRate" to session.sampleRate, "frames" to session.frames)
@@ -209,7 +279,74 @@ class MinistryAudioBridge(
     }
 
     /** True only when the worker is gone and the files are closed. */
-    private fun closeSession(s: BridgeSession): Boolean = runCatching { s.engine.dispose() }.getOrDefault(false)
+    private fun closeSession(s: BridgeSession): Boolean {
+        val ok = runCatching { s.engine.dispose() }.getOrDefault(false)
+        // Decoded PCM is deleted ONLY once the engine is confirmed gone (files closed).
+        if (ok) s.tempDir?.let {
+            deleteTree(it)
+            s.tempDir = null
+        }
+        return ok
+    }
+
+    // ------------------------------------------------------- MP3 decoded PCM
+
+    /**
+     * Decodes the six stems one at a time into [dir]/stem_<id>.wav. Each stem is written as `.part` and renamed only
+     * when complete and exactly sized, so the engine never sees a partial set. Reserves space first.
+     */
+    private fun decodeStems(
+        support: Mp3Support,
+        source: File,
+        allowedRoot: File,
+        dir: File,
+        rate: Int,
+        frames: Long,
+        alignment: Mp3Alignment,
+        token: PrepareToken,
+    ) {
+        val files = MinistryAudioPaths.resolve(source, allowedRoot, "mp3")
+        val perStem = WavV1.HEADER_BYTES + frames * WavV1.BYTES_PER_FRAME
+        val needed = perStem * StemId.values().size + SPACE_RESERVE_BYTES
+        dir.mkdirs()
+        if (!dir.isDirectory) throw MinistryAudioException(MinistryAudioException.WRITE_FAILED, "Pasta temporária indisponível.")
+        if (support.usableSpace(dir) < needed) {
+            throw MinistryAudioException(MinistryAudioException.INSUFFICIENT_SPACE, "Espaço insuficiente para preparar o áudio.")
+        }
+        for (stem in StemId.values()) {
+            if (token.cancelled) throw MinistryAudioException(MinistryAudioException.CANCELLED, "Preparação cancelada.")
+            val part = File(dir, "${stem.fileName}.part")
+            Mp3StemDecoder.decodeToWav(files.getValue(stem), part, rate, frames, alignment, support.decoder) { token.cancelled }
+            if (!part.renameTo(File(dir, stem.fileName))) {
+                part.delete()
+                throw MinistryAudioException(MinistryAudioException.WRITE_FAILED, "Falha ao gravar o áudio temporário.")
+            }
+        }
+    }
+
+    /** Removes decoded PCM of this ministry (and, once per process, of every account/ministry we own). */
+    private fun sweepTemp(ministryRoot: File) {
+        deleteTree(File(ministryRoot, TEMP_DIR))
+        val all = synchronized(lock) { if (sweptAll) false else { sweptAll = true; true } }
+        if (!all) return
+        val users = File(filesDir, "$LIB_DIR/$LAYOUT_DIR/users")
+        users.listFiles()?.forEach { u ->
+            File(u, "ministries").listFiles()?.forEach { m -> deleteTree(File(m, TEMP_DIR)) }
+        }
+    }
+
+    private fun deleteTree(f: File) {
+        if (!f.exists()) return
+        runCatching {
+            // Never follow links out of our private tree.
+            if (java.nio.file.Files.isSymbolicLink(f.toPath())) {
+                f.delete()
+                return
+            }
+            f.listFiles()?.forEach { deleteTree(it) }
+            f.delete()
+        }
+    }
 
     private fun with(
         a: Map<*, *>,
@@ -268,6 +405,7 @@ class MinistryAudioBridge(
      */
     fun dispose(): Boolean {
         synchronized(lock) { disposed = true }
+        preparing?.cancelled = true
         val result = try {
             executor.submit<Boolean> {
                 val s = synchronized(lock) { current }
@@ -355,6 +493,13 @@ class MinistryAudioBridge(
         private const val K_RECORDING = "recordingId"
         private const val K_RATE = "sampleRate"
         private const val K_FRAMES = "frames"
+        private const val K_CODEC = "codec"
+        private const val K_DELAY = "encoderDelayFrames"
+        private const val K_PADDING = "paddingFrames"
+        private const val K_MPEG = "mpegAudioFrames"
+        const val MP3_CODEC = "mp3_cbr256"
+        const val TEMP_DIR = "pcm_tmp"
+        private const val SPACE_RESERVE_BYTES = 64L * 1024 * 1024
         private const val K_FRAME = "frame"
         private const val K_STEM = "stem"
         private const val K_VALUE = "value"

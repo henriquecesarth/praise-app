@@ -73,6 +73,7 @@ abstract interface class MinistryAudioPlayerPort {
     required String recordingId,
     required int sampleRate,
     required int frames,
+    MinistryAudioMp3Alignment? mp3Alignment,
   });
 
   Future<void> play(String sessionId);
@@ -177,6 +178,7 @@ final class MethodChannelMinistryAudioPlayerPort
     required String recordingId,
     required int sampleRate,
     required int frames,
+    MinistryAudioMp3Alignment? mp3Alignment,
   }) async {
     final r = await _call('prepare', {
       'sessionId': sessionId,
@@ -185,6 +187,12 @@ final class MethodChannelMinistryAudioPlayerPort
       'recordingId': recordingId,
       'sampleRate': sampleRate,
       'frames': frames,
+      if (mp3Alignment != null) ...{
+        'codec': MinistryAudioCodec.mp3.wireName,
+        'encoderDelayFrames': mp3Alignment.encoderDelayFrames,
+        'paddingFrames': mp3Alignment.paddingFrames,
+        'mpegAudioFrames': mp3Alignment.mpegAudioFrames,
+      },
     });
     final rate = r['sampleRate'];
     final f = r['frames'];

@@ -216,7 +216,7 @@ object WavV1 {
  * playback.
  */
 object MinistryAudioPaths {
-    fun resolve(directory: File, allowedRoot: File): Map<StemId, File> {
+    fun resolve(directory: File, allowedRoot: File, extension: String = "wav"): Map<StemId, File> {
         val root = canonical(allowedRoot)
         val dir = canonical(directory)
         val inside = dir.path == root.path || dir.path.startsWith(root.path + File.separator)
@@ -225,10 +225,11 @@ object MinistryAudioPaths {
         }
         val out = LinkedHashMap<StemId, File>()
         for (id in StemId.values()) {
-            val candidate = File(dir, id.fileName)
+            val fileName = "stem_${id.wireName}.$extension"
+            val candidate = File(dir, fileName)
             val real = canonical(candidate)
             // A symlink (or any indirection) would resolve outside `dir`.
-            if (real.parentFile?.path != dir.path || real.name != id.fileName) {
+            if (real.parentFile?.path != dir.path || real.name != fileName) {
                 throw MinistryAudioException(MinistryAudioException.PATH_REJECTED, "Arquivo de áudio não permitido.")
             }
             if (!real.isFile) {

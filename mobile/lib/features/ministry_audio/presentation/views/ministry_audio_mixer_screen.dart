@@ -48,6 +48,17 @@ String ministryAudioErrorText(String? code) {
     case 'AUDIO_NATIVE_WAV_INVALID_HEADER':
     case 'AUDIO_NATIVE_WAV_SIZE_MISMATCH':
       return 'Os arquivos de áudio estão inválidos. Tente abrir novamente.';
+    case 'AUDIO_NATIVE_INSUFFICIENT_SPACE':
+      return 'Sem espaço livre suficiente para preparar esta gravação.';
+    case 'AUDIO_NATIVE_MP3_ALIGNMENT_UNVERIFIED':
+    case 'AUDIO_NATIVE_MP3_UNSUPPORTED':
+      return 'Este aparelho não consegue reproduzir esta gravação com precisão.';
+    case 'AUDIO_NATIVE_MP3_DECODE_FAILED':
+    case 'AUDIO_NATIVE_MP3_LENGTH_MISMATCH':
+    case 'AUDIO_NATIVE_WRITE_FAILED':
+      return 'Não foi possível preparar o áudio. Tente abrir novamente.';
+    case 'AUDIO_NATIVE_CANCELLED':
+      return 'Preparação cancelada.';
     default:
       return 'Não foi possível abrir ou controlar esta gravação.';
   }

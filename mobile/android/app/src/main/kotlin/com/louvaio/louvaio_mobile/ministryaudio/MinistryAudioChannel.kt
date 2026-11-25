@@ -26,6 +26,14 @@ class MinistryAudioChannel(
         events = { event ->
             main.post { if (!released.get()) channel.invokeMethod("onEvent", event) }
         },
+        // Lazy: nothing is decoded or calibrated unless Flutter (flag-gated) sends an MP3 prepare.
+        mp3 = Mp3Support(
+            decoder = AndroidMp3PcmDecoder(),
+            calibration = Mp3DecoderCalibration(
+                AndroidMp3PcmDecoder(),
+                java.io.File(context.applicationContext.cacheDir, "ministry_audio_mp3_calibration"),
+            ) { context.applicationContext.assets.open(it) },
+        ),
         engineFactory = { listener ->
             // Events are forwarded by the bridge (it posts to main itself).
             createMinistryAudioEngine(context, listener, CallbackDispatcher { it() })

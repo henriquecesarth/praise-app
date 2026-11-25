@@ -30,3 +30,20 @@ Conclusões: o Android NÃO trata os dois perfis do mesmo modo; o delay de 529 d
 **Cancelamento/limpeza**: o decoder checa o cancelamento a cada buffer; falha/cancelamento apagam o `.part`. Liberação de MediaCodec/MediaExtractor em `finally`.
 
 Testes: `Mp3StemDecoderTest` (JVM, decoder falso que reproduz os dois comportamentos medidos), `Mp3DecoderDeviceTest` (instrumentado, MediaCodec real).
+## S4-C — integração com o motor (Kotlin + Dart)
+
+- **Um só motor**: o MP3 é decodificado para `stem_<id>.wav` temporários e o `MinistryAudioEngine`/`MixerCore` existentes tocam esses WAV — um `AudioTrack`, um relógio de frames, início comum dos seis, volume por faixa, mute, solo, master, pause/resume, seek, stop, foco de áudio, desconexão de fones e `AudioOutputArbiter` inalterados.
+- **Canal**: `prepare` ganha, só para MP3, `codec` (`mp3_cbr256`) e `encoderDelayFrames`/`paddingFrames`/`mpegAudioFrames` (inteiros, validados: `delay + frames + padding == mpeg × 1152`, taxa 44,1/48 kHz, ≤ 300 s, chaves exatas). Nenhum caminho, URL ou token passa do Flutter para o Kotlin; o diretório continua sendo reconstruído a partir de `userId/ministryId/recordingId`.
+- **PCM temporário** (`<ministério>/pcm_tmp/<sessionId>/`): privado, isolado por conta/ministério/gravação, **um stem por vez**, escrita transacional (`.part` → rename só com tamanho exato) e o conjunto só é exposto ao motor quando os seis estão completos. Reserva de espaço antes de decodificar (`6 × (44 + frames×4) + 64 MiB`, `AUDIO_NATIVE_INSUFFICIENT_SPACE`). O temporário é apagado **somente depois que o motor é confirmado encerrado** (o lease do cache Dart continua só sendo liberado após `close` confirmado); em falha/cancelamento antes do motor abrir, é apagado na hora. Recuperação após morte do processo: o próximo `prepare` varre `pcm_tmp` do ministério e, uma vez por processo, o de todas as contas/ministérios.
+- **Cancelamento**: `close` da sessão em preparação é tratado inline (não fica na fila atrás do `prepare`), interrompe a decodificação entre buffers e apaga o que foi decodificado; logout/troca de ministério usam o mesmo caminho (o controlador já descarta respostas obsoletas por época + contexto).
+- **Segurança**: revalidação online antes de cada reprodução (via `ensureCached`), sem reprodução offline, fail-closed em 401/403/404/rede/troca de contexto, URLs assinadas não persistidas — tudo inalterado. Dispositivo sem calibração aprovada recusa MP3 (`AUDIO_NATIVE_MP3_ALIGNMENT_UNVERIFIED`).
+- **Dart**: o controlador passa `cached.recording.mp3Alignment` ao port (nulo para WAV); a recusa fail-closed provisória do S4-A foi removida. Mensagens de erro de UI para os novos códigos.
+- **Contabilidade de espaço**: o cache Dart continua contando só os MP3 (`recordings/`); o PCM temporário é reservado e verificado nativamente (`File.usableSpace`) e é efêmero (existe somente enquanto a sessão está aberta).
+
+**Validação em hardware** (Lenovo TB-J616F, Android 12) — `Mp3PlaybackDeviceTest`, bridge + decoder + calibração + motor reais, saída capturada, seis stems alternando Lavc e LAME 3.100 com o mesmo alinhamento: offset das rajadas (início/meio/fim) **0/0/0 em cada um dos seis stems isolados e no mix**; após `seek` para o frame 20 000, rajada do meio com offset 0. Preparação de 1 s: ~1,1–1,7 s (6 stems). Preparação de 6 stems de 298 s: ~185 s (decoder, ver S4-B), 315 MB temporários.
+
+**Limitações / bloqueios restantes**
+- A preparação de gravações longas leva minutos e ocupa ~315 MB temporários (estratégia A); a estratégia B (decodificação incremental no mixer) reduziria o disco mas não foi implementada/medida.
+- Medições feitas em um único aparelho/decoder (`c2.mtk.mp3.decoder`); outros aparelhos são protegidos pela calibração em tempo de execução, não por evidência prévia.
+- Reprodução audível/escuta humana dos stems longos pendente; o `AudioTrack` real não foi capturado (a captura mede a saída do mixer, antes do `AudioTrack`).
+- `MP3_RELEASE_GATE = BLOCKED`, `PRODUCTION_DEPLOY_GATE = BLOCKED`.
