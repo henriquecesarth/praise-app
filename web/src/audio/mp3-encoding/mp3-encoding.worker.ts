@@ -1,4 +1,5 @@
 /// <reference lib="webworker" />
+import lameWasmUrl from 'wasm-media-encoders/wasm/mp3?url';
 import { createLameWasmBackend } from './mp3-lame-backend';
 import { Mp3EncodingError } from './mp3-info-frame';
 import { encodeWavStemToMp3 } from './mp3-stem-encoder';
@@ -6,6 +7,11 @@ import type { Mp3WorkerRequest, Mp3WorkerResponse } from './mp3-encoding-protoco
 
 // M22-S1 (experimental): encodes ONE stem per job off the main thread. A `cancel` message is observed between slices
 // because the encoder yields to this Worker's event loop; the input buffer is dropped as soon as the job ends.
+
+// Build-time substitution of the LAME binary (LGPL): both variables are required, otherwise the pinned binary is used.
+const overrideUrl = import.meta.env.VITE_LAME_WASM_URL;
+const overrideSha = import.meta.env.VITE_LAME_WASM_SHA256;
+const lameBackendOptions = () => (overrideUrl && overrideSha ? { wasmUrl: overrideUrl, expected: { sha256: overrideSha } } : { wasmUrl: lameWasmUrl });
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 const cancelled = new Set<number>();
@@ -18,7 +24,7 @@ scope.onmessage = async (event: MessageEvent<Mp3WorkerRequest>) => {
   if (message?.type !== 'encode') return;
   const { jobId } = message;
   try {
-    const backend = await createLameWasmBackend();
+    const backend = await createLameWasmBackend(lameBackendOptions());
     const wav = new Uint8Array(message.wavBuffer);
     const totalSlices = Math.max(1, Math.ceil(wav.byteLength / 4 / (1152 * 64)));
     let seen = 0;

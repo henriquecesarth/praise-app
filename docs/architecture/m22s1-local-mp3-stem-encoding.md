@@ -129,7 +129,11 @@ Revisão própria (o gate Codex Sol 6.2 continua indisponível; sem conformidade
 | **S4** — Android | Decodificação, cache e reprodução sincronizada de seis MP3 (decodificador nativo, tratamento de atraso da tag), medição em aparelhos | Sincronismo medido em hardware real |
 | **S5** — homologação e liberação | Safari/Firefox/Chrome Android, 300 s, avaliação auditiva do operador, revisão jurídica da LGPL, revisão Codex, decisão de abrir o gate | Autorização explícita para habilitar |
 
-## 8. Avaliação auditiva (pendente do operador)
+## 8. Avaliação auditiva (resultado registrado no S2: sem diferença audível pelo operador)
+
+**Resultado (registrado no M22-S2):** o operador ouviu voz, baixo, bateria e mix completo e não percebeu diferença audível entre o WAV original e o MP3 CBR 256 decodificado. É aprovação perceptiva do operador nas amostras avaliadas, sem alegar transparência universal nem aprovação estatística. Ver `m22s2-web-mp3-compression-draft.md`.
+
+Procedimento original:
 
 Pasta `Documents\m22-s1-mp3-ab` (fora do Git): voz, baixo, bateria e mix, três arquivos por grupo (dois WAV idênticos como controle e um MP3 CBR 256 decodificado), ordem aleatória, gabarito separado,
 usando stems da variante A do Q3 (sem repetir o Demucs). **Nenhuma conclusão de qualidade antes da escuta.**
