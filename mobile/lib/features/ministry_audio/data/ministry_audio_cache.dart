@@ -25,8 +25,10 @@ final class MinistryAudioCacheEntry {
     required this.lastAccessMillis,
     required this.integrity,
     required this.state,
+    this.codec = MinistryAudioCodec.pcm,
   });
 
+  final MinistryAudioCodec codec;
   final String recordingId;
   final String recordingVersion;
   final String manifestDigest;
@@ -43,6 +45,7 @@ final class MinistryAudioCacheEntry {
         lastAccessMillis: now,
         integrity: MinistryAudioCacheIntegrity.verified,
         state: MinistryAudioCacheEntryState.intact,
+        codec: codec,
       );
 
   Map<String, Object?> toJson() => {
@@ -55,7 +58,7 @@ final class MinistryAudioCacheEntry {
         // Internal references only (fixed names); never URLs or tokens.
         'files': [
           for (final id in MinistryStemId.values)
-            MinistryAudioDownloadManager._stemFileName(id),
+            MinistryAudioDownloadManager._stemFileName(id, codec),
         ],
       };
 }
@@ -487,6 +490,7 @@ final class MinistryAudioCache {
                 ? MinistryAudioCacheIntegrity.verified
                 : MinistryAudioCacheIntegrity.unverified,
             state: MinistryAudioCacheEntryState.intact,
+            codec: c.recording!.codec,
           ));
         case _CheckStatus.invalid:
         case _CheckStatus.unreadable:

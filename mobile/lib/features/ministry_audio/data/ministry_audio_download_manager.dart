@@ -59,12 +59,27 @@ final class MinistryAudioLocalRecording {
     required this.recordingVersion,
     required this.directoryPath,
     required this.stemPaths,
+    this.codec = MinistryAudioCodec.pcm,
+    this.sampleRate,
+    this.frames,
+    this.mp3Alignment,
   });
 
   final String recordingId;
   final String recordingVersion;
   final String directoryPath;
   final Map<MinistryStemId, String> stemPaths;
+
+  /// Codec of the six stored files (`stem_<id>.wav` or `stem_<id>.mp3`).
+  final MinistryAudioCodec codec;
+
+  /// Timeline of the LOCAL manifest (set for sets this manager wrote or
+  /// verified); the native side re-checks it against the online manifest.
+  final int? sampleRate;
+  final int? frames;
+
+  /// Only for [MinistryAudioCodec.mp3]; identical for the six stems.
+  final MinistryAudioMp3Alignment? mp3Alignment;
 }
 
 /// File-system operations, injectable so tests can force failures.
@@ -416,7 +431,15 @@ final class MinistryAudioDownloadManager {
 
   static const String _localSchema = 'louvaio-ministry-audio-local-v1';
 
-  static String _stemFileName(MinistryStemId id) => 'stem_${id.name}.wav';
+  /// MP3 sets use their own schema: a WAV-only build never mistakes them for
+  /// WAV sets, and existing WAV caches keep their schema and file names.
+  static const String _localSchemaMp3 = 'louvaio-ministry-audio-local-mp3-v1';
+
+  static String _stemFileName(
+    MinistryStemId id, [
+    MinistryAudioCodec codec = MinistryAudioCodec.pcm,
+  ]) =>
+      'stem_${id.name}.${codec.extension}';
 
   AppFailure _contextChanged() => const AppFailure(
         message: 'O ministério ou a sessão mudou durante o download.',
@@ -444,6 +467,8 @@ final class MinistryAudioDownloadManager {
 
   bool _sameManifest(MinistryAudioManifest a, MinistryAudioManifest b) {
     if (a.recordingId != b.recordingId ||
+        a.schemaVersion != b.schemaVersion ||
+        a.codec != b.codec ||
         a.recordingVersion != b.recordingVersion ||
         a.model.id != b.model.id ||
         a.model.version != b.model.version ||
@@ -457,7 +482,8 @@ final class MinistryAudioDownloadManager {
           x.sampleRate != y.sampleRate ||
           x.frames != y.frames ||
           x.sizeBytes != y.sizeBytes ||
-          x.sha256 != y.sha256) {
+          x.sha256 != y.sha256 ||
+          x.mp3Alignment != y.mp3Alignment) {
         return false;
       }
     }
@@ -472,7 +498,7 @@ final class MinistryAudioDownloadManager {
     required MinistryAudioDownloadContext captured,
     required CancelToken token,
   }) async {
-    final name = _stemFileName(stem.id);
+    final name = _stemFileName(stem.id, stem.codec);
     final part = File('${staging.path}/$name.part');
     if (await part.exists()) await part.delete();
 
@@ -543,8 +569,9 @@ final class MinistryAudioDownloadManager {
     MinistryAudioManifest manifest,
   ) async {
     final file = File('${staging.path}/manifest.json');
+    final mp3 = manifest.codec == MinistryAudioCodec.mp3;
     final json = jsonEncode({
-      'schema': _localSchema,
+      'schema': mp3 ? _localSchemaMp3 : _localSchema,
       'recordingId': manifest.recordingId,
       'recordingVersion': manifest.recordingVersion,
       'model': {'id': manifest.model.id, 'version': manifest.model.version},
@@ -556,6 +583,12 @@ final class MinistryAudioDownloadManager {
             'frames': s.frames,
             'sizeBytes': s.sizeBytes,
             'sha256': s.sha256,
+            if (mp3)
+              'alignment': {
+                'encoderDelayFrames': s.mp3Alignment!.encoderDelayFrames,
+                'paddingFrames': s.mp3Alignment!.paddingFrames,
+                'mpegAudioFrames': s.mp3Alignment!.mpegAudioFrames,
+              },
           },
       ],
     });
@@ -578,7 +611,8 @@ final class MinistryAudioDownloadManager {
   }) async {
     // All six verified files + manifest must be present before promotion.
     for (final id in MinistryStemId.values) {
-      if (!await File('${staging.path}/${_stemFileName(id)}').exists()) {
+      if (!await File('${staging.path}/${_stemFileName(id, manifest.codec)}')
+          .exists()) {
         throw _promotionFailed();
       }
     }
@@ -615,8 +649,12 @@ final class MinistryAudioDownloadManager {
       directoryPath: finalDir.path,
       stemPaths: {
         for (final id in MinistryStemId.values)
-          id: '${finalDir.path}/${_stemFileName(id)}',
+          id: '${finalDir.path}/${_stemFileName(id, manifest.codec)}',
       },
+      codec: manifest.codec,
+      sampleRate: manifest.sampleRate,
+      frames: manifest.frames,
+      mp3Alignment: manifest.stems.first.mp3Alignment,
     );
   }
 
@@ -726,9 +764,12 @@ final class MinistryAudioDownloadManager {
         return const _Check(_CheckStatus.invalid); // proven absent
       }
       final json = jsonDecode(raw); // other I/O errors -> unreadable below
-      if (json is! Map || json['schema'] != _localSchema) {
+      if (json is! Map ||
+          (json['schema'] != _localSchema && json['schema'] != _localSchemaMp3)) {
         return const _Check(_CheckStatus.invalid);
       }
+      final isMp3 = json['schema'] == _localSchemaMp3;
+      final codec = isMp3 ? MinistryAudioCodec.mp3 : MinistryAudioCodec.pcm;
       final recordingId = json['recordingId'];
       final version = json['recordingVersion'];
       final stems = json['stems'];
@@ -749,6 +790,7 @@ final class MinistryAudioDownloadManager {
       }
       final paths = <MinistryStemId, String>{};
       final stemParts = <String>[];
+      (int, int, MinistryAudioMp3Alignment)? mp3Timeline;
       var total = 0;
       for (final id in MinistryStemId.values) {
         final entry = byId[id.name];
@@ -760,7 +802,23 @@ final class MinistryAudioDownloadManager {
             !MinistryAudioContract.sha256Pattern.hasMatch(sha)) {
           return const _Check(_CheckStatus.invalid);
         }
-        final file = File('${dir.path}/${_stemFileName(id)}');
+        MinistryAudioMp3Alignment? alignment;
+        if (isMp3) {
+          alignment = _localMp3Alignment(entry, size);
+          if (alignment == null) return const _Check(_CheckStatus.invalid);
+          if (mp3Timeline == null) {
+            mp3Timeline = (
+              entry!['sampleRate'] as int,
+              entry['frames'] as int,
+              alignment,
+            );
+          } else if (mp3Timeline.$1 != entry!['sampleRate'] ||
+              mp3Timeline.$2 != entry['frames'] ||
+              mp3Timeline.$3 != alignment) {
+            return const _Check(_CheckStatus.invalid); // inconsistent timeline
+          }
+        }
+        final file = File('${dir.path}/${_stemFileName(id, codec)}');
         final int actual;
         try {
           actual = await _ops.length(file);
@@ -774,7 +832,8 @@ final class MinistryAudioDownloadManager {
         paths[id] = file.path;
         total += size;
         stemParts.add(
-          '${id.name}:${entry?['sampleRate']}:${entry?['frames']}:$size:$sha',
+          '${id.name}:${entry?['sampleRate']}:${entry?['frames']}:$size:$sha'
+          '${alignment == null ? '' : ':${alignment.encoderDelayFrames}:${alignment.paddingFrames}:${alignment.mpegAudioFrames}'}',
         );
       }
       final model = json['model'];
@@ -785,6 +844,10 @@ final class MinistryAudioDownloadManager {
           recordingVersion: version,
           directoryPath: dir.path,
           stemPaths: paths,
+          codec: codec,
+          sampleRate: mp3Timeline?.$1,
+          frames: mp3Timeline?.$2,
+          mp3Alignment: mp3Timeline?.$3,
         ),
         _digestOfParts(
           recordingId: recordingId,
@@ -792,6 +855,7 @@ final class MinistryAudioDownloadManager {
           modelId: model is Map ? '${model['id']}' : '',
           modelVersion: model is Map ? '${model['version']}' : '',
           stemParts: stemParts,
+          codec: codec,
         ),
         total,
       );
@@ -811,9 +875,12 @@ final class MinistryAudioDownloadManager {
     required String modelId,
     required String modelVersion,
     required List<String> stemParts,
+    MinistryAudioCodec codec = MinistryAudioCodec.pcm,
   }) =>
       IncrementalSha256.computeHex(utf8.encode(
-        'louvaio-ministry-audio-manifest-v1|$recordingId|$version|$modelId|'
+        // The WAV prefix is unchanged: existing WAV caches keep their identity.
+        '${codec == MinistryAudioCodec.mp3 ? 'louvaio-ministry-audio-manifest-mp3-v1' : 'louvaio-ministry-audio-manifest-v1'}'
+        '|$recordingId|$version|$modelId|'
         '$modelVersion|${stemParts.join(';')}',
       ));
 
@@ -821,7 +888,9 @@ final class MinistryAudioDownloadManager {
     final parts = <String>[];
     for (final id in MinistryStemId.values) {
       final s = m.stems.firstWhere((x) => x.id == id);
-      parts.add('${id.name}:${s.sampleRate}:${s.frames}:${s.sizeBytes}:${s.sha256}');
+      final a = s.mp3Alignment;
+      parts.add('${id.name}:${s.sampleRate}:${s.frames}:${s.sizeBytes}:${s.sha256}'
+          '${a == null ? '' : ':${a.encoderDelayFrames}:${a.paddingFrames}:${a.mpegAudioFrames}'}');
     }
     return _digestOfParts(
       recordingId: m.recordingId,
@@ -829,6 +898,50 @@ final class MinistryAudioDownloadManager {
       modelId: m.model.id,
       modelVersion: m.model.version,
       stemParts: parts,
+      codec: m.codec,
+    );
+  }
+
+  /// Re-validates the timeline stored in a LOCAL MP3 manifest with the same
+  /// rules as the online contract; `null` means the entry is not trustworthy.
+  static MinistryAudioMp3Alignment? _localMp3Alignment(Map? entry, int size) {
+    if (entry == null) return null;
+    final rate = entry['sampleRate'];
+    final frames = entry['frames'];
+    final a = entry['alignment'];
+    if (rate is! int ||
+        !MinistryAudioContract.mp3SampleRates.contains(rate) ||
+        frames is! int ||
+        frames <= 0 ||
+        frames > rate * MinistryAudioContract.maxSeconds ||
+        a is! Map) {
+      return null;
+    }
+    final d = a['encoderDelayFrames'];
+    final p = a['paddingFrames'];
+    final m = a['mpegAudioFrames'];
+    const max = MinistryAudioContract.mp3MaxAlignmentFrames;
+    if (d is! int ||
+        p is! int ||
+        m is! int ||
+        d < 0 ||
+        d > max ||
+        p < 0 ||
+        p > max ||
+        m <= 0 ||
+        m > MinistryAudioContract.mp3MaxMpegFrames ||
+        d + frames + p != m * MinistryAudioContract.mp3SamplesPerFrame) {
+      return null;
+    }
+    final units = m + 1;
+    if (size < units * MinistryAudioContract.mp3FrameBytesMin(rate) ||
+        size > units * MinistryAudioContract.mp3FrameBytesMax(rate)) {
+      return null;
+    }
+    return MinistryAudioMp3Alignment(
+      encoderDelayFrames: d,
+      paddingFrames: p,
+      mpegAudioFrames: m,
     );
   }
 

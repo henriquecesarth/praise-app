@@ -1,12 +1,48 @@
 import '../../../core/errors/app_failure.dart';
 
-/// Read-only contract models for the ministry audio library (WAV v1 only).
+/// Build-time switches of the ministry audio library.
+abstract final class MinistryAudioFeatureFlags {
+  /// EXPERIMENTAL (M22-S4): reading, caching and playing `mp3_cbr256` v2
+  /// manifests. Off by default and never enabled by a normal build: pass
+  /// `--dart-define=LOUVAIO_EXPERIMENTAL_MP3_AUDIO=true` to opt in. The backend
+  /// still refuses to publish MP3, so this only matters for isolated harnesses.
+  static const bool experimentalMp3 =
+      bool.fromEnvironment('LOUVAIO_EXPERIMENTAL_MP3_AUDIO');
+}
+
+/// Codec of a recording's stems. A recording never mixes codecs.
+enum MinistryAudioCodec {
+  pcm,
+  mp3;
+
+  String get wireName => this == pcm ? 'pcm_s16le' : 'mp3_cbr256';
+  String get extension => this == pcm ? 'wav' : 'mp3';
+}
+
+/// Read-only contract models for the ministry audio library.
 ///
 /// Mirrors `backend/src/features/ministry_audio/ministry-audio.schema.ts` and
 /// `web/src/audio/ministry-audio-contract.ts`. Parsing is strict and fails
-/// closed: MP3, `schemaVersion` 2 and any unknown shape are rejected.
+/// closed: WAV v1 is always accepted; MP3 (`schemaVersion` 2, `mp3_cbr256`) is
+/// accepted only when the caller opts in (see [MinistryAudioFeatureFlags]);
+/// anything else, including mixed codecs, is rejected.
 class MinistryAudioContract {
   MinistryAudioContract._();
+
+  static const int mp3BitrateKbps = 256;
+  static const int mp3SamplesPerFrame = 1152;
+  static const int mp3MaxAlignmentFrames = 4 * 1152;
+  static const List<int> mp3SampleRates = [44100, 48000];
+  static const int mp3MaxFrames = 48000 * 300;
+
+  /// Bytes of one CBR 256 kbps MPEG-1 Layer III frame, without / with padding.
+  static int mp3FrameBytesMin(int sampleRate) => (144 * 256000) ~/ sampleRate;
+  static int mp3FrameBytesMax(int sampleRate) =>
+      (144 * 256000) % sampleRate == 0
+          ? mp3FrameBytesMin(sampleRate)
+          : mp3FrameBytesMin(sampleRate) + 1;
+  static final int mp3MaxMpegFrames =
+      ((mp3MaxFrames + 2 * mp3MaxAlignmentFrames) / mp3SamplesPerFrame).ceil();
 
   static const int maxSeconds = 300;
   static const int minSampleRate = 8000;
@@ -90,14 +126,77 @@ enum MinistryStemId {
   }
 }
 
-/// Stem metadata of a WAV v1 manifest (`pcm_s16le`, stereo).
+/// Gapless alignment of an MP3 stem, as declared by the manifest:
+/// `encoderDelayFrames + frames + paddingFrames == mpegAudioFrames * 1152`.
+class MinistryAudioMp3Alignment {
+  final int encoderDelayFrames;
+  final int paddingFrames;
+
+  /// MPEG audio frames, excluding the Info frame.
+  final int mpegAudioFrames;
+
+  const MinistryAudioMp3Alignment({
+    required this.encoderDelayFrames,
+    required this.paddingFrames,
+    required this.mpegAudioFrames,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is MinistryAudioMp3Alignment &&
+      other.encoderDelayFrames == encoderDelayFrames &&
+      other.paddingFrames == paddingFrames &&
+      other.mpegAudioFrames == mpegAudioFrames;
+
+  @override
+  int get hashCode =>
+      Object.hash(encoderDelayFrames, paddingFrames, mpegAudioFrames);
+
+  static const _keys = {
+    'encoderDelayFrames',
+    'paddingFrames',
+    'mpegAudioFrames',
+    'infoFrame',
+  };
+
+  factory MinistryAudioMp3Alignment.fromJson(Object? json) {
+    final map = _asMap(json, 'alinhamento');
+    _exactKeys(map, _keys, 'alinhamento');
+    if (map['infoFrame'] != true) _invalid('frame Info ausente');
+    final delay = _asInt(map['encoderDelayFrames'], 'atraso do codificador');
+    final padding = _asInt(map['paddingFrames'], 'corte final');
+    final mpeg = _asInt(map['mpegAudioFrames'], 'frames MPEG');
+    if (delay < 0 ||
+        delay > MinistryAudioContract.mp3MaxAlignmentFrames ||
+        padding < 0 ||
+        padding > MinistryAudioContract.mp3MaxAlignmentFrames ||
+        mpeg <= 0 ||
+        mpeg > MinistryAudioContract.mp3MaxMpegFrames) {
+      _invalid('alinhamento');
+    }
+    return MinistryAudioMp3Alignment(
+      encoderDelayFrames: delay,
+      paddingFrames: padding,
+      mpegAudioFrames: mpeg,
+    );
+  }
+}
+
+/// Stem metadata: a WAV v1 stem (`pcm_s16le`, stereo) or, behind the
+/// experimental flag, an MP3 v2 stem (`mp3_cbr256`, stereo, CBR 256 kbps).
 class MinistryAudioStem {
   final MinistryStemId id;
+  final MinistryAudioCodec codec;
   final int sampleRate;
   final double durationSeconds;
+
+  /// Canonical frames of the (trimmed) timeline, for both codecs.
   final int frames;
   final int sizeBytes;
   final String sha256;
+
+  /// Only for [MinistryAudioCodec.mp3].
+  final MinistryAudioMp3Alignment? mp3Alignment;
 
   const MinistryAudioStem({
     required this.id,
@@ -106,6 +205,8 @@ class MinistryAudioStem {
     required this.frames,
     required this.sizeBytes,
     required this.sha256,
+    this.codec = MinistryAudioCodec.pcm,
+    this.mp3Alignment,
   });
 
   static const _keys = {
@@ -118,16 +219,72 @@ class MinistryAudioStem {
     'sizeBytes',
     'sha256',
   };
+  static const _mp3Keys = {..._keys, 'bitrateKbps', 'alignment'};
 
-  factory MinistryAudioStem.fromJson(Object? json) {
+  static MinistryAudioStem _parseMp3(Map<String, dynamic> map) {
+    _exactKeys(map, _mp3Keys, 'faixa');
+    final id = MinistryStemId.parse(map['id'], 'id da faixa');
+    final sampleRate = _asInt(map['sampleRate'], 'taxa de amostragem');
+    if (!MinistryAudioContract.mp3SampleRates.contains(sampleRate)) {
+      _invalid('taxa de amostragem');
+    }
+    if (map['channels'] != 2) _invalid('canais');
+    if (map['bitrateKbps'] != MinistryAudioContract.mp3BitrateKbps) {
+      _invalid('taxa de bits');
+    }
+    final rawDuration = map['durationSeconds'];
+    if (rawDuration is! num || !rawDuration.isFinite) _invalid('duração');
+    final duration = rawDuration.toDouble();
+    if (duration <= 0 || duration > MinistryAudioContract.maxSeconds) {
+      _invalid('duração');
+    }
+    final frames = _asInt(map['frames'], 'frames');
+    if (frames <= 0 ||
+        frames > sampleRate * MinistryAudioContract.maxSeconds ||
+        (duration - frames / sampleRate).abs() > 1e-8) {
+      _invalid('frames');
+    }
+    final alignment = MinistryAudioMp3Alignment.fromJson(map['alignment']);
+    if (alignment.encoderDelayFrames + frames + alignment.paddingFrames !=
+        alignment.mpegAudioFrames * MinistryAudioContract.mp3SamplesPerFrame) {
+      _invalid('atraso, frames e corte não fecham com os frames MPEG');
+    }
+    final sizeBytes = _asInt(map['sizeBytes'], 'tamanho');
+    final infoPlusAudio = alignment.mpegAudioFrames + 1;
+    if (sizeBytes <
+            infoPlusAudio * MinistryAudioContract.mp3FrameBytesMin(sampleRate) ||
+        sizeBytes >
+            infoPlusAudio * MinistryAudioContract.mp3FrameBytesMax(sampleRate)) {
+      _invalid('tamanho incompatível com MP3 CBR 256');
+    }
+    final sha = map['sha256'];
+    if (sha is! String || !MinistryAudioContract.sha256Pattern.hasMatch(sha)) {
+      _invalid('sha256');
+    }
+    return MinistryAudioStem(
+      id: id,
+      codec: MinistryAudioCodec.mp3,
+      sampleRate: sampleRate,
+      durationSeconds: duration,
+      frames: frames,
+      sizeBytes: sizeBytes,
+      sha256: sha,
+      mp3Alignment: alignment,
+    );
+  }
+
+  factory MinistryAudioStem.fromJson(Object? json, {bool allowMp3 = false}) {
     final map = _asMap(json, 'faixa');
     final codec = map['codec'];
     if (codec == MinistryAudioContract.codecMp3) {
-      throw const AppFailure(
-        message: 'Este formato de áudio (MP3) ainda não é suportado no app.',
-        statusCode: 422,
-        code: MinistryAudioContract.unsupportedCodecCode,
-      );
+      if (!allowMp3) {
+        throw const AppFailure(
+          message: 'Este formato de áudio (MP3) ainda não é suportado no app.',
+          statusCode: 422,
+          code: MinistryAudioContract.unsupportedCodecCode,
+        );
+      }
+      return _parseMp3(map);
     }
     if (codec != MinistryAudioContract.codecPcm) _invalid('codec da faixa');
     _exactKeys(map, _keys, 'faixa');
@@ -197,8 +354,10 @@ class MinistryAudioModel {
   }
 }
 
-/// WAV v1 manifest: exactly six unique stems sharing sample rate and frames.
+/// Manifest: WAV v1 or (opt-in) MP3 v2 with exactly six unique stems sharing
+/// codec, sample rate, frames and (for MP3) alignment.
 class MinistryAudioManifest {
+  final int schemaVersion;
   final String recordingId;
   final String recordingVersion;
   final MinistryAudioModel model;
@@ -207,12 +366,14 @@ class MinistryAudioManifest {
   final List<MinistryAudioStem> stems;
 
   MinistryAudioManifest._({
+    required this.schemaVersion,
     required this.recordingId,
     required this.recordingVersion,
     required this.model,
     required List<MinistryAudioStem> stems,
   }) : stems = List.unmodifiable(stems);
 
+  MinistryAudioCodec get codec => stems.first.codec;
   int get sampleRate => stems.first.sampleRate;
   int get frames => stems.first.frames;
   double get durationSeconds => stems.first.durationSeconds;
@@ -225,10 +386,10 @@ class MinistryAudioManifest {
     'stems',
   };
 
-  factory MinistryAudioManifest.fromJson(Object? json) {
+  factory MinistryAudioManifest.fromJson(Object? json, {bool allowMp3 = false}) {
     final map = _asMap(json, 'manifesto');
     final schema = map['schemaVersion'];
-    if (schema != 1) {
+    if (schema != 1 && !(schema == 2 && allowMp3)) {
       throw AppFailure(
         message: schema == 2
             ? 'Este formato de áudio (schema v2) ainda não é suportado no app.'
@@ -254,18 +415,30 @@ class MinistryAudioManifest {
     }
     final byId = <MinistryStemId, MinistryAudioStem>{};
     for (final raw in rawStems) {
-      final stem = MinistryAudioStem.fromJson(raw);
+      final stem = MinistryAudioStem.fromJson(raw, allowMp3: allowMp3 && schema == 2);
       if (byId.containsKey(stem.id)) _invalid('faixa duplicada');
       byId[stem.id] = stem;
     }
     final ordered = [for (final id in MinistryStemId.values) byId[id]!];
     final first = ordered.first;
     for (final stem in ordered) {
+      if (stem.codec != first.codec) _invalid('codecs misturados');
       if (stem.sampleRate != first.sampleRate || stem.frames != first.frames) {
         _invalid('faixas com taxa ou frames diferentes');
       }
+      if (stem.mp3Alignment != first.mp3Alignment) {
+        _invalid('faixas MP3 com alinhamento diferente');
+      }
+    }
+    if (schema == 2 && first.codec != MinistryAudioCodec.mp3) {
+      throw const AppFailure(
+        message: 'Este formato de áudio (schema v2) ainda não é suportado no app.',
+        statusCode: 422,
+        code: MinistryAudioContract.unsupportedSchemaCode,
+      );
     }
     return MinistryAudioManifest._(
+      schemaVersion: schema as int,
       recordingId: recordingId,
       recordingVersion: version,
       model: model,
@@ -408,10 +581,11 @@ class MinistryAudioPlayback {
 
   static const _keys = {'manifest', 'tracks', 'expiresAt', 'transfer'};
 
-  factory MinistryAudioPlayback.fromJson(Object? json) {
+  factory MinistryAudioPlayback.fromJson(Object? json, {bool allowMp3 = false}) {
     final map = _asMap(json, 'reprodução');
     _exactKeys(map, _keys, 'reprodução');
-    final manifest = MinistryAudioManifest.fromJson(map['manifest']);
+    final manifest =
+        MinistryAudioManifest.fromJson(map['manifest'], allowMp3: allowMp3);
 
     final rawTransfer = map['transfer'];
     final MinistryAudioTransfer transfer;
@@ -421,6 +595,10 @@ class MinistryAudioPlayback {
       transfer = MinistryAudioTransfer.direct;
     } else {
       _invalid('modo de transferência');
+    }
+    if (manifest.codec == MinistryAudioCodec.mp3 &&
+        transfer != MinistryAudioTransfer.direct) {
+      _invalid('MP3 exige transferência direta');
     }
     final expiresAt = _asInt(map['expiresAt'], 'expiração');
     if (expiresAt <= 0) _invalid('expiração');

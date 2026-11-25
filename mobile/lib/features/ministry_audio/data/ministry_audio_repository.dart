@@ -57,9 +57,14 @@ class HttpMinistryAudioRepository implements MinistryAudioRepository {
     required ApiClient apiClient,
     required ActiveMinistryIdProvider activeMinistryId,
     Object? Function()? contextEpoch,
+    bool allowMp3 = MinistryAudioFeatureFlags.experimentalMp3,
   })  : _apiClient = apiClient,
         _activeMinistryId = activeMinistryId,
-        _contextEpoch = contextEpoch;
+        _contextEpoch = contextEpoch,
+        _allowMp3 = allowMp3;
+
+  /// EXPERIMENTAL (M22-S4): parse MP3 v2 manifests. Off unless the build opts in.
+  final bool _allowMp3;
 
   @override
   Future<MinistryAudioPage> listRecordings({
@@ -116,7 +121,7 @@ class HttpMinistryAudioRepository implements MinistryAudioRepository {
       cancelToken,
       path: '/$recordingId/playback',
       parse: (data) {
-        final playback = MinistryAudioPlayback.fromJson(data);
+        final playback = MinistryAudioPlayback.fromJson(data, allowMp3: _allowMp3);
         if (playback.manifest.recordingId != recordingId) {
           throw const AppFailure(
             message:
