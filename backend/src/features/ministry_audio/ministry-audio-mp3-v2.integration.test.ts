@@ -26,6 +26,9 @@ const fixtures = join(__dirname, '../../../../shared/fixtures/ministry-audio-mp3
 const cases = JSON.parse(readFileSync(join(fixtures, 'real-encoder-cases.json'), 'utf8')) as {
   cases: Array<{ name: string; manifest: Mp3StemManifest; base64: string }>;
 };
+const webCases = JSON.parse(readFileSync(join(__dirname, '../../../../shared/fixtures/ministry-audio-mp3-v2-lame/web-encoder-cases.json'), 'utf8')) as {
+  sixStems44100: Array<{ manifest: Mp3StemManifest; base64: string }>;
+};
 const valid = cases.cases.find((c) => c.name === 'valid-44100-12000')!;
 const mp3 = Buffer.from(valid.base64, 'base64');
 const stemManifest = (id: StemId, patch: Partial<Mp3StemManifest> = {}): Mp3StemManifest => ({ ...valid.manifest, id, ...patch });
@@ -71,7 +74,7 @@ describe('MP3 v2 persistence and finalization (Firestore Emulator + local simula
     server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    storage = new SimulatedDirectStemStorage(origin, () => clock);
+    storage = new SimulatedDirectStemStorage(origin, () => clock, process.env.M22S3_LONG_DIR ? 256 * 1024 * 1024 : undefined);
     app.use(objectRoute, storage.router);
     app.use(express.json());
     app.use('/api/v1/ministries/:ministryId/audio-library', createMinistryAudioRouter({
@@ -301,5 +304,121 @@ describe('MP3 v2 persistence and finalization (Firestore Emulator + local simula
     expect(await status(await api(`/${upload.id}/playback`, 'GET', memberToken))).toBe(404);
     const list = await json<{ items: Array<{ id: string }> }>(await api('/', 'GET', memberToken));
     expect(list.items.some((item) => item.id === upload.id)).toBe(false);
+  });
+  // Long audio (close to 300 s): six real ~9 MB MP3 stems. The files are big and not committed: produce them with
+  // scripts/m22s3/encode-long-fixtures.ts and point M22S3_LONG_DIR at the output. Without it this case is NOT executed.
+  const longDir = process.env.M22S3_LONG_DIR;
+  it.skipIf(!longDir)('publishes six ~300 s MP3 stems end to end, validating in streaming with bounded memory', { timeout: 240_000 }, async () => {
+    const { readFileSync: read } = await import('node:fs');
+    const manifests = JSON.parse(read(join(longDir!, 'manifests.json'), 'utf8')) as Mp3StemManifest[];
+    expect(manifests).toHaveLength(6);
+    profile.serverByteValidation = true;
+    const upload = await json<Upload>(await reserve(manifests));
+    let peakRss = 0;
+    let peakHeap = 0;
+    const sample = setInterval(() => { const m = process.memoryUsage(); peakRss = Math.max(peakRss, m.rss); peakHeap = Math.max(peakHeap, m.heapUsed); }, 50);
+    const baseline = process.memoryUsage();
+    const timings: Record<string, number> = {};
+    try {
+      for (const stem of STEM_IDS) {
+        const bytes = read(join(longDir!, `${stem}.mp3`));
+        const started = Date.now();
+        await json(await (await sealStem(upload.id, stem, bytes)).complete());
+        timings[stem] = Date.now() - started;
+      }
+    } finally {
+      clearInterval(sample);
+    }
+    expect(await json<{ status: string }>(await finalize(upload.id))).toMatchObject({ status: 'published' });
+    const playback = await json<Playback>(await api(`/${upload.id}/playback`, 'GET', memberToken));
+    for (const track of playback.tracks) {
+      const response = await object(track, 'GET');
+      const bytes = Buffer.from(await response.arrayBuffer());
+      expect(createHash('sha256').update(bytes).digest('hex')).toBe(manifests[STEM_IDS.indexOf(track.id)]!.sha256);
+    }
+    const mb = (n: number) => Math.round(n / 1_048_576);
+    console.log(`M22S3 long-audio: seal ms per stem ${JSON.stringify(timings)}; baseline rss ${mb(baseline.rss)} MB heap ${mb(baseline.heapUsed)} MB; peak rss ${mb(peakRss)} MB heap ${mb(peakHeap)} MB`);
+    // One 9 MB body is held by this test process at a time; the server side validates in O(1) memory (Info frame only).
+    expect(peakHeap - baseline.heapUsed).toBeLessThan(200 * 1_048_576);
+  });
+  describe('Web encoder profile (LAME 3.100 WebAssembly, six distinct stems)', () => {
+    const lame = webCases.sixStems44100;
+    const lameBytes = (stem: StemId) => Buffer.from(lame[STEM_IDS.indexOf(stem)]!.base64, 'base64');
+    const lameStems = () => lame.map((s) => s.manifest);
+    async function stageLame() {
+      profile.serverByteValidation = true;
+      const upload = await json<Upload>(await reserve(lameStems()));
+      for (const stem of STEM_IDS) await json(await (await sealStem(upload.id, stem, lameBytes(stem))).complete());
+      return upload;
+    }
+
+    it('reserves, uploads, validates, seals, publishes and serves the six real Web-encoder stems byte-for-byte to another member, with renewable URLs', async () => {
+      const upload = await stageLame();
+      const stored = (await doc(upload.id).get()).data()!;
+      for (const id of STEM_IDS) {
+        expect(stored.directAttempts[id].receipt.mp3).toMatchObject({ id, encoder: 'LAME3.100', tagDelayFrames: 576, decoderDelayFrames: 529 });
+      }
+      expect(await json<{ status: string }>(await finalize(upload.id))).toMatchObject({ status: 'published' });
+      for (const round of [1, 2]) { // second round = renewed signed URLs
+        const playback = await json<Playback>(await api(`/${upload.id}/playback`, 'GET', memberToken));
+        expect(playback.manifest.stems.map((s) => s.id)).toEqual([...STEM_IDS]);
+        for (const track of playback.tracks) {
+          const response = await object(track, 'GET');
+          expect(response.headers.get('content-type'), `round ${round}`).toBe('audio/mpeg');
+          const bytes = Buffer.from(await response.arrayBuffer());
+          expect(bytes).toEqual(lameBytes(track.id));
+          expect(createHash('sha256').update(bytes).digest('hex')).toBe(lame[STEM_IDS.indexOf(track.id)]!.manifest.sha256);
+        }
+      }
+      expect(legacyStorage.put).not.toHaveBeenCalled();
+    });
+
+    it('resumes an interrupted upload: a truncated body fails validation, a fresh attempt succeeds, and nothing partial is published', async () => {
+      profile.serverByteValidation = true;
+      const upload = await json<Upload>(await reserve(lameStems()));
+      const cut = lameBytes('vocals').subarray(0, 4000);
+      const first = await json<UploadGrant>(await api(`${stemPath(upload.id, 'vocals')}/upload-url`, 'POST'));
+      expect(await status(await object(first, 'PUT', cut))).not.toBe(200); // the signed size does not match: nothing is stored
+      expect(await status(await api(`${stemPath(upload.id, 'vocals')}/complete`, 'POST', adminToken, ministryId, { attempt: first.attempt }))).not.toBe(200);
+      expect(await status(await finalize(upload.id))).toBe(409);
+      const resumed = await sealStem(upload.id, 'vocals', lameBytes('vocals'));
+      expect(resumed.grant.attempt).toBeGreaterThanOrEqual(first.attempt); // the same attempt may be resumed
+      await json(await resumed.complete());
+      for (const stem of STEM_IDS.filter((id) => id !== 'vocals')) await json(await (await sealStem(upload.id, stem, lameBytes(stem))).complete());
+      expect(await json<{ status: string }>(await finalize(upload.id))).toMatchObject({ status: 'published' });
+    });
+
+    it('refuses to publish when one stem is reported by another profile/encoder, and when a stem leaves the pinned delays', async () => {
+      const upload = await stageLame();
+      const ref = doc(upload.id);
+      const facts = (await ref.get()).data()!.directAttempts.bass.receipt.mp3;
+      await ref.update({ 'directAttempts.bass.receipt.mp3': { ...facts, encoder: 'Lavc99.9.' } });
+      expect(await status(await finalize(upload.id))).toBe(409);
+      await ref.update({ 'directAttempts.bass.receipt.mp3': { ...facts, decoderDelayFrames: 530, tagPaddingFrames: facts.tagPaddingFrames + 1 } });
+      expect(await status(await finalize(upload.id))).toBe(409);
+      expect((await ref.get()).data()!.status).toBe('uploading');
+      await ref.update({ 'directAttempts.bass.receipt.mp3': facts });
+      expect(await status(await finalize(upload.id))).toBe(200);
+    });
+
+    it('rejects malformed LAME bytes with a valid SHA-256, concurrent finalization publishes once, and other ministries see nothing', async () => {
+      profile.serverByteValidation = true;
+      const bad = Buffer.from(lameBytes('drums')); bad[300] ^= 1;
+      const stems = lameStems().map((s) => (s.id === 'drums' ? { ...s, sha256: createHash('sha256').update(bad).digest('hex') } : s));
+      const broken = await json<Upload>(await reserve(stems));
+      expect(await status(await (await sealStem(broken.id, 'drums', bad)).complete())).toBe(422);
+
+      const upload = await stageLame();
+      const results = await Promise.all([finalize(upload.id), finalize(upload.id), finalize(upload.id)]);
+      expect((await Promise.all(results.map((r) => json<{ id: string }>(r)))).every((b) => b.id === upload.id)).toBe(true);
+      expect(await status(await api(`/${upload.id}/playback`, 'GET', otherAdminToken, otherMinistryId))).toBe(404);
+      const list = await json<{ items: Array<{ id: string }> }>(await api('/', 'GET', otherAdminToken, otherMinistryId));
+      expect(list.items.some((item) => item.id === upload.id)).toBe(false);
+    });
+
+    it('is rejected on the real routes while the codec is not enabled', async () => {
+      profile.serverByteValidation = false;
+      expect(await json<{ error: { details?: { code?: string } } }>(await reserve(lameStems()), 422)).toMatchObject({ error: { details: { code: 'AUDIO_CODEC_NOT_ENABLED' } } });
+    });
   });
 });

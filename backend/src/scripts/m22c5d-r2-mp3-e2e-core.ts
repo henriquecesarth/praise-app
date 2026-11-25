@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { open, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { STEM_IDS } from '../features/ministry_audio/ministry-audio.schema';
+import type { Mp3StemManifest } from '../features/ministry_audio/mp3-stream-validator';
 
 // M22-C.5D-C0 — development-only core of the MP3 v2 homologation against the R2 DEVELOPMENT bucket.
 // Nothing here opens a connection: every effect is injected, so the same logic is proven offline (fake bucket + Firestore
@@ -583,4 +585,24 @@ export async function cleanupJournal(
     }
   }
   return outcome;
+}
+
+export type HarnessFixtureSource = 'ffmpeg' | 'web-lame';
+
+/**
+ * The MP3 every stem of the homologation uploads. `ffmpeg` (default) is the original libmp3lame/ffmpeg fixture; `web-lame` is a
+ * stem produced by the REAL Web encoder (LAME 3.100 WebAssembly). Selection only picks bytes: the server's profile validation
+ * is identical and nothing here enables any codec.
+ */
+export function loadHarnessFixture(source: string | undefined = process.env.M22S3_FIXTURE): { source: HarnessFixtureSource; bytes: Buffer; manifest: Mp3StemManifest } {
+  const root = join(__dirname, '../../../shared/fixtures');
+  if (source === 'web-lame') {
+    const web = JSON.parse(readFileSync(join(root, 'ministry-audio-mp3-v2-lame/web-encoder-cases.json'), 'utf8')) as { sixStems44100: Array<{ manifest: Mp3StemManifest; base64: string }> };
+    const first = web.sixStems44100[0]!;
+    return { source: 'web-lame', bytes: Buffer.from(first.base64, 'base64'), manifest: first.manifest };
+  }
+  if (source !== undefined && source !== '' && source !== 'ffmpeg') throw new Error(`Unknown fixture source "${source}" (ffmpeg | web-lame).`);
+  const cases = JSON.parse(readFileSync(join(root, 'ministry-audio-mp3-v1/real-encoder-cases.json'), 'utf8')) as { cases: Array<{ name: string; manifest: Mp3StemManifest; base64: string }> };
+  const valid = cases.cases.find((c) => c.name === 'valid-44100-12000')!;
+  return { source: 'ffmpeg', bytes: Buffer.from(valid.base64, 'base64'), manifest: valid.manifest };
 }

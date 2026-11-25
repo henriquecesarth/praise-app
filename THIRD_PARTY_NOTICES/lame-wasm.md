@@ -1,6 +1,6 @@
 # LAME (MP3 encoder, WebAssembly) — third-party notice
 
-Status: **experimental feature, disabled by default** (`VITE_EXPERIMENTAL_MP3_COMPRESSION`). This document records the
+Status: **experimental feature, disabled by default** (`VITE_EXPERIMENTAL_MP3_COMPRESSION`). Since M22-S3 a build made without that flag contains NO encoder Worker, NO LAME WebAssembly file and NO embedded copy (enforced by `web/scripts/check-mp3-distribution.mjs`); a build with the flag distributes all of them. This document records the
 evidence collected in M22-S2. It is **not a legal opinion** and does not declare definitive LGPL compliance; items that were
 not verified are marked **Unknown / Not yet verified**. A legal review is a pending blocker before any release that enables it.
 
@@ -18,7 +18,7 @@ The fork `https://github.com/arseneyr/lame` differs from the 3.100 release by on
 
 - File: `wasm-media-encoders/wasm/mp3.wasm`, 132,999 bytes, SHA-256 `85e81719250b9a667b1258143f689dda70e3e57a7e7c29ab0b4cef65c8f6eb9a`.
 - Served as an **independent file** (Vite emits `assets/mp3-<hash>.wasm`, verified in a `vite build --mode test`; the emitted file has the same SHA-256). The Worker fetches it and refuses any other binary (size + SHA-256 pin, `web/src/audio/mp3-encoding/mp3-lame-backend.ts`).
-- **Limitation (honest note):** the npm package's JavaScript entry also contains a base64 copy of the same encoder (and of an unrelated Ogg encoder). That copy is still present in the lazily loaded JavaScript chunk, but the compression Worker does not execute it (it instantiates the separate file). Removing the embedded copy would need a repackaged/forked wrapper and was not done. Whether this matters for LGPL purposes is **Unknown / Not yet verified** (legal review).
+- **Limitation (honest note, only for builds WITH the flag):** the npm package's JavaScript entry also contains a base64 copy of the same encoder (and of an unrelated Ogg encoder). That copy is still present in the lazily loaded JavaScript chunk, but the compression Worker does not execute it (it instantiates the separate file). Removing the embedded copy would need a repackaged/forked wrapper and was not done. Whether this matters for LGPL purposes is **Unknown / Not yet verified** (legal review).
 
 ## Obligations checklist (evidence, not a conclusion)
 

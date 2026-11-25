@@ -1,7 +1,7 @@
 import type { FileHandle } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import { CODEC_PROFILES } from './audio-codec';
-import { MP3_PUBLICATION_VALIDATION } from './mp3-encoder-profile';
+import { MP3_PUBLICATION_VALIDATION, selectMp3EncoderProfile } from './mp3-encoder-profile';
 import type { Mp3Facts } from './direct-storage';
 import { verifyMp3Stem, type Mp3StemManifest, type Mp3ValidationResult } from './mp3-stream-validator';
 import { stemV2Schema, type StemManifest } from './ministry-audio.schema';
@@ -47,11 +47,13 @@ export function mp3FactsOf(result: Mp3ValidationResult | undefined): Mp3Facts | 
 /** True only when the facts describe exactly this stem: identity, hash, size and every declared alignment value. */
 export function mp3FactsMatch(expected: StoredStem, facts: Mp3Facts | undefined): boolean {
   if (expected.codec !== 'mp3_cbr256') return facts === undefined;
-  return !!facts && facts.id === expected.id && facts.sha256 === expected.sha256 && facts.sizeBytes === expected.sizeBytes &&
+  if (!facts || facts.encoder.length !== 9) return false;
+  // The profile is derived from the encoder identification the server itself read, never from a client-declared id.
+  const profile = selectMp3EncoderProfile(facts.encoder, MP3_PUBLICATION_VALIDATION.profiles);
+  return !!profile && facts.id === expected.id && facts.sha256 === expected.sha256 && facts.sizeBytes === expected.sizeBytes &&
     facts.sampleRate === expected.sampleRate && facts.frames === expected.frames &&
     facts.mpegAudioFrames === expected.alignment.mpegAudioFrames &&
-    facts.decoderDelayFrames === MP3_PUBLICATION_VALIDATION.expectedDecoderDelayFrames &&
-    facts.tagDelayFrames === MP3_PUBLICATION_VALIDATION.expectedTagDelayFrames &&
-    facts.tagDelayFrames + facts.tagPaddingFrames === expected.alignment.encoderDelayFrames + expected.alignment.paddingFrames &&
-    facts.encoder.length === 9 && MP3_PUBLICATION_VALIDATION.allowedEncoderPrefixes.some((prefix) => facts.encoder.startsWith(prefix));
+    facts.decoderDelayFrames === profile.decoderDelayFrames &&
+    facts.tagDelayFrames === profile.tagDelayFrames &&
+    facts.tagDelayFrames + facts.tagPaddingFrames === expected.alignment.encoderDelayFrames + expected.alignment.paddingFrames;
 }

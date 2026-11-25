@@ -13,6 +13,7 @@ import type { Mp3StemManifest } from '../src/features/ministry_audio/mp3-stream-
 import {
   ActivityTracker, apiTimeoutMs, assertLiveIsolation, cleanupJournal, CommandGuard, createJournalFile, EXPECTED_STEPS, GuardViolation, lateWriteSweep,
   LIMITS, MODES, ministryIds, quiesceRun, RANGE_PART_BYTES, signedRequest, updateJournalFile, type Journal, type ModeTag,
+  loadHarnessFixture,
 } from '../src/scripts/m22c5d-r2-mp3-e2e-core';
 import { runMp3Scenarios, type ScenarioEnv } from '../src/scripts/m22c5d-r2-mp3-e2e-scenarios';
 
@@ -94,11 +95,9 @@ async function main(): Promise<number> {
   const { R2StemStorage, createR2Client } = await import('../src/features/ministry_audio/r2-storage');
   const users = new UserRepository();
 
-  const cases = JSON.parse(readFileSync(join(__dirname, '../../shared/fixtures/ministry-audio-mp3-v1/real-encoder-cases.json'), 'utf8')) as {
-    cases: Array<{ name: string; manifest: Mp3StemManifest; base64: string }>;
-  };
-  const valid = cases.cases.find((c) => c.name === 'valid-44100-12000')!;
-  const fixture = { bytes: Buffer.from(valid.base64, 'base64'), manifest: valid.manifest };
+  // Optional M22S3_FIXTURE=web-lame uploads a stem made by the real Web encoder instead of the ffmpeg fixture (same validation).
+  const fixture = loadHarnessFixture();
+  console.log(`Fixture: ${fixture.source} (${fixture.bytes.length} bytes)`);
 
   const ids = ministryIds(run);
   console.log(`RUN ${run}  mode=${mode}  bucket-class=development  journal=${journalPath}`);

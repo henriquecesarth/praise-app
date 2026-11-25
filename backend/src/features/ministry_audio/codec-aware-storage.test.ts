@@ -135,7 +135,7 @@ describe('storage-side MP3 verification profile', () => {
   });
 
   it('rejects an unknown encoder even though the tag CRC, size and SHA-256 are all valid', async () => {
-    const other = withEncoder('LAME3.100');
+    const other = withEncoder('LAME3.99r');
     await expect(run(other.bytes, other.manifest)).rejects.toMatchObject({ statusCode: 422 });
     const accepted = withEncoder('Lavc99.9.');
     await expect(run(accepted.bytes, accepted.manifest)).resolves.toBeDefined();
@@ -233,7 +233,7 @@ describe('R2 adapter with MP3 (offline)', () => {
     const makeCases = (): Array<[string, ReturnType<typeof object>, Mp3StemManifest]> => [
       ['sha mismatch', object(altered, '"s"'), expected],
       ['structural damage with matching sha', object(flip(300).bytes, '"s"'), flip(300).manifest],
-      ['unknown encoder', object(withEncoder('LAME3.100').bytes, '"s"'), withEncoder('LAME3.100').manifest],
+      ['unknown encoder', object(withEncoder('LAME3.99r').bytes, '"s"'), withEncoder('LAME3.99r').manifest],
       ['truncated object', object(mp3.subarray(0, 4000), '"s"', { ContentLength: 4000 }), expected],
       ['gzip content-encoding', object(mp3, '"s"', { ContentEncoding: 'gzip' }), expected],
       ['wrong media type', object(mp3, '"s"', { ContentType: 'audio/wav' }), expected],

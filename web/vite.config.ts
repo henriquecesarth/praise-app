@@ -1,5 +1,5 @@
 import { validatePublishEnvironment } from './src/config/publish-guard';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -7,8 +7,11 @@ import { VitePWA } from 'vite-plugin-pwa';
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
 validatePublishEnvironment(process.env, command, mode);
+// Experimental local MP3 compression (M22-S3): a literal 'true' | 'false' so that a build without the flag folds the guarded
+// dynamic import away and ships no encoder Worker, no LAME WebAssembly file and no embedded copy of it.
+const experimentalMp3 = (process.env.VITE_EXPERIMENTAL_MP3_COMPRESSION ?? loadEnv(mode, process.cwd(), 'VITE_').VITE_EXPERIMENTAL_MP3_COMPRESSION) === 'true' ? 'true' : 'false';
 return {
-define: { 'globalThis.__LOUVAIO_VERIFIED_API__': JSON.stringify(['preview','production'].includes(process.env.VERCEL_ENV || '') ? process.env.VITE_API_URL : ''), 'globalThis.__LOUVAIO_BUILD_ENV__': JSON.stringify(process.env.VERCEL_ENV || 'local') },
+define: { 'import.meta.env.VITE_EXPERIMENTAL_MP3_COMPRESSION': JSON.stringify(experimentalMp3), 'globalThis.__LOUVAIO_VERIFIED_API__': JSON.stringify(['preview','production'].includes(process.env.VERCEL_ENV || '') ? process.env.VITE_API_URL : ''), 'globalThis.__LOUVAIO_BUILD_ENV__': JSON.stringify(process.env.VERCEL_ENV || 'local') },
   plugins: [
     react(),
     tailwindcss(),

@@ -32,7 +32,7 @@ const pick = (testId: string, file: File) => fireEvent.change(screen.getByTestId
 
 type Encoder = ReturnType<typeof createInProcessEncoder>;
 
-async function mountReady(options: { flag?: boolean; encoder?: Encoder; onPrepare?: (d: unknown) => void } = {}) {
+async function mountReady(options: { flag?: boolean; encoder?: Encoder; onPrepare?: (d: unknown) => void; onPrepareExperimentalMp3?: (h: unknown) => void } = {}) {
   const encoder = options.encoder ?? createInProcessEncoder();
   worker.separate.mockResolvedValue(await tonesResult());
   const onPrepare = options.onPrepare ?? vi.fn();
@@ -40,6 +40,7 @@ async function mountReady(options: { flag?: boolean; encoder?: Encoder; onPrepar
     <MinistryAudioLocalSeparation
       onPrepare={onPrepare as never} onClose={() => {}} createWorkerClient={createWorkerClient}
       experimentalMp3Compression={options.flag ?? true} createMp3Encoder={() => encoder} mp3Decoder={createLookupDecoder(encoder)}
+      onPrepareExperimentalMp3={options.onPrepareExperimentalMp3 as never}
     />,
   );
   pick('separation-audio', wavFile());
@@ -197,4 +198,27 @@ describe('Separação local: compressão experimental para MP3', () => {
     await act(async () => { release(); await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(encoder.calls).toBe(2); // no stem was started after leaving
   });
-});
+
+  it('has no experimental MP3 publication entry unless a caller opts in; production screens never do', async () => {
+    await mountReady();
+    fireEvent.click(compressButton()!);
+    await findDone();
+    expect(screen.queryByRole('button', { name: /Preparar publicação experimental/ })).not.toBeInTheDocument();
+  });
+
+  it('hands over BOTH drafts as one explicit transfer of ownership and no longer disposes them', async () => {
+    const received: Array<{ wav: { disposed: boolean }; mp3: { disposed: boolean } }> = [];
+    const onPrepare = vi.fn();
+    const { unmount } = await mountReady({ onPrepare, onPrepareExperimentalMp3: (h) => received.push(h as never) });
+    fireEvent.click(compressButton()!);
+    await findDone();
+    fireEvent.click(screen.getByRole('button', { name: 'Preparar publicação experimental (MP3)' }));
+    expect(received).toHaveLength(1);
+    expect(onPrepare).not.toHaveBeenCalled(); // the WAV-only path was not used
+    expect(received[0]!.wav.disposed).toBe(false);
+    expect(received[0]!.mp3.disposed).toBe(false);
+    expect(screen.queryByTestId('mixer-preview')).not.toBeInTheDocument(); // this screen released its own state
+    unmount();
+    expect(received[0]!.wav.disposed).toBe(false); // still owned by the experimental flow
+    expect(received[0]!.mp3.disposed).toBe(false);
+  });});

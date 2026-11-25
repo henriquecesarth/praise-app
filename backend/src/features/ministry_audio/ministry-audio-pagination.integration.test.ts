@@ -187,6 +187,40 @@ describe('ministry audio catalog pagination with hidden codecs (Firestore Emulat
     expect(page.body.nextCursor).toBeNull();
   });
 
+  it('lists MP3 and WAV records together when the codec is enabled, and a rollback mid-walk hides MP3 without duplicates, gaps or errors', async () => {
+    const rows = Array.from({ length: 30 }, (_, i): Seed => ({ n: i + 1, hidden: i % 2 === 0 })); // alternating MP3 / WAV
+    await seed(ministryId, rows);
+    const everything = rows.map((r) => rid(r.n)).sort().reverse();
+    profile.serverByteValidation = true; // codec enabled (test-only switch; the publishable build has none)
+    try {
+      const open = await walk(ministryId, memberToken, 'limit=4');
+      expect(open.ids).toEqual(everything);
+      expect(new Set(open.ids).size).toBe(open.ids.length);
+
+      // Rollback between two requests of the same walk: the cursor stays valid and the remainder is WAV-only.
+      const first = await get(ministryId, memberToken, '?limit=4');
+      expect(first.body.items).toHaveLength(4);
+      profile.serverByteValidation = false;
+      const rest: string[] = [];
+      let cursor = first.body.nextCursor;
+      let guard = 0;
+      while (cursor) {
+        const page = await get(ministryId, memberToken, `?limit=4&cursor=${encodeURIComponent(cursor)}`);
+        expect(page.status).toBe(200);
+        rest.push(...page.body.items.map((item) => item.id));
+        cursor = page.body.nextCursor;
+        if (++guard > 20) throw new Error('pagination did not terminate');
+      }
+      const seen = new Set(first.body.items.map((item) => item.id));
+      expect(rest.some((id) => seen.has(id))).toBe(false);
+      expect(rest).toEqual(ordered(rows).filter((id) => id < first.body.items.at(-1)!.id));
+      // Re-enabling restores every record (nothing was altered by the rollback).
+      profile.serverByteValidation = true;
+      expect((await walk(ministryId, memberToken, 'limit=4')).ids).toEqual(everything);
+    } finally {
+      profile.serverByteValidation = false;
+    }
+  });
   it('keeps ministries isolated and the cursor bound to its ministry and query', async () => {
     await seed(ministryId, Array.from({ length: 12 }, (_, i): Seed => ({ n: i + 1, hidden: i % 2 === 0 })));
     await seed(otherId, Array.from({ length: 12 }, (_, i): Seed => ({ n: 100 + i, hidden: false })));

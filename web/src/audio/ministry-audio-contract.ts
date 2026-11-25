@@ -80,6 +80,15 @@ export interface MinistryAudioReservation extends MinistryAudioMetadata {
   stems: MinistryAudioStem[];
 }
 
+/** Experimental (M22-S3): manifest schemaVersion 2 reservation with six MP3 stems. The server refuses it while the codec is not enabled. */
+export interface MinistryAudioMp3Reservation extends MinistryAudioMetadata {
+  schemaVersion: 2;
+  idempotencyKey: string;
+  confirmed: true;
+  model: MinistryAudioModel;
+  stems: MinistryAudioMp3Stem[];
+}
+
 export interface MinistryAudioPlaybackTrack {
   id: CanonicalStemId;
   url: string;

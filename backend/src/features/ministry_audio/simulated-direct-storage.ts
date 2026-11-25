@@ -62,7 +62,8 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
   private reservedBytes = 0;
   private activeTransfers = 0;
 
-  constructor(origin: string, private readonly now = Date.now) {
+  /** maxFixtureBytes only matters for the long-audio homologation (six ~9 MB stems, staged and sealed). */
+  constructor(origin: string, private readonly now = Date.now, private readonly maxFixtureBytes = MAX_FIXTURE_BYTES) {
     const address = new URL(origin);
     if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(address.origin) || address.origin !== origin) {
       throw new Error('A origem do simulador de áudio deve apontar para o servidor local.');
@@ -96,7 +97,7 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
     const existing = this.objects.get(finalKey);
     if (existing && existing.etag !== staged.etag) throw objectConflict();
     if (!existing) {
-      if (this.storedBytes + this.reservedBytes + staged.bytes.length > MAX_FIXTURE_BYTES) throw objectConflict();
+      if (this.storedBytes + this.reservedBytes + staged.bytes.length > this.maxFixtureBytes) throw objectConflict();
       this.store(finalKey, staged);
     }
     return facts ? { etag: staged.etag, mp3: facts } : { etag: staged.etag };
@@ -216,7 +217,7 @@ export class SimulatedDirectStemStorage implements DirectStemStorage {
       response.status(412).end();
       return;
     }
-    if (this.storedBytes + this.reservedBytes + size > MAX_FIXTURE_BYTES) {
+    if (this.storedBytes + this.reservedBytes + size > this.maxFixtureBytes) {
       response.status(429).end();
       return;
     }

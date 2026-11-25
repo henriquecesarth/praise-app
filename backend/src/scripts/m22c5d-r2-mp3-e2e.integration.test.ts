@@ -20,16 +20,14 @@ import type { Mp3StemManifest } from '../features/ministry_audio/mp3-stream-vali
 import { R2StemStorage } from '../features/ministry_audio/r2-storage';
 import { UserRepository } from '../repositories/UserRepository';
 import {
-  cleanupJournal, CommandGuard, createJournalFile, EXPECTED_STEPS, MODES, ministryIds, parseJournal, quiesceRun, RANGE_PART_BYTES, updateJournalFile, type Journal, type ModeTag,
+  cleanupJournal, CommandGuard, createJournalFile, EXPECTED_STEPS, loadHarnessFixture, MODES, ministryIds, parseJournal, quiesceRun, RANGE_PART_BYTES, updateJournalFile, type Journal, type ModeTag,
 } from './m22c5d-r2-mp3-e2e-core';
 import { runMp3Scenarios, type ScenarioEnv, type Signed } from './m22c5d-r2-mp3-e2e-scenarios';
 import { fakeR2, providerError } from './m22c5d-fake-r2';
 
 const BUCKET = 'louvaio-ministry-audio-dev';
-const fixtures = join(__dirname, '../../../shared/fixtures/ministry-audio-mp3-v1');
-const cases = JSON.parse(readFileSync(join(fixtures, 'real-encoder-cases.json'), 'utf8')) as { cases: Array<{ name: string; manifest: Mp3StemManifest; base64: string }> };
-const valid = cases.cases.find((c) => c.name === 'valid-44100-12000')!;
-const fixture = { bytes: Buffer.from(valid.base64, 'base64'), manifest: valid.manifest };
+// M22S3_FIXTURE=web-lame replays every scenario with a stem made by the real Web encoder (default: the ffmpeg fixture).
+const fixture = loadHarnessFixture();
 
 type Tweak = (tenant: string, path: string, method: string, response: Response) => Response | undefined;
 

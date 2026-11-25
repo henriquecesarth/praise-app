@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createSeparationDraft, type SeparationDraft } from '../audio/local-separation-draft';
 import { Mp3StemDecoder, type Mp3DecodeBackend } from '../audio/mp3-stem-decoder';
-import { Mp3EncodingWorkerClient } from '../audio/mp3-encoding/mp3-encoding-worker-client';
+import { Mp3PublicationHandoff } from '../audio/mp3-encoding/mp3-publication-handoff';
 import {
   Mp3CompressionError,
   compressSeparationDraft,
@@ -38,6 +38,16 @@ type PreviewSource = 'wav' | 'mp3';
 
 const EXPERIMENTAL_MP3_COMPRESSION = import.meta.env.VITE_EXPERIMENTAL_MP3_COMPRESSION === 'true';
 
+// The encoder Worker, the LAME WebAssembly file and the package's embedded copy are reachable ONLY through this dynamic import,
+// behind the build-time flag: a build without the flag contains none of them (verified by web/scripts/check-mp3-distribution.mjs).
+async function createDefaultMp3Encoder(): Promise<Mp3StemEncoderLike & { dispose?: () => void }> {
+  if (import.meta.env.VITE_EXPERIMENTAL_MP3_COMPRESSION === 'true') {
+    const { Mp3EncodingWorkerClient } = await import('../audio/mp3-encoding/mp3-encoding-worker-client');
+    return new Mp3EncodingWorkerClient();
+  }
+  throw new Mp3CompressionError('FAILED', 'A compressão MP3 não está incluída nesta versão.');
+}
+
 const PHASE_LABEL: Record<SeparationProgressEvent['phase'], string> = {
   loading_model: 'Carregando e verificando o modelo…',
   separating: 'Separando as faixas…',
@@ -51,7 +61,7 @@ const isCancel = (reason: unknown) =>
 const formatMegabytes = (bytes: number) => `${(bytes / 1_000_000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`;
 
 export function MinistryAudioLocalSeparation({
-  onPrepare, onClose, createWorkerClient, mp3Backend, experimentalMp3Compression = EXPERIMENTAL_MP3_COMPRESSION, createMp3Encoder, mp3Decoder,
+  onPrepare, onClose, createWorkerClient, mp3Backend, experimentalMp3Compression = EXPERIMENTAL_MP3_COMPRESSION, createMp3Encoder, mp3Decoder, onPrepareExperimentalMp3,
 }: {
   onPrepare: (draft: SeparationDraft) => void;
   onClose: () => void;
@@ -65,6 +75,11 @@ export function MinistryAudioLocalSeparation({
   createMp3Encoder?: () => Mp3StemEncoderLike & { dispose?: () => void };
   /** Test seam; production decodes with the browser (calibrated). */
   mp3Decoder?: Mp3StemDecoderLike;
+  /**
+   * Experimental, NOT passed by any production screen (the server refuses MP3 while the codec is closed). When given, a
+   * compressed result can be handed over, together with its WAV draft, as one explicit transfer of ownership.
+   */
+  onPrepareExperimentalMp3?: (handoff: Mp3PublicationHandoff) => void;
 }) {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [modelFile, setModelFile] = useState<File | null>(null);
@@ -237,7 +252,8 @@ export function MinistryAudioLocalSeparation({
       }
       if (!resumeStore.current || resumeStore.current.closed || resumeStore.current.draft !== target) resumeStore.current = createResumeStore(target);
       const store = resumeStore.current;
-      encoder = encoderFactory.current ? encoderFactory.current() : new Mp3EncodingWorkerClient();
+      encoder = encoderFactory.current ? encoderFactory.current() : await createDefaultMp3Encoder();
+      if (!current()) throw new Mp3CompressionError('CANCELLED', 'Compressão cancelada.');
       compressionEncoder.current = encoder;
       const result = await compressSeparationDraft({
         draft: target, encoder, decoder, signal: abort.signal, resume: store,
@@ -279,6 +295,30 @@ export function MinistryAudioLocalSeparation({
     resumeStore.current?.close();
     resumeStore.current = null;
     onPrepare(handedOver);
+  }
+
+  function prepareExperimentalMp3() {
+    const wav = owned.current;
+    const mp3 = ownedCompressed.current;
+    if (!onPrepareExperimentalMp3 || !wav || !mp3 || compression !== 'done') return;
+    let handoff: Mp3PublicationHandoff;
+    try {
+      handoff = new Mp3PublicationHandoff(wav, mp3);
+    } catch (reason) {
+      setCompressionError(reason instanceof Error ? reason.message : 'Não foi possível preparar a publicação experimental.');
+      setCompression('error');
+      return;
+    }
+    // Ownership of BOTH drafts moves to the experimental flow; this screen no longer disposes either of them.
+    owned.current = null;
+    ownedCompressed.current = null;
+    resumeStore.current?.close();
+    resumeStore.current = null;
+    setDraft(null);
+    setCompressed(null);
+    setCompression('idle');
+    setStatus('idle');
+    onPrepareExperimentalMp3(handoff);
   }
 
   const inputs = useMemo(() => (draft && !draft.disposed ? draft.mixerInputs() : null), [draft]);
@@ -390,6 +430,9 @@ export function MinistryAudioLocalSeparation({
                       ? <button type="button" className="btn btn-secondary min-h-[44px]" onClick={() => setPreview('wav')}>Voltar ao WAV</button>
                       : <button type="button" className="btn btn-secondary min-h-[44px]" onClick={() => setPreview('mp3')}>Ouvir versão comprimida (MP3)</button>}
                     <button type="button" className="btn btn-secondary min-h-[44px]" onClick={discardCompression}>Descartar compressão</button>
+                    {onPrepareExperimentalMp3 && (
+                      <button type="button" className="btn btn-secondary min-h-[44px]" onClick={prepareExperimentalMp3}>Preparar publicação experimental (MP3)</button>
+                    )}
                   </div>
                 </>
               )}

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "check:mp3-distribution": "node scripts/check-mp3-distribution.mjs dist --expect-absent",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",

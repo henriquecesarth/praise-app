@@ -25,6 +25,7 @@
 import { createHash } from 'node:crypto';
 import { AppError } from '../../middleware/error-handler';
 import { MP3_CBR256_BITRATE_KBPS, MPEG_L3_SAMPLES_PER_FRAME, CODEC_PROFILES } from './audio-codec';
+import { selectMp3EncoderProfile, type Mp3EncoderProfile } from './mp3-encoder-profile';
 import { mp3StemSchema } from './ministry-audio.schema';
 import type { z } from 'zod';
 
@@ -45,6 +46,12 @@ export class Mp3ValidationError extends Error {
 }
 
 export interface Mp3ValidationOptions {
+  /**
+   * Supported encoder profiles. The profile is selected once, deterministically, from the encoder identification in the Info
+   * frame (exactly one or none -> unsupported); its tag delay and decoder delay are then enforced. When present it replaces
+   * the three single-profile options below.
+   */
+  readonly profiles?: readonly Mp3EncoderProfile[];
   /**
    * Policy pin for the decoder-side delay folded into encoderDelayFrames (e.g. the value calibrated by the Web reader).
    * When omitted only the structural bound [0, 1152] applies and consistency across stems is the caller's gate.
@@ -243,6 +250,10 @@ export class Mp3StemStreamValidator {
     if (crc16(0, f, 0, o + 34) !== storedTagCrc) throw new Mp3ValidationError('CRC', 'CRC da tag LAME inválido.');
     for (let i = o + LAME_BLOCK; i < f.length; i++) if (f[i] !== 0) bad('bytes não nulos após a tag LAME');
     this.tag = { frames, bytes, delay, padding, encoder, storedMusicCrc, musicLength };
+    // Fail as soon as the Info frame is read: an unsupported encoder must not cost the whole object being streamed.
+    if (this.options.profiles && !selectMp3EncoderProfile(encoder, this.options.profiles)) {
+      throw new Mp3ValidationError('UNSUPPORTED_STREAM', 'Codificador MP3 fora dos perfis suportados.');
+    }
   }
 
   finish(): Mp3ValidationResult {
@@ -269,6 +280,12 @@ export class Mp3StemStreamValidator {
     if (tag.delay + tag.padding !== delay + padding || decoderDelay < 0 || padding > tag.padding ||
         decoderDelay > MPEG_L3_SAMPLES_PER_FRAME || tag.padding - padding !== decoderDelay) {
       throw new Mp3ValidationError('ALIGNMENT', 'Atraso/corte da tag LAME incompatíveis com o manifesto.');
+    }
+    if (this.options.profiles) {
+      const profile = selectMp3EncoderProfile(tag.encoder, this.options.profiles);
+      if (!profile) throw new Mp3ValidationError('UNSUPPORTED_STREAM', 'Codificador MP3 fora dos perfis suportados.');
+      if (tag.delay !== profile.tagDelayFrames) throw new Mp3ValidationError('ALIGNMENT', 'Atraso do codificador na tag LAME fora do perfil suportado.');
+      if (decoderDelay !== profile.decoderDelayFrames) throw new Mp3ValidationError('ALIGNMENT', 'Atraso do decodificador diverge da política configurada.');
     }
     if (this.options.expectedDecoderDelayFrames !== undefined && decoderDelay !== this.options.expectedDecoderDelayFrames) {
       throw new Mp3ValidationError('ALIGNMENT', 'Atraso do decodificador diverge da política configurada.');

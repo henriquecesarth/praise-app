@@ -67,6 +67,7 @@ import {
   type MinistryAudioPage,
   type MinistryAudioPlayback,
   type MinistryAudioRecord,
+  type MinistryAudioMp3Reservation,
   type MinistryAudioReservation,
   type MinistryAudioUpload,
   type MinistryAudioUploadGrant,
@@ -605,7 +606,7 @@ const ministryAudio = {
     const query = params.toString();
     return requestMinistryAudio<MinistryAudioPage>(ministryId, query ? `?${query}` : '', signal);
   },
-  reserve(ministryId: string, payload: MinistryAudioReservation, signal: AbortSignal) {
+  reserve(ministryId: string, payload: MinistryAudioReservation | MinistryAudioMp3Reservation, signal: AbortSignal) {
     return requestMinistryAudio<MinistryAudioUpload>(ministryId, '/uploads', signal, { method: 'POST', body: JSON.stringify(payload) });
   },
   getUpload(ministryId: string, id: string, signal: AbortSignal) {
