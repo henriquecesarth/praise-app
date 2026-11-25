@@ -134,7 +134,7 @@ export interface Counters {
   objectsCreated: number;
 }
 
-interface CommandLike {
+export interface CommandLike {
   constructor: { name: string };
   input?: { Bucket?: string; Key?: string; Range?: string; CopySource?: string; ContentLength?: number };
 }
