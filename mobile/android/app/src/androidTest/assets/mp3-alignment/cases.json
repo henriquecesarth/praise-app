@@ -1,0 +1,88 @@
+{
+ "format": "louvaio.android-mp3-alignment-cases",
+ "version": 1,
+ "burstLength": 33,
+ "decoderDelayPolicy": 529,
+ "cases": [
+  {
+   "name": "lame_44100",
+   "file": "impulse_lame_44100.mp3",
+   "sampleRate": 44100,
+   "frames": 44100,
+   "bursts": [
+    3000,
+    22050,
+    41100
+   ],
+   "alignment": {
+    "encoderDelayFrames": 1105,
+    "paddingFrames": 875,
+    "mpegAudioFrames": 40,
+    "infoFrame": true
+   },
+   "encoder": "LAME3.100"
+  },
+  {
+   "name": "lavc_44100",
+   "file": "impulse_lavc_44100.mp3",
+   "sampleRate": 44100,
+   "frames": 44100,
+   "bursts": [
+    3000,
+    22050,
+    41100
+   ],
+   "alignment": {
+    "encoderDelayFrames": 1105,
+    "paddingFrames": 875,
+    "mpegAudioFrames": 40,
+    "infoFrame": true
+   },
+   "encoder": "Lavc63.1.",
+   "tag": {
+    "delay": 576,
+    "padding": 1404
+   }
+  },
+  {
+   "name": "lame_48000",
+   "file": "impulse_lame_48000.mp3",
+   "sampleRate": 48000,
+   "frames": 48000,
+   "bursts": [
+    3000,
+    24000,
+    45000
+   ],
+   "alignment": {
+    "encoderDelayFrames": 1105,
+    "paddingFrames": 431,
+    "mpegAudioFrames": 43,
+    "infoFrame": true
+   },
+   "encoder": "LAME3.100"
+  },
+  {
+   "name": "lavc_48000",
+   "file": "impulse_lavc_48000.mp3",
+   "sampleRate": 48000,
+   "frames": 48000,
+   "bursts": [
+    3000,
+    24000,
+    45000
+   ],
+   "alignment": {
+    "encoderDelayFrames": 1105,
+    "paddingFrames": 431,
+    "mpegAudioFrames": 43,
+    "infoFrame": true
+   },
+   "encoder": "Lavc63.1.",
+   "tag": {
+    "delay": 576,
+    "padding": 960
+   }
+  }
+ ]
+}
