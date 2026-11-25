@@ -5,7 +5,8 @@ import { Mp3EncodingWorkerClient } from '../audio/mp3-encoding/mp3-encoding-work
 import {
   Mp3CompressionError,
   compressSeparationDraft,
-  type CompressedStemEntry,
+  createResumeStore,
+  type Mp3ResumeStore,
   type CompressionProgress,
   type Mp3CompressedDraft,
   type Mp3StemDecoderLike,
@@ -16,7 +17,6 @@ import { prepareSeparationInput } from '../audio/separation-input';
 import {
   AudioSeparationError,
   HTDEMUCS_6S_ONNX_DESCRIPTOR,
-  type CanonicalStemId,
   type SeparationProgressEvent,
 } from '../audio/separation/demucs-onnx-separator';
 import { DemucsSeparationWorkerClient } from '../audio/separation/demucs-worker-client';
@@ -87,7 +87,9 @@ export function MinistryAudioLocalSeparation({
   const compressionRun = useRef(0);
   const compressionController = useRef<AbortController | null>(null);
   const compressionEncoder = useRef<(Mp3StemEncoderLike & { dispose?: () => void }) | null>(null);
-  const completedStems = useRef(new Map<CanonicalStemId, CompressedStemEntry>());
+  // Resume state is per draft and is CLOSED (not just cleared) when the compression/draft is discarded, so a late result of an
+  // old run can never repopulate it or reach another draft.
+  const resumeStore = useRef<Mp3ResumeStore | null>(null);
   const ownedCompressed = useRef<Mp3CompressedDraft | null>(null);
   const encoderFactory = useRef(createMp3Encoder);
   encoderFactory.current = createMp3Encoder;
@@ -105,7 +107,8 @@ export function MinistryAudioLocalSeparation({
     compressionController.current = null;
     compressionEncoder.current?.dispose?.();
     compressionEncoder.current = null;
-    completedStems.current.clear();
+    resumeStore.current?.close();
+    resumeStore.current = null;
     ownedCompressed.current?.dispose();
     ownedCompressed.current = null;
     setCompressed(null);
@@ -132,7 +135,8 @@ export function MinistryAudioLocalSeparation({
     compressionEncoder.current?.dispose?.();
     ownedCompressed.current?.dispose();
     ownedCompressed.current = null;
-    completedStems.current.clear();
+    resumeStore.current?.close();
+    resumeStore.current = null;
     owned.current?.dispose();
     owned.current = null;
   }, []);
@@ -231,10 +235,12 @@ export function MinistryAudioLocalSeparation({
       } catch {
         throw new Mp3CompressionError('FAILED', 'Este navegador não consegue decodificar MP3, então a compressão não pode ser verificada.');
       }
+      if (!resumeStore.current || resumeStore.current.closed || resumeStore.current.draft !== target) resumeStore.current = createResumeStore(target);
+      const store = resumeStore.current;
       encoder = encoderFactory.current ? encoderFactory.current() : new Mp3EncodingWorkerClient();
       compressionEncoder.current = encoder;
       const result = await compressSeparationDraft({
-        draft: target, encoder, decoder, signal: abort.signal, completed: completedStems.current,
+        draft: target, encoder, decoder, signal: abort.signal, resume: store,
         onProgress: (event) => { if (current()) setCompressionProgress(event); },
       });
       if (!current()) { result.dispose(); return; }
@@ -270,7 +276,8 @@ export function MinistryAudioLocalSeparation({
     // The experimental compressed copy is not handed over: publishing MP3 is not enabled, the WAV files are what is prepared.
     ownedCompressed.current?.dispose();
     ownedCompressed.current = null;
-    completedStems.current.clear();
+    resumeStore.current?.close();
+    resumeStore.current = null;
     onPrepare(handedOver);
   }
 
@@ -371,8 +378,13 @@ export function MinistryAudioLocalSeparation({
                     {`WAV: ${formatMegabytes(compressed.wavBytesTotal)} → MP3: ${formatMegabytes(compressed.mp3BytesTotal)}. Economia de ${(compressed.savingsRatio * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%.`}
                   </p>
                   <p className="text-sm text-[var(--text-secondary)]">
-                    O MP3 ocupa cerca de um quinto do espaço do WAV, o que reduz o armazenamento e o tempo de download. As seis faixas foram verificadas (integridade, duração e alinhamento). A publicação em MP3 ainda não está habilitada: ao preparar a publicação serão usados os WAV.
+                    O MP3 ocupa cerca de um quinto do espaço do WAV, o que reduz o armazenamento e o tempo de download. As seis faixas foram verificadas (integridade e duração). A publicação em MP3 ainda não está habilitada: ao preparar a publicação serão usados os WAV.
                   </p>
+                  {compressed.alignmentEvidence !== 'signal' && (
+                    <p className="text-sm text-[var(--text-secondary)]">
+                      Alinhamento: confirmado pelos metadados e pela calibração do decodificador; a comparação com o sinal original foi inconclusiva em {compressed.stemsWithoutSignalEvidence.length} de 6 faixa(s) (silêncio ou material em que o desvio de 1 amostra não se distingue do ruído do codec).
+                    </p>
+                  )}
                   <div className={AUDIO_ACTIONS}>
                     {previewingMp3
                       ? <button type="button" className="btn btn-secondary min-h-[44px]" onClick={() => setPreview('wav')}>Voltar ao WAV</button>

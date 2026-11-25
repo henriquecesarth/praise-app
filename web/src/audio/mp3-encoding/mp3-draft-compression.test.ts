@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { createSeparationDraft } from '../local-separation-draft';
 import { polyfillBlobArrayBuffer } from '../local-separation-fixtures';
 import { parseStrictWavDescriptor } from '../separation/demucs-onnx-separator';
-import { Mp3CompressionError, compressSeparationDraft, measureLag, type CompressedStemEntry, type CompressionProgress } from './mp3-draft-compression';
+import { Mp3CompressionError, compressSeparationDraft, createResumeStore, type CompressionProgress } from './mp3-draft-compression';
 import { createInProcessEncoder, createLookupDecoder, mp3StemShape, tonesResult } from './mp3-test-support';
 
 // M22-S2: compression of a separation draft with the REAL LAME build and a perfect decoder (the real browser decoder is
@@ -79,31 +79,31 @@ describe('compressSeparationDraft', () => {
     const draft = await createSeparationDraft(await tonesResult());
     const abort = new AbortController();
     const encoder = createInProcessEncoder({ beforeEncode: (call) => { if (call === index + 1) abort.abort(); } });
-    const completed = new Map<string, CompressedStemEntry>();
+    const store = createResumeStore(draft);
     await expect(compressSeparationDraft({
-      draft, encoder, decoder: createLookupDecoder(encoder), signal: abort.signal, completed: completed as never,
+      draft, encoder, decoder: createLookupDecoder(encoder), signal: abort.signal, resume: store,
     })).rejects.toMatchObject({ code: 'CANCELLED' });
     expect(encoder.calls).toBe(index + 1);
-    expect(completed.size).toBe(index);
+    expect(store.size).toBe(index);
     expect(draft.disposed).toBe(false);
     expect(Object.keys(draft.files())).toHaveLength(6);
   });
 
   it('a failure on one stem keeps the finished ones; a retry only encodes what is missing', async () => {
     const draft = await createSeparationDraft(await tonesResult());
-    const completed = new Map<string, CompressedStemEntry>();
+    const store = createResumeStore(draft);
     const first = createInProcessEncoder({ failOnCall: 3 });
-    const failure = await compressSeparationDraft({ draft, encoder: first, decoder: createLookupDecoder(first), completed: completed as never }).catch((e) => e);
+    const failure = await compressSeparationDraft({ draft, encoder: first, decoder: createLookupDecoder(first), resume: store }).catch((e) => e);
     expect(failure).toBeInstanceOf(Mp3CompressionError);
     expect(failure).toMatchObject({ code: 'FAILED', stemId: 'bass' });
     expect(failure.message).toContain('Baixo');
-    expect(completed.size).toBe(2);
+    expect(store.size).toBe(2);
 
     const retry = createInProcessEncoder();
     const decoder = createLookupDecoder(retry);
     // The retry's decoder must know the first two stems' samples too (they were encoded by the first encoder).
     for (const [sha, samples] of first.samplesBySha) retry.samplesBySha.set(sha, samples);
-    const result = await compressSeparationDraft({ draft, encoder: retry, decoder, completed: completed as never });
+    const result = await compressSeparationDraft({ draft, encoder: retry, decoder, resume: store });
     expect(retry.calls).toBe(4);
     expect(result.manifestStems()).toHaveLength(6);
   });
@@ -147,29 +147,5 @@ describe('compressSeparationDraft', () => {
     const decoder = { calibrate: async () => { throw new Error('sem decodificador'); }, decodeStem: async () => { throw new Error('x'); } };
     await expect(compressSeparationDraft({ draft, encoder, decoder })).rejects.toMatchObject({ code: 'FAILED' });
     expect(encoder.calls).toBe(0);
-  });
-});
-
-describe('measureLag', () => {
-  const wavOf = (samples: Float32Array) => {
-    const out = new Uint8Array(44 + samples.length * 4);
-    const view = new DataView(out.buffer);
-    for (let i = 0; i < samples.length; i++) { view.setInt16(44 + i * 4, Math.round(samples[i] * 32767), true); }
-    return out;
-  };
-  const tone = Float32Array.from({ length: 4000 }, (_, i) => 0.4 * Math.sin(i * 0.05) + 0.2 * Math.sin(i * 0.9));
-
-  it('is 0 for an aligned copy and finds a shift in either direction', () => {
-    const wav = wavOf(tone);
-    expect(measureLag(wav, 44, 4000, tone, 0)).toBe(0);
-    const late = Float32Array.from(tone, (_, i) => tone[Math.max(0, i - 2)]);
-    const early = Float32Array.from(tone, (_, i) => tone[Math.min(3999, i + 3)]);
-    expect(Math.abs(measureLag(wav, 44, 4000, late, 0)!)).toBe(2);
-    expect(Math.abs(measureLag(wav, 44, 4000, early, 0)!)).toBe(3);
-  });
-
-  it('returns null for a silent window or one that is too short', () => {
-    expect(measureLag(wavOf(new Float32Array(4000)), 44, 4000, new Float32Array(4000), 0)).toBeNull();
-    expect(measureLag(wavOf(tone), 44, 4000, tone, 3995)).toBeNull();
   });
 });
