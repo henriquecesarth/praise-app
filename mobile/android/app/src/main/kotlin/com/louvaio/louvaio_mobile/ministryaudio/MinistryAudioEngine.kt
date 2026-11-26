@@ -23,6 +23,10 @@ interface StereoTrackHandle {
 
     /** Blocking write of interleaved shorts; returns shorts written or < 0. */
     fun write(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int
+
+    /** Like [write], but takes only what fits right now (0 when the device buffer is full). */
+    fun writeNonBlocking(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int =
+        write(data, offsetInShorts, sizeInShorts)
     fun stop()
     fun flush()
     fun release()
@@ -120,7 +124,7 @@ class MinistryAudioEngine internal constructor(
         @Volatile var headBase = 0L
         @Volatile var writtenFrames = 0L
         @Volatile var resumeOnGain = false
-        /** Streaming (guarded by the engine lock): the end was reached while playing; a pause can no longer apply. */
+        /** Guarded by the engine lock: the end was reached while playing; a pause can no longer apply. */
         var finishing = false
         val finished = AtomicBoolean(false)
     }
@@ -488,7 +492,9 @@ class MinistryAudioEngine internal constructor(
     private fun resumeLocked() {
         val s = session ?: invalidState()
         if (feed == null) {
-            runCatching { s.track?.play() }
+            // With a seek pending, the queued audio is of the old position: drop it (also releasing a write that may still
+            // be waiting on the paused track) and let the render thread restart the output after applying the seek.
+            if (pendingSeek >= 0) runCatching { s.track?.flush() } else runCatching { s.track?.play() }
             setStateLocked(EngineState.PLAYING)
         } else {
             // Streaming: only the render thread restarts the output, after applying a pending seek (so no audio of the
@@ -574,6 +580,9 @@ class MinistryAudioEngine internal constructor(
         val stream = feed
         var starvedSince = 0L
         var seenPause = 0L
+        // WAV: a device track resumed with only a partial buffer queued may not consume it until it is fed again.
+        val silence = ShortArray(chunkFrames * 2)
+        var padFrames = 0
         try {
             while (true) {
                 lock.withLock {
@@ -582,11 +591,12 @@ class MinistryAudioEngine internal constructor(
                         if (stream == null) cond.await() else cond.await(PAUSED_POLL_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
                     }
                     if (s.stopRequested) return@withLock
-                    if (stream != null && pauseEpoch != seenPause) {
+                    if (pauseEpoch != seenPause) {
                         // Even a pause that came and went between two iterations:
                         seenPause = pauseEpoch
                         starvedSince = 0L // time paused is not starvation
                         lastChange = System.nanoTime() // nor a stalled tail
+                        padFrames = 0
                     }
                     if (state != EngineState.BUFFERING) starvedSince = 0L
                     val seek = pendingSeek
@@ -660,8 +670,8 @@ class MinistryAudioEngine internal constructor(
                             Thread.sleep(TAIL_POLL_MS)
                             continue
                         }
-                        // Streaming: decided atomically against pause. A pause that won stays PAUSED and finishes on resume.
-                        if (stream == null || tryFinish(s, seenPause)) {
+                        // Decided atomically against pause and seek. A pause that won stays PAUSED and finishes on resume.
+                        if (tryFinish(s, seenPause)) {
                             completed = true
                             break
                         }
@@ -672,11 +682,19 @@ class MinistryAudioEngine internal constructor(
                         lastHead = played
                         lastChange = now
                     } else if (now - lastChange > tailStallTimeoutMs * 1_000_000L && stream?.verified() != false) {
-                        // Streaming: a head frozen by a pause that arrived during this iteration is not a stall.
-                        if (stream == null || tryFinish(s, seenPause)) {
+                        // A head frozen by a pause that arrived during this iteration is not a stall.
+                        if (tryFinish(s, seenPause)) {
                             completed = true // device stalled at the tail: do not hang
                             break
                         }
+                    }
+                    // Feeds silence behind the tail after a pause, up to one second; it is not part of the timeline
+                    // (not counted in writtenFrames) and is flushed on release or by a seek.
+                    if (stream == null && seenPause > 0L && state == EngineState.PLAYING && padFrames < c.sampleRate) {
+                        // Never blocking: a stalled output must still reach the stall check above. The content is already
+                        // queued, so a failed write only ends the feeding.
+                        val w = track.writeNonBlocking(silence, 0, silence.size)
+                        padFrames = if (w < 0) c.sampleRate else padFrames + w / 2
                     }
                     Thread.sleep(TAIL_POLL_MS)
                     continue
@@ -737,7 +755,7 @@ class MinistryAudioEngine internal constructor(
                                 setStateLocked(EngineState.ERROR, if (released) error.code else MinistryAudioException.SHUTDOWN_PENDING)
                             }
                             completed -> {
-                                val late = if (stream != null) pendingSeek else -1L
+                                val late = pendingSeek
                                 if (late >= 0) {
                                     // Accepted after the loop had decided to finish: keep it, ready to play from there.
                                     pendingSeek = -1L

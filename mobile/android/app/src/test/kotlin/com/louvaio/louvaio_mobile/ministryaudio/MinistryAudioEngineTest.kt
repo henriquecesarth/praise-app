@@ -355,6 +355,219 @@ class MinistryAudioEngineTest {
         assertEquals(500, leftOf(tracks[1]).size)
     }
 
+    // --------------------------------------- resume, final drain and finishing
+
+    /** Lets a test hold the playback head back and act on a head sample or on the release. */
+    private class HeldTrack(val inner: FakeTrack) : StereoTrackHandle by inner {
+        @Volatile var headLimit = Long.MAX_VALUE
+        @Volatile var onHead: (() -> Unit)? = null
+        @Volatile var onRelease: (() -> Unit)? = null
+
+        override fun headPositionFrames(): Long {
+            onHead?.also { onHead = null }?.invoke()
+            return minOf(inner.headPositionFrames(), headLimit)
+        }
+
+        override fun release() {
+            onRelease?.also { onRelease = null }?.invoke()
+            inner.release()
+        }
+    }
+
+    private fun heldEngine(
+        track: HeldTrack,
+        frames: Int = 2000,
+        events: MutableList<EngineState>? = null,
+        tailMs: Long = 1500,
+    ): MinistryAudioEngine {
+        val e = engine(
+            events = events,
+            tailMs = tailMs,
+            factory = object : StereoTrackFactory {
+                override fun create(sampleRate: Int, bufferFrames: Int): StereoTrackHandle = track
+            },
+        )
+        e.load(newDir(frames), root)
+        return e
+    }
+
+    private fun awaitAllWritten(track: HeldTrack, frames: Int) =
+        assertTrue(waitUntil { track.inner.shortsWritten == frames * 2 })
+
+    @Test
+    fun `resume after a paused seek does not restart the output before the seek is applied`() {
+        val frames = 20000
+        val track = FakeTrack(writeDelayMs = 1)
+        val e = engine(track)
+        e.load(newDir(frames) { id, f -> if (id == StemId.VOCALS) f else 0 }, root)
+        e.play()
+        assertTrue(waitUntil { track.shortsWritten > 2000 })
+        e.pause()
+        e.seekToFrame(15000)
+        val before = track.events.size
+        e.resume()
+        assertEquals(EngineState.PLAYING, e.state)
+        awaitState(e, EngineState.COMPLETED)
+
+        val after = track.events.drop(before)
+        assertEquals("queued audio of the old position was restarted: $after", "flush", after.first { it == "play" || it == "flush" })
+        // The last flush is the release; the one before it is the seek's.
+        val mark = track.flushMarks[track.flushMarks.size - 2]
+        val l = track.snapshot().drop(mark).filterIndexed { i, _ -> i % 2 == 0 }.map { it.toInt() }
+        assertEquals(frames - 15000, l.size)
+        for (i in 100 until l.size) assertEquals(15000 + i, l[i])
+    }
+
+    @Test
+    fun `a pause during the final drain does not cut the tail`() {
+        val track = HeldTrack(FakeTrack()).apply { headLimit = 1_000 }
+        val e = heldEngine(track, tailMs = 600)
+        e.play()
+        awaitAllWritten(track, 2000)
+        Thread.sleep(30)
+        e.pause()
+        Thread.sleep(900) // longer than the tail stall timeout
+        e.resume()
+        Thread.sleep(60)
+        assertTrue("completed with audio still queued", e.state != EngineState.COMPLETED)
+        track.headLimit = Long.MAX_VALUE
+        awaitState(e, EngineState.COMPLETED)
+    }
+
+    /** Like the device: a resumed track with a partial buffer does not move again until it is fed. */
+    @Test
+    fun `the tail still plays when the output only resumes after being fed`() {
+        val inner = FakeTrack()
+        val head = java.util.concurrent.atomic.AtomicLong(1_000)
+        var releasedAt = -1L
+        val track = object : StereoTrackHandle by inner {
+            override fun writeNonBlocking(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int =
+                inner.write(data, offsetInShorts, sizeInShorts).also { if (it > 0) head.set(Long.MAX_VALUE) }
+            override fun headPositionFrames(): Long = minOf(inner.headPositionFrames(), head.get())
+            override fun release() {
+                releasedAt = headPositionFrames()
+                inner.release()
+            }
+        }
+        val e = engine(tailMs = 200, factory = object : StereoTrackFactory {
+            override fun create(sampleRate: Int, bufferFrames: Int): StereoTrackHandle = track
+        })
+        e.load(newDir(2000), root)
+        e.play()
+        assertTrue(waitUntil { inner.shortsWritten == 4000 })
+        e.pause()
+        e.resume()
+        awaitState(e, EngineState.COMPLETED)
+        assertTrue("released with the head at $releasedAt", releasedAt >= 2000)
+        assertEquals(2000L, e.positionFrames)
+        assertTrue("padding is silent", inner.snapshot().drop(4000).all { it.toInt() == 0 })
+    }
+
+    @Test
+    fun `a stalled output with a full buffer still completes after a pause in the drain`() {
+        val inner = FakeTrack()
+        // The output never consumes again: a blocking write on the full buffer returns only on pause().
+        val unblocked = java.util.concurrent.CountDownLatch(1)
+        val resumed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val track = object : StereoTrackHandle by inner {
+            override fun write(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int {
+                if (resumed.get()) {
+                    unblocked.await()
+                    return 0
+                }
+                return inner.write(data, offsetInShorts, sizeInShorts)
+            }
+            override fun writeNonBlocking(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int = 0
+            override fun pause() {
+                inner.pause()
+                if (resumed.get()) unblocked.countDown()
+            }
+            override fun headPositionFrames(): Long = minOf(inner.headPositionFrames(), 1_000L)
+        }
+        val e = engine(tailMs = 600, factory = object : StereoTrackFactory {
+            override fun create(sampleRate: Int, bufferFrames: Int): StereoTrackHandle = track
+        })
+        e.load(newDir(2000), root)
+        e.play()
+        assertTrue(waitUntil { inner.shortsWritten == 4000 })
+        e.pause()
+        resumed.set(true)
+        e.resume()
+        awaitState(e, EngineState.COMPLETED, 5000)
+    }
+
+    @Test
+    fun `a pause arriving inside a drain iteration does not complete it`() {
+        val track = HeldTrack(FakeTrack()).apply { headLimit = 1_000 }
+        val e = heldEngine(track, tailMs = 400)
+        e.play()
+        awaitAllWritten(track, 2000)
+        Thread.sleep(20)
+        // The render thread is held past the stall deadline between its pause check and the head sample.
+        track.onHead = {
+            Thread.sleep(600)
+            e.pause()
+        }
+        assertTrue(waitUntil { track.onHead == null && e.state != EngineState.PLAYING })
+        Thread.sleep(80)
+        assertEquals(EngineState.PAUSED, e.state)
+        track.headLimit = Long.MAX_VALUE
+        e.resume()
+        awaitState(e, EngineState.COMPLETED)
+    }
+
+    @Test
+    fun `a seek accepted while finishing is kept`() {
+        val events = CopyOnWriteArrayList<EngineState>()
+        val track = HeldTrack(FakeTrack())
+        val e = heldEngine(track, events = events)
+        track.onRelease = { e.seekToFrame(1234) }
+        e.play()
+        assertTrue("expected READY, was ${e.state}", waitUntil { track.onRelease == null && e.state == EngineState.READY })
+        Thread.sleep(30)
+        assertEquals(EngineState.READY, e.state)
+        assertEquals(1234L, e.positionFrames)
+        assertFalse(events.contains(EngineState.COMPLETED))
+    }
+
+    @Test
+    fun `a seek queued during the last drain iteration keeps playing`() {
+        val track = HeldTrack(FakeTrack()).apply { headLimit = 1_000 }
+        val e = heldEngine(track)
+        e.play()
+        awaitAllWritten(track, 2000)
+        Thread.sleep(20)
+        // The head reaches the end and, in the same iteration, a seek is accepted.
+        track.onHead = {
+            track.headLimit = Long.MAX_VALUE
+            e.seekToFrame(0)
+        }
+        assertTrue(waitUntil { track.onHead == null })
+        awaitState(e, EngineState.COMPLETED)
+        assertEquals("played again from the target", 2000 * 4, track.inner.shortsWritten)
+    }
+
+    @Test
+    fun `a pause after the end was reached is refused rather than discarded`() {
+        val events = CopyOnWriteArrayList<EngineState>()
+        val track = HeldTrack(FakeTrack())
+        val e = heldEngine(track, events = events)
+        var refused: String? = null
+        // The track is released after the completion decision: a pause here can no longer be honoured.
+        track.onRelease = {
+            refused = try {
+                e.pause()
+                "accepted"
+            } catch (x: MinistryAudioException) {
+                x.code
+            }
+        }
+        e.play()
+        awaitState(e, EngineState.COMPLETED)
+        assertEquals(MinistryAudioException.INVALID_STATE, refused)
+        assertFalse(events.contains(EngineState.PAUSED))
+    }
+
     // -------------------------------------------------------- load / errors
 
     private fun loadFails(code: String, setup: (File) -> Unit = {}, expectedFrames: Long? = null): SourceStats {

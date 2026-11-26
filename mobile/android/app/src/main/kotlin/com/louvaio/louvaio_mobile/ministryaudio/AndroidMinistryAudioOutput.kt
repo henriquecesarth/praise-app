@@ -45,6 +45,9 @@ private class AndroidStereoTrack(private val track: AudioTrack) : StereoTrackHan
     override fun write(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int =
         track.write(data, offsetInShorts, sizeInShorts, AudioTrack.WRITE_BLOCKING)
 
+    override fun writeNonBlocking(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int =
+        track.write(data, offsetInShorts, sizeInShorts, AudioTrack.WRITE_NON_BLOCKING)
+
     override fun stop() = track.stop()
     override fun flush() = track.flush()
     override fun release() = track.release()
@@ -52,7 +55,7 @@ private class AndroidStereoTrack(private val track: AudioTrack) : StereoTrackHan
 }
 
 /** ONE stereo PCM16 AudioTrack for the whole mix. */
-private class AndroidStereoTrackFactory : StereoTrackFactory {
+internal class AndroidStereoTrackFactory : StereoTrackFactory {
     override fun create(sampleRate: Int, bufferFrames: Int): StereoTrackHandle {
         val minBytes = AudioTrack.getMinBufferSize(
             sampleRate,

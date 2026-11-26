@@ -21,14 +21,15 @@ Concluído em `c65b283` (commits `08b45aa`, `2cd265d`, `49df80d` e `c65b283`). A
 - Um único aparelho; stems longos só em LAME 44,1 kHz e Lavc 48 kHz.
 - Perda ou duplicação de PCM dentro do codec só é detectada depois de parte do áudio tocar (risco residual).
 
-## Defeitos conhecidos no caminho WAV (não corrigidos)
-Já existiam antes do S4.2 (mesmo código em `a2d8a90`); as correções do S4.2 valem só para o caminho incremental. Origem: revisão de código em `MinistryAudioEngine.kt`; não reproduzidos em teste no caminho WAV.
+## Concluído: três defeitos do caminho WAV (commit local, sem push)
+Corrigidos em `MinistryAudioEngine.kt`: retomar após seek em pausa não toca mais o áudio antigo; pausar no dreno final não corta o fim; seek aceito durante a finalização é mantido.
 
-1. Retomar após um seek feito em pausa toca um instante do áudio da posição antiga.
-2. Pausar durante o dreno final pode cortar o fim do áudio.
-3. Um seek aceito enquanto a reprodução está sendo finalizada é perdido.
+- No Lenovo TB-J616F (Android 12), o AudioTrack pausado com tudo já escrito não voltou a avançar após `play()`. O motor passa a alimentar até 1 s de silêncio, sem bloquear, durante o dreno depois de uma pausa.
+- JVM `ministryaudio`: 158 executados, 0 falhas, 1 ignorado. Os testes novos falharam antes da respectiva correção.
+- Instrumentado `WavTransportDeviceTest` (flavor `vocal`, AudioTrack real): 3/3 PASS. Escuta humana: NOT_EXECUTED.
+- Suíte Flutter: NOT_EXECUTED (nenhum código Dart alterado).
 
 ## Pendências
-- Decidir se os três defeitos do WAV entram numa tarefa própria.
+- Caminho MP3 incremental não recebe o silêncio no dreno; se uma pausa no dreno final também corta o fim nele: **Unknown / Not yet verified**.
 - E2/E3: a alteração local (não commitada) de `mobile/integration_test/m22_e1_ministry_audio_test.dart` importa um arquivo não rastreado de `integration_test/support/`. A versão commitada não tem esse import; regularizar ao commitar a alteração, antes de homologar um clone limpo.
 - Ampliar duração para 10 minutos; carregamento automático do ONNX.
