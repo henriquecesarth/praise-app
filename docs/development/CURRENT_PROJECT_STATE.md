@@ -30,7 +30,14 @@ Corrigidos em `MinistryAudioEngine.kt`: retomar após seek em pausa não toca ma
 - Escuta humana (responsável, 2026-11-26, commit `be675ab`): PASS nos três cenários. Feita em app de escuta temporário com áudio sintético e o motor e AudioTrack reais; não cobre a tela de mixer do app.
 - Suíte Flutter: NOT_EXECUTED (nenhum código Dart alterado).
 
+## Concluído: corte do fim no MP3 incremental ao pausar no dreno (commit local, sem push)
+- Reproduzido no Lenovo TB-J616F: head parado em 38080 de 44100 frames após `resume`. Corrigido em `MinistryAudioEngine.kt`: o silêncio de até 1 s no dreno vale também para o incremental.
+- JVM `ministryaudio`: 160 executados, 0 falhas, 1 ignorado. O teste novo de streaming falhou antes da correção; o do limite de 1 s do WAV falha se o limite for removido.
+- Instrumentado (flavor `vocal`): `Mp3IncrementalDeviceTest` e `WavTransportDeviceTest`, 0 falhas; os casos que exigem fixtures longas foram ignorados (não estavam no app de teste). O teste de pausa no dreno passou 3 vezes nas quatro fixtures curtas.
+- Escuta humana e suíte Flutter (nenhum Dart alterado): NOT_EXECUTED.
+
 ## Pendências
-- Caminho MP3 incremental não recebe o silêncio no dreno; se uma pausa no dreno final também corta o fim nele: **Unknown / Not yet verified**.
+- Rebuffering perto do fim também pausa o `AudioTrack` sem contar como pausa para o silêncio; se isso pode cortar o fim: **Unknown / Not yet verified**.
+- Seek para muito perto do fim, sem pausa anterior, também reinicia o `AudioTrack` com buffer parcial e sem silêncio; se o fim é cortado nesse caso: **Unknown / Not yet verified**.
 - E2/E3: a alteração local (não commitada) de `mobile/integration_test/m22_e1_ministry_audio_test.dart` importa um arquivo não rastreado de `integration_test/support/`. A versão commitada não tem esse import; regularizar ao commitar a alteração, antes de homologar um clone limpo.
 - Ampliar duração para 10 minutos; carregamento automático do ONNX.

@@ -137,7 +137,6 @@ class Mp3IncrementalDeviceTest {
         val head: Long get() = if (released) 0 else track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
 
         override fun play() = track.play()
-        override fun pause() = track.pause()
         override fun write(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int {
             val n = track.write(data, offsetInShorts, sizeInShorts, AudioTrack.WRITE_BLOCKING)
             if (n > 0) {
@@ -145,6 +144,18 @@ class Mp3IncrementalDeviceTest {
                 written.addAndGet(n.toLong())
             }
             return n
+        }
+        /** Only the drain silence is written this way; it is not counted in [written]. */
+        override fun writeNonBlocking(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int =
+            track.write(data, offsetInShorts, sizeInShorts, AudioTrack.WRITE_NON_BLOCKING).also {
+                if (it > 0) padded.addAndGet(it.toLong())
+            }
+        val padded = AtomicLong()
+        /** The release path pauses before it flushes, so the last pause sees what was really played. */
+        @Volatile var headAtLastPause = 0L
+        override fun pause() {
+            headAtLastPause = head
+            track.pause()
         }
         override fun stop() = track.stop()
         override fun flush() = track.flush()
@@ -506,6 +517,34 @@ class Mp3IncrementalDeviceTest {
     }
 
     // ------------------------------------------------------------ correctness
+
+    @Test
+    fun aPauseDuringTheFinalDrainDoesNotCutTheTailOnARealTrack() {
+        for (r in shortSets()) {
+            measured.clear()
+            newBridge(realTracks)
+            assertEquals("incremental", prepare(r)["strategy"])
+            cmd("setMasterVolume", mapOf("value" to 0.0))
+            cmd("play")
+            assertTrue("all written", await(10_000) { measured.isNotEmpty() && measured[0].written.get() == r.frames * 2 })
+            cmd("pause")
+            val t = measured[0]
+            val atPause = t.head
+            assertTrue("${r.name} not paused during the drain: $atPause", atPause < r.frames)
+            Thread.sleep(2_000) // longer than the tail stall timeout
+            assertEquals("paused", state())
+            val resumedAt = SystemClock.elapsedRealtime()
+            cmd("resume")
+            awaitState("completed", 10_000)
+            Log.i(
+                tag,
+                "${r.name} drainPause headAtPause=$atPause headAtEnd=${t.headAtLastPause} frames=${r.frames} " +
+                    "paddedFrames=${t.padded.get() / 2} resumeToCompletedMs=${SystemClock.elapsedRealtime() - resumedAt}",
+            )
+            assertTrue("${r.name} tail cut at ${t.headAtLastPause} of ${r.frames}", t.headAtLastPause >= r.frames)
+            close()
+        }
+    }
 
     @Test
     fun wholeRecordingEqualsTheFullDecodeForBothProfiles() {

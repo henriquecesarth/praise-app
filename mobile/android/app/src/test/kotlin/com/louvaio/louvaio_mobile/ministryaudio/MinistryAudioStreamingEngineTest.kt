@@ -44,11 +44,16 @@ class MinistryAudioStreamingEngineTest {
     @Volatile private var onHead: (() -> Unit)? = null
     @Volatile private var failPlay = false
 
-    private fun create(starvationMs: Long = 20_000, joinMs: Long = 2_000, tailMs: Long = 1_500): MinistryAudioEngine {
+    private fun create(
+        starvationMs: Long = 20_000,
+        joinMs: Long = 2_000,
+        tailMs: Long = 1_500,
+        output: StereoTrackHandle? = null,
+    ): MinistryAudioEngine {
         val e = MinistryAudioEngine(
             trackFactory = object : StereoTrackFactory {
                 override fun create(sampleRate: Int, bufferFrames: Int): StereoTrackHandle =
-                    ControlledTrack(FakeTrack(writeDelayMs = writeDelayMs).also { tracks.add(it) }, this@MinistryAudioStreamingEngineTest)
+                    output ?: ControlledTrack(FakeTrack(writeDelayMs = writeDelayMs).also { tracks.add(it) }, this@MinistryAudioStreamingEngineTest)
             },
             tailStallTimeoutMs = tailMs,
             focus = focus,
@@ -317,6 +322,32 @@ class MinistryAudioStreamingEngineTest {
         assertTrue("completed with audio still queued", e.state != EngineState.COMPLETED)
         headLimit = Long.MAX_VALUE
         await(EngineState.COMPLETED)
+    }
+
+    /** Like the device: a resumed track with a partial buffer does not move again until it is fed. */
+    @Test
+    fun theTailStillPlaysWhenTheOutputOnlyResumesAfterBeingFed() {
+        val inner = FakeTrack()
+        val head = java.util.concurrent.atomic.AtomicLong(1_000)
+        var releasedAt = -1L
+        val track = object : StereoTrackHandle by inner {
+            override fun writeNonBlocking(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int =
+                inner.write(data, offsetInShorts, sizeInShorts).also { if (it > 0) head.set(Long.MAX_VALUE) }
+            override fun headPositionFrames(): Long = minOf(inner.headPositionFrames(), head.get())
+            override fun release() {
+                releasedAt = headPositionFrames()
+                inner.release()
+            }
+        }
+        val e = create(tailMs = 1_000, output = track)
+        e.play()
+        assertTrue(waitUntil { inner.shortsWritten.toLong() == stream.frames * 2 })
+        e.pause()
+        e.resume()
+        await(EngineState.COMPLETED)
+        assertTrue("released with the head at $releasedAt", releasedAt >= stream.frames)
+        assertEquals(stream.frames, e.positionFrames)
+        assertTrue("padding is silent", inner.snapshot().drop((stream.frames * 2).toInt()).all { it.toInt() == 0 })
     }
 
     @Test

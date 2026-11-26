@@ -79,7 +79,9 @@ Cinco rodadas sobre o diff desde `a2d8a90`: a primeira achou 9 defeitos; as trê
 
 Aceito sem correção (P3): numa corrida entre `pause`/`resume` e o render, um bloco pode ser renderizado em `BUFFERING`; o áudio não é descartado.
 
-**Preexistente no caminho WAV e não alterado** (o mesmo código em `a2d8a90`): retomar após um seek em pausa toca um instante do áudio antigo; pausar durante o dreno final pode cortar o fim; um seek aceito durante a finalização é perdido. As correções valem apenas para o caminho incremental.
+**Preexistente no caminho WAV, não alterado no M22-S4.2** (o mesmo código em `a2d8a90`): retomar após um seek em pausa toca um instante do áudio antigo; pausar durante o dreno final pode cortar o fim; um seek aceito durante a finalização é perdido. Corrigidos depois, em `be675ab`.
+
+**Pausa no dreno final (corrigido depois do M22-S4.2).** No Lenovo TB-J616F o incremental também cortava o fim: após `resume`, o head ficava parado (38080 de 44100 frames) e a sessão terminava como `completed` pelo timeout de cauda. O silêncio de até 1 s atrás da cauda, que existia só no WAV, passou a valer também no incremental. Verificado no aparelho nas quatro fixtures curtas (`aPauseDuringTheFinalDrainDoesNotCutTheTailOnARealTrack`). Escuta humana deste caso: NOT_EXECUTED.
 
 ## Limitações e pendências
 

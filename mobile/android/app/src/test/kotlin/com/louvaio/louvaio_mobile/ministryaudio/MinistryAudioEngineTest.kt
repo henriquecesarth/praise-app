@@ -464,6 +464,30 @@ class MinistryAudioEngineTest {
     }
 
     @Test
+    fun `the silence fed after a pause is limited to one second`() {
+        val inner = FakeTrack()
+        val padded = java.util.concurrent.atomic.AtomicLong()
+        // The output accepts everything and never moves, so only the limit can end the feeding.
+        val track = object : StereoTrackHandle by inner {
+            override fun writeNonBlocking(data: ShortArray, offsetInShorts: Int, sizeInShorts: Int): Int =
+                sizeInShorts.also { padded.addAndGet(it / 2L) }
+            override fun headPositionFrames(): Long = minOf(inner.headPositionFrames(), 1_000L)
+        }
+        // Long enough for the limit to be reached well before the stall timeout ends the session.
+        val e = engine(tailMs = 5_000, factory = object : StereoTrackFactory {
+            override fun create(sampleRate: Int, bufferFrames: Int): StereoTrackHandle = track
+        })
+        e.load(newDir(2000), root)
+        e.play()
+        assertTrue(waitUntil { inner.shortsWritten == 4000 })
+        e.pause()
+        e.resume()
+        awaitState(e, EngineState.COMPLETED, 15_000)
+        // The last block may cross the mark, never more than that.
+        assertTrue("padded ${padded.get()} frames", padded.get() >= rate && padded.get() < rate + chunk)
+    }
+
+    @Test
     fun `a stalled output with a full buffer still completes after a pause in the drain`() {
         val inner = FakeTrack()
         // The output never consumes again: a blocking write on the full buffer returns only on pause().

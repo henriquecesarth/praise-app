@@ -580,7 +580,7 @@ class MinistryAudioEngine internal constructor(
         val stream = feed
         var starvedSince = 0L
         var seenPause = 0L
-        // WAV: a device track resumed with only a partial buffer queued may not consume it until it is fed again.
+        // A device track resumed with only a partial buffer queued may not consume it until it is fed again.
         val silence = ShortArray(chunkFrames * 2)
         var padFrames = 0
         try {
@@ -690,7 +690,7 @@ class MinistryAudioEngine internal constructor(
                     }
                     // Feeds silence behind the tail after a pause, up to one second; it is not part of the timeline
                     // (not counted in writtenFrames) and is flushed on release or by a seek.
-                    if (stream == null && seenPause > 0L && state == EngineState.PLAYING && padFrames < c.sampleRate) {
+                    if (seenPause > 0L && state == EngineState.PLAYING && padFrames < c.sampleRate) {
                         // Never blocking: a stalled output must still reach the stall check above. The content is already
                         // queued, so a failed write only ends the feeding.
                         val w = track.writeNonBlocking(silence, 0, silence.size)
