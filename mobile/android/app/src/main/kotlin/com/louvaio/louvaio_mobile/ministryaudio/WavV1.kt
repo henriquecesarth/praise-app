@@ -9,8 +9,10 @@ import java.io.RandomAccessFile
  * Error with a stable machine code. Messages never contain file paths or any
  * server-provided value.
  */
-class MinistryAudioException(val code: String, message: String) : Exception(message) {
+open class MinistryAudioException(val code: String, message: String) : Exception(message) {
     companion object {
+        /** A stem's compressed bytes do not match the manifest (structure, CRC, profile, size or SHA-256). */
+        const val MP3_INVALID = "AUDIO_NATIVE_MP3_INVALID"
         const val INVALID_STATE = "AUDIO_NATIVE_INVALID_STATE"
         const val INVALID_ARGUMENT = "AUDIO_NATIVE_INVALID_ARGUMENT"
         const val PATH_REJECTED = "AUDIO_NATIVE_PATH_REJECTED"

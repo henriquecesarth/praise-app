@@ -102,7 +102,13 @@ class Mp3DecoderCalibration(
         return best to bv
     }
 
+    /** The impulse fixtures, shared with [Mp3IncrementalCalibration]. */
+    internal class Fixture(val asset: String, val rate: Int, val frames: Long, val alignment: Mp3Alignment, val bursts: IntArray)
+
     companion object {
+        internal val fixtures: List<Fixture>
+            get() = CASES.map { Fixture(it.asset, it.rate, it.frames, it.alignment, it.bursts) }
+
         const val TOLERANCE_FRAMES = 1
         const val SEARCH = 200
         const val MIN_PEAK = 20_000

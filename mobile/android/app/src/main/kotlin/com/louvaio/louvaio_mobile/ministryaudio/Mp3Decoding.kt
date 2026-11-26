@@ -45,6 +45,10 @@ data class Mp3StreamInfo(
     val decoderName: String = "",
 )
 
+/** The platform could not create or start an MP3 codec (resources), as opposed to a problem with the stream. */
+class Mp3CodecUnavailableException :
+    MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "Decodificador MP3 indisponível.")
+
 interface Mp3PcmDecoder {
     /**
      * Decodes [file] to interleaved PCM16 stereo into [sink]. [onInfo] is called once, before any PCM. Must stop

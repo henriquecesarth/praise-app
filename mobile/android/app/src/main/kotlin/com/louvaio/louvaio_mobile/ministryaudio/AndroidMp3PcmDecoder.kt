@@ -20,16 +20,36 @@ class AndroidMp3PcmDecoder(
      * not the decoding: 1 frame/buffer ran at ~8x realtime, 64 at ~80-100x, with identical PCM. 1 = reference pump.
      */
     private val framesPerBuffer: Int = DEFAULT_FRAMES_PER_BUFFER,
-) : Mp3PcmDecoder {
+) : Mp3PcmDecoder, Mp3WindowDecoder {
     // MediaExtractor.getSampleSize (needed to pack safely) is API 28; older devices keep one frame per buffer.
     private val pack = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) framesPerBuffer.coerceAtLeast(1) else 1
 
-    override fun decode(file: File, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean) {
+    override fun decode(file: File, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean) =
+        run(file, null, onInfo, sink, cancelled)
+
+    override fun decodeFrom(
+        file: File,
+        byteOffset: Long,
+        onInfo: (Mp3StreamInfo) -> Unit,
+        sink: PcmSink,
+        cancelled: () -> Boolean,
+    ) = run(file, byteOffset, onInfo, sink, cancelled)
+
+    /** [windowOffset] null: the whole file with the platform's gapless handling; else raw PCM from that byte on. */
+    private fun run(file: File, windowOffset: Long?, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean) {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
+        var stream: java.io.FileInputStream? = null
         try {
             try {
-                extractor.setDataSource(file.path)
+                if (windowOffset == null) {
+                    extractor.setDataSource(file.path)
+                } else {
+                    // Opened at the frame's byte offset: MediaExtractor.seekTo timestamps are only estimates.
+                    val opened = java.io.FileInputStream(file)
+                    stream = opened
+                    extractor.setDataSource(opened.fd, windowOffset, file.length() - windowOffset)
+                }
             } catch (_: Exception) {
                 throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "MP3 ilegível.")
             }
@@ -41,6 +61,10 @@ class AndroidMp3PcmDecoder(
                 throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "Formato de áudio não é MP3.")
             }
             extractor.selectTrack(0)
+            if (windowOffset != null) {
+                if (input.containsKey(MediaFormat.KEY_ENCODER_DELAY)) input.setInteger(MediaFormat.KEY_ENCODER_DELAY, 0)
+                if (input.containsKey(MediaFormat.KEY_ENCODER_PADDING)) input.setInteger(MediaFormat.KEY_ENCODER_PADDING, 0)
+            }
             if (pack > 1) input.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, pack * MAX_MPEG_FRAME_BYTES)
             try {
                 // Owned (and so released by `finally`) from creation on: configure/start may fail for lack of resources.
@@ -49,9 +73,9 @@ class AndroidMp3PcmDecoder(
                 created.configure(input, null, null, 0)
                 created.start()
             } catch (_: Exception) {
-                throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "Decodificador MP3 indisponível.")
+                throw Mp3CodecUnavailableException()
             }
-            pump(extractor, codec!!, input, onInfo, sink, cancelled)
+            pump(extractor, codec!!, input, windowOffset != null, onInfo, sink, cancelled)
         } catch (e: MinistryAudioException) {
             throw e
         } catch (_: Exception) {
@@ -60,6 +84,7 @@ class AndroidMp3PcmDecoder(
             runCatching { codec?.stop() }
             runCatching { codec?.release() }
             runCatching { extractor.release() }
+            runCatching { stream?.close() }
         }
     }
 
@@ -67,6 +92,7 @@ class AndroidMp3PcmDecoder(
         extractor: MediaExtractor,
         codec: MediaCodec,
         input: MediaFormat,
+        raw: Boolean,
         onInfo: (Mp3StreamInfo) -> Unit,
         sink: PcmSink,
         cancelled: () -> Boolean,
@@ -93,8 +119,8 @@ class AndroidMp3PcmDecoder(
                 }
                 return
             }
-            val delay = input.intOrNull(MediaFormat.KEY_ENCODER_DELAY)
-            val padding = input.intOrNull(MediaFormat.KEY_ENCODER_PADDING)
+            val delay = if (raw) null else input.intOrNull(MediaFormat.KEY_ENCODER_DELAY)
+            val padding = if (raw) null else input.intOrNull(MediaFormat.KEY_ENCODER_PADDING)
             onInfo(Mp3StreamInfo(rate, ch, delay != null || padding != null, delay, padding, codec.name))
             announced = rate to ch
         }
@@ -140,6 +166,8 @@ class AndroidMp3PcmDecoder(
                     }
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outDone = true
                     codec.releaseOutputBuffer(ox, false)
+                    // A sink may block for as long as playback is paused (back-pressure): that is not a codec stall.
+                    lastProgress = System.nanoTime()
                 }
                 ox == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     lastProgress = System.nanoTime()
