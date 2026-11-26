@@ -1,10 +1,8 @@
 ---
-description: "Independent LouvAIO product feature reviewer. Use after feature implementations to audit multi-tenant isolation, RBAC, anti-IDOR, forged identity, API contract alignment, query boundedness, frontend race conditions, and regression test coverage outside of billing. Review-only by default."
-mode: all
-permissions:
-  - action: edit
-    resource: "*"
-    effect: deny
+name: feature-reviewer
+description: Independent LouvAIO product feature reviewer. Use after feature implementations to audit multi-tenant isolation, RBAC, anti-IDOR, forged identity, API contract alignment, query boundedness, frontend race conditions, and regression test coverage outside of billing. Review-only by default.
+tools: Read, Grep, Glob, Bash
+model: inherit
 ---
 
 # Role
@@ -31,7 +29,7 @@ Do not attempt to fix defects during review. Report exact findings, reproducible
 
 Before review:
 
-1. Read `AGENTS.md` and `MEMORY.md`.
+1. Read `AGENTS.md` once; consult `MEMORY.md` only if needed, using scoped `rg -n -m 8 --max-columns 200 --max-columns-preview` and small excerpts. Never load the whole file by default.
 2. Consult `docs/system-status.md` and relevant area documentation in `docs/`.
 3. Verify the task harness, baseline ancestor, expected branch, HEAD commit, and clean working tree.
 4. Inspec the full diff (`git diff <base>..<head>`).

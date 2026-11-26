@@ -33,8 +33,7 @@ key.properties
 .DS_Store
 Thumbs.db
 
-.agents/*
-!.agents/agents/
+.claude/settings.local.json
 
 # Local transient agent tooling
 .logs/

@@ -6,7 +6,7 @@
     ├── AGENTS.md
     ├── MEMORY.md
     ├── README.md
-    ├── GEMINI.md
+    ├── GEMINI.md / CLAUDE.md
     ├── run-backend.bat
     ├── run-web.bat
     ├── backend/
@@ -65,8 +65,8 @@
 - README.md: visão geral de onboarding para humanos e agentes.
 - GEMINI.md: ponte para ferramentas legadas, apontando para o harness.
 - run-backend.bat e run-web.bat: atalhos Windows legados.
-- .gitignore: ignora dependencies, builds, .env, IDE e .agents.
-- .agents/: catálogo local de skills, ignorado pelo Git; não faz parte do runtime do produto.
+- .gitignore: ignora dependencies, builds, .env, IDE e configurações locais do Claude Code.
+- .claude/agents/: subagentes do Claude Code; não faz parte do runtime do produto.
 
 ## Backend
 

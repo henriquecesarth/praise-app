@@ -3,7 +3,7 @@
 ## Escopo e contexto
 - LouvAIO: API Express/Firestore em `backend/`, SPA/PWA React/Vite em `web/`, cliente Flutter em `mobile/`; CI em `.github/workflows/`.
 - Precedência: código/configuração → testes executáveis → estas regras e documentos da tarefa → trechos pertinentes de MEMORY.md → histórico.
-- Leia estas regras uma vez por sessão. Consulte `docs/01-CONTEXTO-ATUAL.md`, `docs/system-status.md` e documentos da área somente quando pertinentes; o painel é `docs/00-PAINEL.md`.
+- Leia estas regras uma vez por sessão. Consulte `docs/development/CURRENT_PROJECT_STATE.md`, `docs/system-status.md` e documentos da área somente quando pertinentes.
 - Nunca carregue MEMORY.md, o repositório ou diretórios inteiros por padrão. Localize com `rg --files <diretório>` e busque com `rg -n -m 8 --max-columns 200 --max-columns-preview '<tema>' <arquivos>`; depois leia apenas o trecho necessário (ex.: 40–80 linhas). Amplie a busca somente se faltar evidência.
 - Não releia conteúdo já disponível nem imprima arquivos/linhas extensos sem necessidade. MEMORY.md contém decisões duráveis, não o status da execução.
 - Evidência insuficiente: use exatamente **Unknown / Not yet verified**. Não registre valores de .env, tokens, senhas, chaves ou credenciais.
@@ -19,7 +19,7 @@
 - Não introduza arquitetura idealizada, dependências, infraestrutura, migrações ou abstrações sem necessidade autorizada. Não corrija itens de system-status fora do escopo.
 
 ## Git e execução
-- Antes de editar: confira status, branch e HEAD; preserve commits, arquivos modificados e não rastreados. Base WIP: `wip/repertoire-versions-smartchords-20261022`; não troque a branch atual nem assuma main.
+- Antes de editar: confira status, branch e HEAD; preserve commits, arquivos modificados e não rastreados. A branch de trabalho está registrada em `docs/development/CURRENT_PROJECT_STATE.md`; não troque a branch atual nem assuma main.
 - Não faça reset, clean, checkout destrutivo, reescrita de histórico ou force push. Commit somente quando autorizado; push, PR, merge, deploy e escritas externas/produção exigem autorização explícita separada.
 - Inspecione referências/contratos afetados e faça a menor mudança verificável. Um escritor por arquivo; worktree somente se necessário. Atualize/crie ExecPlan apenas para mudanças relevantes, sem planejamento extenso em ajustes pontuais; arquive quando realmente concluído.
 - Não acesse credenciais ativas, fabrique evidência de provedor ou escreva em Firestore de produção.
@@ -32,8 +32,8 @@
 - Ao terminar: `git diff --check`, status e diff/stat; confira escopo/secrets e relate mudanças, arquivos, validações, limitações e próximo passo, quando houver. Atualize documentação atingida; MEMORY.md somente para nova decisão durável.
 
 ## Agentes e sessões
-- Codex é o principal; Gemini/Claude são ferramentas opcionais, nunca pré-requisito. Configuração nativa em `.codex/`; seis papéis canônicos preservados em `.agents/agents/`.
-- Papéis: product-architect, feature-engineer, feature-reviewer, billing-engineer, billing-reviewer, sandbox-auditor. Consulte somente as seções do papel pertinentes à tarefa; revisores são separados e somente leitura. Todas as reviews feitas por um agente devem usar o Codex (nativo ou via `codex exec review` / `codex exec -s read-only`) e não o Antigravity; use o Antigravity somente se o Codex estiver comprovadamente indisponível.
-- Modelo no Codex: sempre que usar um modelo no Codex (agente principal ou subagentes dos seis papéis), utilize **Sol 6.2 high** (`-m gpt-6.2-sol -c model_reasoning_effort="high"`). Política detalhada: `docs/development/multi-agent-workflow.md`.
-- Delegue somente trabalho independente útil, com escopo/contrato mínimo, escritor definido e ID/resultado reais. Use contexto separado para tarefas delimitadas; não copie todo o histórico. Respeite o menor limite entre configuração e runtime; não simule agentes nem crie supervisor externo.
-- Mantenha sessão para a mesma tarefa/contexto estável; abra nova sessão para trabalho independente. Compacte só quando necessário para continuar, preservando objetivo, decisões, arquivos, evidências e pendências. Não reinicie nem releia tudo após compactação.
+- Claude Code é a ferramenta principal. Gemini é usado só quando o responsável pedir; nenhuma tarefa depende dele.
+- Subagentes em `.claude/agents/`: `feature-reviewer`, `billing-reviewer` e `sandbox-auditor`. Planejamento e implementação ficam na sessão principal.
+- Mudanças de código relevantes passam por revisor separado, em contexto próprio e somente leitura, antes do commit. Relatório vazio não é aprovação.
+- Delegue apenas trabalho independente e útil; não simule agentes nem crie supervisor externo.
+- Mantenha a sessão para a mesma tarefa; abra outra para trabalho independente. Ao encerrar um marco, atualize `docs/development/CURRENT_PROJECT_STATE.md`.
