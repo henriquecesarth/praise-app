@@ -76,11 +76,15 @@ final class MinistryAudioCachedRecording {
     this.sampleRate,
     this.frames,
     this._manifestDigest,
+    this.stemIntegrity,
     this._onRelease,
     this._onDetach,
   );
 
   final String _manifestDigest;
+
+  /// Size and SHA-256 of each stem as declared by that manifest.
+  final Map<MinistryStemId, MinistryAudioStemIntegrity> stemIntegrity;
 
   final MinistryAudioLocalRecording recording;
   final bool fromCache;
@@ -463,6 +467,10 @@ final class MinistryAudioCache {
       manifest.sampleRate,
       manifest.frames,
       MinistryAudioDownloadManager._digestOfManifest(manifest),
+      Map.unmodifiable({
+        for (final s in manifest.stems)
+          s.id: (sizeBytes: s.sizeBytes, sha256: s.sha256),
+      }),
       () {
         final n = (_leases[key] ?? 1) - 1;
         if (n <= 0) {

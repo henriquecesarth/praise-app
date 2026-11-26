@@ -57,6 +57,12 @@ interface Mp3PcmDecoder {
      */
     @Throws(MinistryAudioException::class)
     fun decode(file: File, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean)
+
+    /** [decode] that also shows every compressed frame to [input]. A decoder that cannot do that is refused. */
+    @Throws(MinistryAudioException::class)
+    fun decodeChecked(file: File, input: Mp3InputCheck, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean) {
+        throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "Decodificador sem verificação de entrada.")
+    }
 }
 
 /** Drops [skipBytes] and keeps at most [keepBytes] of a byte stream; counts everything it saw. */

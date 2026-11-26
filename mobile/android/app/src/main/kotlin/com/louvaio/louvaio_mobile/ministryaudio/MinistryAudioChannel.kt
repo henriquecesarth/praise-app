@@ -33,6 +33,14 @@ class MinistryAudioChannel(
                 AndroidMp3PcmDecoder(),
                 java.io.File(context.applicationContext.cacheDir, "ministry_audio_mp3_calibration"),
             ) { context.applicationContext.assets.open(it) },
+            // Used only when Flutter asks for it (a second, off-by-default build flag).
+            incremental = Mp3IncrementalSupport(
+                decoder = AndroidMp3PcmDecoder(),
+                calibration = Mp3IncrementalCalibration(
+                    AndroidMp3PcmDecoder(),
+                    java.io.File(context.applicationContext.cacheDir, "ministry_audio_mp3_calibration"),
+                ) { context.applicationContext.assets.open(it) },
+            ),
         ),
         engineFactory = { listener ->
             // Events are forwarded by the bridge (it posts to main itself).

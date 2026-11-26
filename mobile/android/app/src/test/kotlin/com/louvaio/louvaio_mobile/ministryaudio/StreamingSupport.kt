@@ -1,6 +1,7 @@
 package com.louvaio.louvaio_mobile.ministryaudio
 
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
@@ -18,9 +19,17 @@ class FakeStream(val mpeg: Int = 300, val rate: Int = 44_100) {
 
     fun sample(stem: Int, rawFrame: Long): Int = ((rawFrame * (7 + stem) + stem * 997) % 4001).toInt() - 2000
 
-    /** Audio frame k is addressed by byte offset k+1 (offset 0 = file start, as in the real stream). */
+    /** The compressed "frame" k of a stem is four bytes naming it; frame k starts at byte 4k+1 (0 = file start). */
+    fun compressed(stem: Int, k: Int): ByteArray = byteArrayOf(stem.toByte(), (k shr 8).toByte(), k.toByte(), 0x55)
+
     fun stems(): List<IncrementalStem> = (0 until 6).map { i ->
-        IncrementalStem(File("fake_$i.mp3"), Mp3StreamIndex(IntArray(mpeg) { it + 1 }, "LAME3.100", 1))
+        val offsets = IntArray(mpeg) { it * 4 + 1 }
+        val digest = MessageDigest.getInstance("SHA-256")
+        val prints = ByteArray(mpeg * FINGERPRINT_BYTES)
+        for (k in 0 until mpeg) {
+            Mp3StreamIndexer.fingerprint(digest, compressed(i, k), 4).copyInto(prints, k * FINGERPRINT_BYTES, 0, FINGERPRINT_BYTES)
+        }
+        IncrementalStem(File("fake_$i.mp3"), Mp3StreamIndex(offsets, "LAME3.100", mpeg * 4L + 1, prints))
     }
 
     private fun pcm(stem: Int, rawFrom: Long, count: Int): ByteArray {
@@ -69,6 +78,9 @@ class FakeStream(val mpeg: Int = 300, val rate: Int = 44_100) {
         /** Stem -> (raw frame at which it throws). */
         val failures = ConcurrentHashMap<Int, Pair<Long, MinistryAudioException>>()
 
+        /** Stem -> (audio frame, how many times it is handed to the codec: 0 = skipped, 2 = repeated). */
+        val inputFault = ConcurrentHashMap<Int, Pair<Int, Int>>()
+
         /** Stem whose codec "cannot be created". */
         @Volatile var unavailable = -1
 
@@ -83,6 +95,7 @@ class FakeStream(val mpeg: Int = 300, val rate: Int = 44_100) {
         override fun decodeFrom(
             file: File,
             byteOffset: Long,
+            input: Mp3InputCheck,
             onInfo: (Mp3StreamInfo) -> Unit,
             sink: PcmSink,
             cancelled: () -> Boolean,
@@ -91,7 +104,16 @@ class FakeStream(val mpeg: Int = 300, val rate: Int = 44_100) {
             if (stem == unavailable) throw Mp3CodecUnavailableException()
             peakAlive.accumulateAndGet(alive.incrementAndGet(), ::maxOf)
             try {
-                val startFrame = if (byteOffset == 0L) 0 else (byteOffset - 1).toInt()
+                val startFrame = if (byteOffset == 0L) 0 else ((byteOffset - 1) / 4).toInt()
+                var fed = startFrame
+                fun feed(upTo: Int) {
+                    while (fed < upTo) {
+                        val fault = inputFault[stem]
+                        val times = if (fault != null && fault.first == fed) fault.second else 1
+                        repeat(times) { input.frame(compressed(stem, fed), 4) }
+                        fed++
+                    }
+                }
                 starts.add(stem to startFrame)
                 onInfo(Mp3StreamInfo(rate, 2, false, null, null, name))
                 var at = startFrame * 1152L
@@ -106,10 +128,14 @@ class FakeStream(val mpeg: Int = 300, val rate: Int = 44_100) {
                     }
                     failures[stem]?.let { (from, error) -> if (at >= from) throw error }
                     val n = minOf(1000L, end - at).toInt()
+                    // Input runs ahead of the output, as in a real codec.
+                    feed(minOf(mpeg.toLong(), (at + n) / 1152 + 65).toInt())
                     val chunk = pcm(stem, at, n)
                     sink.write(chunk, 0, chunk.size)
                     at += n
                 }
+                feed(mpeg)
+                input.end()
             } finally {
                 alive.decrementAndGet()
             }

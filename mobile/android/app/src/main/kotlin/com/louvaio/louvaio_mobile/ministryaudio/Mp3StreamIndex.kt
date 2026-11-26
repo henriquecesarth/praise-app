@@ -11,14 +11,65 @@ import java.security.MessageDigest
  * It mirrors the server contract (backend `mp3-stream-validator.ts` and `mp3-encoder-profile.ts`): only an Info/Xing frame
  * followed by exactly `mpegAudioFrames` MPEG-1 Layer III CBR 256 kbps stereo frames, nothing else; LAME tag CRC and music
  * CRC; a supported encoder profile; delay/padding agreeing with the manifest; exact size and SHA-256. One sequential pass,
- * one frame buffered at a time; the only thing kept is one Int offset per frame.
+ * one frame buffered at a time; what is kept is one offset and one 128-bit digest per frame, so that every compressed frame later
+ * handed to a codec can be checked against the validated one ([inputCheck]).
  */
 class Mp3StreamIndex(
     /** Byte offset of every AUDIO frame (the Info frame excluded). */
     val offsets: IntArray,
     val encoder: String,
     val sizeBytes: Long,
-)
+    /** [Mp3StreamIndexer.fingerprint] of each audio frame (header included), back to back. */
+    private val fingerprints: ByteArray,
+) {
+    init {
+        require(fingerprints.size == offsets.size * FINGERPRINT_BYTES)
+    }
+
+    /**
+     * Sequence check of the codec INPUT from audio frame [startFrame] on, by absolute position (no timestamps): a frame
+     * skipped, repeated, reordered or changed on disk after validation is refused before any PCM can come out of it.
+     */
+    fun inputCheck(startFrame: Int): Mp3InputCheck = object : Mp3InputCheck {
+        private var next = startFrame
+        private val digest = MessageDigest.getInstance("SHA-256") // one per producer: not thread safe
+
+        override fun frame(bytes: ByteArray, length: Int) {
+            val end = if (next + 1 < offsets.size) offsets[next + 1].toLong() else sizeBytes
+            if (next >= offsets.size || length.toLong() != end - offsets[next] ||
+                !matches(Mp3StreamIndexer.fingerprint(digest, bytes, length), next)
+            ) {
+                throw diverged()
+            }
+            next++
+        }
+
+        override fun end() {
+            if (next != offsets.size) throw diverged()
+        }
+
+        private fun matches(actual: ByteArray, frame: Int): Boolean {
+            val at = frame * FINGERPRINT_BYTES
+            for (i in 0 until FINGERPRINT_BYTES) if (actual[i] != fingerprints[at + i]) return false
+            return true
+        }
+
+        private fun diverged() =
+            MinistryAudioException(MinistryAudioException.MP3_INVALID, "Sequência de quadros MP3 divergente.")
+    }
+}
+
+internal const val FINGERPRINT_BYTES = 16
+
+/** Receives every compressed MPEG frame, in the order it is handed to the codec. */
+interface Mp3InputCheck {
+    @Throws(MinistryAudioException::class)
+    fun frame(bytes: ByteArray, length: Int)
+
+    /** The decoder consumed its whole input. */
+    @Throws(MinistryAudioException::class)
+    fun end()
+}
 
 class Mp3StemExpectation(val sizeBytes: Long, val sha256: String)
 
@@ -37,6 +88,12 @@ object Mp3StreamIndexer {
         var c = n
         repeat(8) { c = if (c and 1 != 0) (c ushr 1) xor 0xA001 else c ushr 1 }
         c
+    }
+
+    /** The first [FINGERPRINT_BYTES] of the result identify the frame. */
+    internal fun fingerprint(digest: MessageDigest, b: ByteArray, length: Int): ByteArray {
+        digest.update(b, 0, length)
+        return digest.digest()
     }
 
     private fun crc16(crc: Int, b: ByteArray, from: Int, to: Int): Int {
@@ -82,6 +139,8 @@ object Mp3StreamIndexer {
         val digest = MessageDigest.getInstance("SHA-256")
         val frame = ByteArray(MAX_FRAME_BYTES)
         val offsets = IntArray(alignment.mpegAudioFrames)
+        val fingerprints = ByteArray(alignment.mpegAudioFrames * FINGERPRINT_BYTES)
+        val frameDigest = MessageDigest.getInstance("SHA-256")
         var position = 0L
         var musicCrc = 0
         var tag: Tag? = null
@@ -127,6 +186,7 @@ object Mp3StreamIndexer {
             } else {
                 offsets[count - 1] = position.toInt()
                 musicCrc = crc16(musicCrc, frame, 0, length)
+                fingerprint(frameDigest, frame, length).copyInto(fingerprints, (count - 1) * FINGERPRINT_BYTES, 0, FINGERPRINT_BYTES)
             }
             position += length
             count++
@@ -152,7 +212,7 @@ object Mp3StreamIndexer {
         }
         val hex = digest.digest().joinToString("") { "%02x".format(it) }
         if (hex != expected.sha256) invalid("SHA-256")
-        return Mp3StreamIndex(offsets, t.encoder, position)
+        return Mp3StreamIndex(offsets, t.encoder, position, fingerprints)
     }
 
     private class Tag(

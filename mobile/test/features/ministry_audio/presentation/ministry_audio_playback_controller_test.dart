@@ -55,6 +55,7 @@ class _Port implements MinistryAudioPlayerPort {
   Completer<void>? prepareGate;
   Completer<void>? playGate;
   Completer<bool>? closeGate;
+  Completer<void>? snapshotGate;
   Object? prepareError;
   final List<bool> closeResults = []; // consumed first; default true
   int closeCalls = 0;
@@ -71,6 +72,7 @@ class _Port implements MinistryAudioPlayerPort {
     required int sampleRate,
     required int frames,
     MinistryAudioMp3Alignment? mp3Alignment,
+    Map<MinistryStemId, MinistryAudioStemIntegrity>? incrementalStems,
   }) async {
     calls.add('prepare:$sessionId');
     prepareArgs.add({
@@ -81,6 +83,7 @@ class _Port implements MinistryAudioPlayerPort {
       'sampleRate': sampleRate,
       'frames': frames,
       if (mp3Alignment != null) 'mp3Alignment': mp3Alignment,
+      if (incrementalStems != null) 'incrementalStems': incrementalStems,
     });
     if (prepareGate != null) await prepareGate!.future;
     if (prepareError != null) throw prepareError!;
@@ -117,6 +120,7 @@ class _Port implements MinistryAudioPlayerPort {
   @override
   Future<MinistryAudioNativeSnapshot> snapshot(String s) async {
     calls.add('snapshot:$s');
+    if (snapshotGate != null) await snapshotGate!.future;
     return MinistryAudioNativeSnapshot(
       sessionId: s,
       state: MinistryAudioNativeState.playing,
@@ -192,7 +196,7 @@ void main() {
     } catch (_) {}
   });
 
-  MinistryAudioPlaybackController build({int closeAttempts = 2}) {
+  MinistryAudioPlaybackController build({int closeAttempts = 2, bool incrementalMp3 = false}) {
     final storage = FakeStorage(temp.path.replaceAll('\\', '/'));
     final manager = MinistryAudioDownloadManager(
       repository: repo,
@@ -209,6 +213,7 @@ void main() {
       newSessionId: () => 'session-${++seq}',
       closeAttempts: closeAttempts,
       closeRetryDelay: const Duration(milliseconds: 1),
+      incrementalMp3: incrementalMp3,
     );
     controllers.add(c);
     return c;
@@ -305,6 +310,89 @@ void main() {
     port.prepareGate!.complete();
     await expectLater(opening, throwsA(code(MinistryAudioDownloadCodes.manifestChanged)));
     expect(leases(), 0);
+  });
+
+  test('incremental MP3 (opt-in) sends the size and SHA-256 of the six stems and still revalidates', () async {
+    final playback = mp3Playback(id: idA);
+    repo.byId[idA] = playback;
+    transport = FakeTransport(behavior: (s, a, t) => Stream.value(mp3Payload(s.name)));
+    final c = build(incrementalMp3: true);
+    port.prepareGate = Completer<void>();
+    final opening = c.open(idA);
+    opening.ignore();
+    await _until(() => port.calls.contains('prepare:session-1'));
+    final stems = port.prepareArgs.single['incrementalStems']! as Map<MinistryStemId, MinistryAudioStemIntegrity>;
+    expect(stems.keys.toSet(), MinistryStemId.values.toSet());
+    for (final stem in playback.manifest.stems) {
+      expect(stems[stem.id], (sizeBytes: stem.sizeBytes, sha256: stem.sha256));
+    }
+    // Access revoked while native was preparing: never ready, nothing can play.
+    repo.error = const AppFailure(message: 'Acesso negado.', statusCode: 403);
+    port.prepareGate!.complete();
+    await expectLater(opening, throwsA(isA<AppFailure>().having((f) => f.statusCode, 'statusCode', 403)));
+    expect(port.calls.where((x) => x.startsWith('play')), isEmpty);
+    expect(leases(), 0);
+  });
+
+  test('the incremental strategy is off by default and never used for WAV', () async {
+    expect(MinistryAudioFeatureFlags.experimentalMp3Incremental, isFalse);
+    repo.byId[idA] = mp3Playback(id: idA);
+    transport = FakeTransport(behavior: (s, a, t) => Stream.value(mp3Payload(s.name)));
+    final byDefault = build();
+    await byDefault.open(idA);
+    expect(port.prepareArgs.single.containsKey('incrementalStems'), isFalse);
+    await byDefault.close();
+
+    transport = FakeTransport(behavior: (s, a, t) => Stream.value(payloadOf(s.name)));
+    repo.byId[idN(0)] = playbackFor(idN(0));
+    port.prepareArgs.clear();
+    final wav = build(incrementalMp3: true);
+    await wav.open(idN(0));
+    expect(port.prepareArgs.single.containsKey('incrementalStems'), isFalse);
+    await wav.close();
+  });
+
+  test('a snapshot that arrives while a failed session is closing keeps the error', () async {
+    final c = build();
+    await c.open(idN(0));
+    await c.play();
+    port.snapshotGate = Completer<void>();
+    final late = c.refresh(); // requested while still playing
+    port.closeGate = Completer<bool>();
+    port.emit('session-$seq', MinistryAudioNativeState.error, code: 'AUDIO_NATIVE_MP3_INVALID');
+    await _pump();
+    expect(c.state.phase, MinistryAudioPlaybackPhase.error);
+    port.snapshotGate!.complete();
+    await late;
+    expect(c.state.phase, MinistryAudioPlaybackPhase.error);
+    expect(c.state.errorCode, 'AUDIO_NATIVE_MP3_INVALID');
+    port.closeGate!.complete(true);
+    await _until(() => leases() == 0);
+    expect(c.state.phase, MinistryAudioPlaybackPhase.error);
+  });
+
+  test('buffering is a real phase; context changes and background still close during it', () async {
+    for (final interrupt in <void Function(MinistryAudioPlaybackController)>[
+      (c) => c.handleAppLifecycle(AppLifecycleState.paused),
+      (c) {
+        ctx = mk('user_1', 'min_2', 'e2');
+        c.checkContext();
+      },
+      (c) => port.emit('session-$seq', MinistryAudioNativeState.error, code: 'AUDIO_NATIVE_MP3_LENGTH_MISMATCH'),
+    ]) {
+      ctx = mk('user_1', 'min_1', 'e1');
+      final c = build();
+      await c.open(idN(0));
+      await c.play();
+      port.emit('session-$seq', MinistryAudioNativeState.buffering);
+      await _pump();
+      expect(c.state.phase, MinistryAudioPlaybackPhase.buffering);
+      await c.pause();
+      interrupt(c);
+      await _until(() => leases() == 0);
+      expect(leases(), 0);
+      expect(port.calls, contains('close:session-$seq'));
+    }
   });
 
   test('a WAV set never sends an alignment', () async {

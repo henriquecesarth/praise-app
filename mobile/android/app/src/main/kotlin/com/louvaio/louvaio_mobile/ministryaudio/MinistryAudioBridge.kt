@@ -18,11 +18,20 @@ class Mp3Support(
     val usableSpace: (File) -> Long = { it.usableSpace },
     /** Stems decoded at the same time. 3 was measured on the TB-J616F; never one codec per stem. 1 = reference. */
     val parallelStems: Int = DEFAULT_PARALLEL_STEMS,
+    /** M22-S4.2, experimental: used only when the prepare command asks for it. */
+    val incremental: Mp3IncrementalSupport? = null,
 ) {
     companion object {
         const val DEFAULT_PARALLEL_STEMS = 3
     }
 }
+
+/** Streaming MP3 playback: raw window decoder and its own per-device calibration. */
+class Mp3IncrementalSupport(
+    val decoder: Mp3WindowDecoder,
+    val calibration: Mp3Gate,
+    val prefillTimeoutMs: Long = 10_000L,
+)
 
 /**
  * Typed command surface between Flutter and [MinistryAudioEngine].
@@ -78,6 +87,10 @@ class MinistryAudioBridge(
     /** Prepares submitted and not finished yet (queued or decoding), so a close/dispose can cancel any of them. */
     private val pendingPrepares = java.util.concurrent.CopyOnWriteArrayList<PrepareToken>()
     private var sweptAll = false
+
+    /** Producers of a failed streaming prepare that could not be confirmed gone: nothing is "closed" until they are. */
+    @Volatile
+    private var orphan: StreamingFeed? = null
 
     // ------------------------------------------------------------------ entry
 
@@ -183,11 +196,18 @@ class MinistryAudioBridge(
 
     private fun prepare(a: Map<*, *>, pending: PrepareToken?): Map<String, Any?> {
         val isMp3 = a.containsKey(K_CODEC)
+        val wantsStreaming = isMp3 && a.containsKey(K_STRATEGY)
+        val base = setOf(K_SESSION, K_USER, K_MINISTRY, K_RECORDING, K_RATE, K_FRAMES)
+        val mp3Keys = base + setOf(K_CODEC, K_DELAY, K_PADDING, K_MPEG)
         exactKeys(
             a,
-            if (isMp3) setOf(K_SESSION, K_USER, K_MINISTRY, K_RECORDING, K_RATE, K_FRAMES, K_CODEC, K_DELAY, K_PADDING, K_MPEG)
-            else setOf(K_SESSION, K_USER, K_MINISTRY, K_RECORDING, K_RATE, K_FRAMES),
+            when {
+                wantsStreaming -> mp3Keys + setOf(K_STRATEGY, K_STEMS)
+                isMp3 -> mp3Keys
+                else -> base
+            },
         )
+        val expectations = if (wantsStreaming) stemExpectationsArg(a) else null
         val id = sessionIdArg(a)
         val user = idArg(a, K_USER)
         val ministry = idArg(a, K_MINISTRY)
@@ -211,6 +231,10 @@ class MinistryAudioBridge(
 
         // A prepare cancelled while it was still queued must not replace (and so close) the current session.
         if (pending?.cancelled == true) throw MinistryAudioException(MinistryAudioException.CANCELLED, "Preparação cancelada.")
+
+        if (!releaseOrphan()) {
+            throw MinistryAudioException(MinistryAudioException.SHUTDOWN_PENDING, "O áudio anterior ainda está encerrando.")
+        }
 
         // A previous session must be CONFIRMED closed (worker gone, files
         // closed) before anything new is opened.
@@ -236,7 +260,17 @@ class MinistryAudioBridge(
 
         var loadDir = directory
         var tempDir: File? = null
-        if (alignment != null) {
+        var streaming: StreamingFeed? = null
+        // Frame indexes of the validated files, for the full decode when streaming falls back.
+        val verified = HashMap<File, Mp3StreamIndex>()
+        val mustCheckInput = expectations != null
+        val report = LinkedHashMap<String, Any?>()
+        if (alignment != null && expectations != null) {
+            val token = pending ?: PrepareToken(id)
+            streaming = openStreaming(directory, ministryRoot, rate.toInt(), frames, alignment, expectations, token, report, verified)
+        }
+        if (expectations != null) report["strategy"] = if (streaming != null) STRATEGY_INCREMENTAL else STRATEGY_FULL
+        if (alignment != null && streaming == null) {
             val support = mp3 ?: throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "MP3 indisponível.")
             val token = pending ?: PrepareToken(id)
             try {
@@ -244,7 +278,10 @@ class MinistryAudioBridge(
                 val decoderName = support.calibration.requireVerified { token.cancelled }
                 val dir = File(File(ministryRoot, TEMP_DIR), id)
                 tempDir = dir
-                decodeStems(support, directory, ministryRoot, dir, rate.toInt(), frames, alignment, decoderName, token)
+                decodeStems(support, directory, ministryRoot, dir, rate.toInt(), frames, alignment, decoderName, token, verified.takeIf { mustCheckInput })
+                // Falling back from streaming: the full decode reopened the files by path, so they must still be the
+                // ones of the manifest.
+                expectations?.let { requireUnchanged(directory, ministryRoot, it, token) }
                 loadDir = dir
             } catch (e: Throwable) {
                 tempDir?.let { deleteTree(it) } // no engine holds these files yet
@@ -253,31 +290,46 @@ class MinistryAudioBridge(
         }
 
         var ref: BridgeSession? = null
-        val engine = engineFactory { state, code ->
-            val own = ref
-            val s = synchronized(lock) { current }
-            // Events of a replaced / closed session are dropped (`own` is
-            // still null for the events emitted while loading).
-            if (own == null || (s != null && s === own)) {
-                events.emit(
-                    mapOf(
-                        "event" to "state",
-                        K_SESSION to id,
-                        "state" to state.name.lowercase(),
-                        "errorCode" to code,
-                    ),
-                )
+        val engine = try {
+            engineFactory { state, code ->
+                val own = ref
+                val s = synchronized(lock) { current }
+                // Events of a replaced / closed session are dropped (`own` is
+                // still null for the events emitted while loading).
+                if (own == null || (s != null && s === own)) {
+                    events.emit(
+                        mapOf(
+                            "event" to "state",
+                            K_SESSION to id,
+                            "state" to state.name.lowercase(),
+                            "errorCode" to code,
+                        ),
+                    )
+                }
             }
+        } catch (e: Throwable) {
+            // No engine owns the producers or the decoded files yet.
+            streaming?.let { if (!it.close()) orphan = it }
+            tempDir?.let { deleteTree(it) }
+            throw e
         }
         val session = BridgeSession(id, engine)
         session.tempDir = tempDir
         synchronized(lock) { current = session }
         ref = session
         try {
-            val h = engine.load(loadDir, ministryRoot, rate.toInt(), frames)
-            session.sampleRate = h.sampleRate
-            session.frames = h.frames
+            if (streaming != null) {
+                engine.loadStreaming(streaming)
+                session.sampleRate = rate.toInt()
+                session.frames = frames
+            } else {
+                val h = engine.load(loadDir, ministryRoot, rate.toInt(), frames)
+                session.sampleRate = h.sampleRate
+                session.frames = h.frames
+            }
         } catch (e: Throwable) {
+            // The engine owns the feed only once loaded.
+            streaming?.let { if (!it.close()) orphan = it }
             val confirmed = runCatching { engine.dispose() }.getOrDefault(false)
             if (confirmed) {
                 tempDir?.let { deleteTree(it) }
@@ -285,14 +337,156 @@ class MinistryAudioBridge(
             }
             throw e
         }
-        return mapOf(K_SESSION to id, "sampleRate" to session.sampleRate, "frames" to session.frames)
+        return mapOf<String, Any?>(K_SESSION to id, "sampleRate" to session.sampleRate, "frames" to session.frames) + report
+    }
+
+    // ----------------------------------------------------- streaming (M22-S4.2)
+
+    /**
+     * Everything that must hold before any audio: the six compressed files validated byte by byte against the manifest,
+     * this device calibrated, and one second of aligned PCM buffered on all six stems. Returns null ONLY when the device
+     * cannot stream (calibration or codec resources), so the caller may use the full decode with its own checks. A
+     * corrupt, tampered or divergent file throws: it never falls back.
+     */
+    private fun openStreaming(
+        directory: File,
+        allowedRoot: File,
+        rate: Int,
+        frames: Long,
+        alignment: Mp3Alignment,
+        expectations: Map<StemId, Mp3StemExpectation>,
+        token: PrepareToken,
+        report: MutableMap<String, Any?>,
+        verified: MutableMap<File, Mp3StreamIndex>,
+    ): StreamingFeed? {
+        fun cancelled() = MinistryAudioException(MinistryAudioException.CANCELLED, "Preparação cancelada.")
+        fun millisSince(t: Long) = (System.nanoTime() - t) / 1_000_000
+
+        var started = System.nanoTime()
+        val files = MinistryAudioPaths.resolve(directory, allowedRoot, "mp3")
+        val stems = StemId.values().map { stem ->
+            if (token.cancelled) throw cancelled()
+            val file = files.getValue(stem)
+            IncrementalStem(
+                file,
+                Mp3StreamIndexer.index(file, rate, frames, alignment, expectations.getValue(stem)) { token.cancelled },
+            )
+        }
+        if (stems.map { it.index.encoder }.distinct().size != 1) {
+            throw MinistryAudioException(MinistryAudioException.MP3_INVALID, "Faixas de codificadores diferentes.")
+        }
+        report["indexMs"] = millisSince(started)
+        stems.forEach { verified[it.file] = it.index }
+
+        // Only after the bytes were verified: a device that cannot stream still never plays unverified files.
+        val support = mp3?.incremental
+        if (support == null) {
+            report["fallbackReason"] = "unavailable"
+            return null
+        }
+
+        started = System.nanoTime()
+        val decoderName = try {
+            support.calibration.requireVerified { token.cancelled }
+        } catch (e: MinistryAudioException) {
+            if (e.code != MinistryAudioException.MP3_ALIGNMENT_UNVERIFIED) throw e
+            report["fallbackReason"] = "calibration"
+            return null
+        }
+        report["calibrationMs"] = millisSince(started)
+
+        started = System.nanoTime()
+        val feed = IncrementalPcmFeed(stems, rate, frames, alignment, support.decoder, decoderName)
+        var ready = false
+        try {
+            feed.position(0)
+            while (!feed.isReady(0, rate)) {
+                if (token.cancelled) throw cancelled()
+                feed.failure()?.let { throw it }
+                if (millisSince(started) > support.prefillTimeoutMs) {
+                    throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "Decodificação sem progresso.")
+                }
+                Thread.sleep(2)
+            }
+            report["codecOpenMs"] = feed.codecOpenMillis
+            report["prefillMs"] = millisSince(started)
+            report["ringBytes"] = feed.ringBytesTotal
+            if (token.cancelled) throw cancelled()
+            ready = true
+            return feed
+        } catch (e: Mp3CodecUnavailableException) {
+            report["fallbackReason"] = "codec_unavailable"
+            return null
+        } finally {
+            if (!ready && !feed.close()) {
+                orphan = feed
+                throw MinistryAudioException(MinistryAudioException.SHUTDOWN_PENDING, "O áudio ainda está encerrando.")
+            }
+        }
+    }
+
+    /** Every compressed frame reaching the codec must be the validated one, even if the file changes while decoding. */
+    private fun checking(decoder: Mp3PcmDecoder, index: Mp3StreamIndex) = object : Mp3PcmDecoder {
+        override fun decode(file: File, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean) =
+            decoder.decodeChecked(file, index.inputCheck(0), onInfo, sink, cancelled)
+    }
+
+    private fun requireUnchanged(
+        directory: File,
+        allowedRoot: File,
+        expectations: Map<StemId, Mp3StemExpectation>,
+        token: PrepareToken,
+    ) {
+        val files = MinistryAudioPaths.resolve(directory, allowedRoot, "mp3")
+        for (stem in StemId.values()) {
+            val expected = expectations.getValue(stem)
+            val digest = MessageDigest.getInstance("SHA-256")
+            var size = 0L
+            files.getValue(stem).inputStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    if (token.cancelled) {
+                        throw MinistryAudioException(MinistryAudioException.CANCELLED, "Preparação cancelada.")
+                    }
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    digest.update(buffer, 0, n)
+                    size += n
+                }
+            }
+            val sha = digest.digest().joinToString("") { "%02x".format(it) }
+            if (size != expected.sizeBytes || sha != expected.sha256) {
+                throw MinistryAudioException(MinistryAudioException.MP3_INVALID, "Arquivo alterado durante a preparação.")
+            }
+        }
+    }
+
+    private fun releaseOrphan(): Boolean {
+        val o = orphan ?: return true
+        if (!o.close()) return false
+        orphan = null
+        return true
+    }
+
+    private fun stemExpectationsArg(a: Map<*, *>): Map<StemId, Mp3StemExpectation> {
+        if (a[K_STRATEGY] != STRATEGY_INCREMENTAL) arg("Estratégia inválida.")
+        val stems = a[K_STEMS] as? Map<*, *> ?: arg("Faixas ausentes.")
+        if (stems.size != StemId.values().size) arg("Faixas inválidas.")
+        return StemId.values().associateWith { id ->
+            val entry = stems[id.wireName] as? Map<*, *> ?: arg("Faixa ausente.")
+            exactKeys(entry, setOf(K_SIZE, K_SHA))
+            val size = longArg(entry, K_SIZE)
+            val sha = entry[K_SHA] as? String
+            if (size <= 0 || sha == null || !SHA256.matches(sha)) arg("Faixa inválida.")
+            Mp3StemExpectation(size, sha)
+        }
     }
 
     private fun close(a: Map<*, *>): Map<String, Any?> {
         exactKeys(a, setOf(K_SESSION))
         val id = sessionIdArg(a)
         val s = synchronized(lock) { current }
-        if (s == null || s.id != id) return mapOf("closed" to true) // already gone
+        if (s == null || s.id != id) return mapOf("closed" to releaseOrphan()) // already gone
         val closed = closeSession(s)
         if (closed) synchronized(lock) { if (current === s) current = null }
         return mapOf("closed" to closed)
@@ -327,6 +521,8 @@ class MinistryAudioBridge(
         alignment: Mp3Alignment,
         decoderName: String,
         token: PrepareToken,
+        /** Null for the plain full decode; otherwise every stem must be decoded against its validated index. */
+        verified: Map<File, Mp3StreamIndex>?,
     ) {
         val files = MinistryAudioPaths.resolve(source, allowedRoot, "mp3")
         val perStem = WavV1.HEADER_BYTES + frames * WavV1.BYTES_PER_FRAME
@@ -337,7 +533,7 @@ class MinistryAudioBridge(
             throw MinistryAudioException(MinistryAudioException.INSUFFICIENT_SPACE, "Espaço insuficiente para preparar o áudio.")
         }
         fun attempt(parallel: Int) =
-            decodeAttempt(support, files, dir, rate, frames, alignment, decoderName, token, parallel)
+            decodeAttempt(support, files, dir, rate, frames, alignment, decoderName, token, parallel, verified)
         val parallel = support.parallelStems.coerceIn(1, StemId.values().size)
         try {
             attempt(parallel)
@@ -360,6 +556,7 @@ class MinistryAudioBridge(
         decoderName: String,
         token: PrepareToken,
         parallel: Int,
+        verified: Map<File, Mp3StreamIndex>?,
     ) {
         val queue = java.util.concurrent.ConcurrentLinkedQueue(StemId.values().toList())
         // The first real failure wins and stops the other workers; their CANCELLED is a consequence, not the cause.
@@ -370,7 +567,20 @@ class MinistryAudioBridge(
                 while (!stop()) {
                     val stem = queue.poll() ?: break
                     val part = File(dir, "${stem.fileName}.part")
-                    Mp3StemDecoder.decodeToWav(files.getValue(stem), part, rate, frames, alignment, support.decoder, decoderName, stop)
+                    val file = files.getValue(stem)
+                    val decoder = if (verified == null) {
+                        support.decoder
+                    } else {
+                        // A path that no longer resolves to a validated file is refused, never decoded unchecked.
+                        checking(
+                            support.decoder,
+                            verified[file] ?: throw MinistryAudioException(
+                                MinistryAudioException.MP3_INVALID,
+                                "Arquivo alterado durante a preparação.",
+                            ),
+                        )
+                    }
+                    Mp3StemDecoder.decodeToWav(file, part, rate, frames, alignment, decoder, decoderName, stop)
                     if (!part.renameTo(File(dir, stem.fileName))) {
                         part.delete()
                         throw MinistryAudioException(MinistryAudioException.WRITE_FAILED, "Falha ao gravar o áudio temporário.")
@@ -494,7 +704,7 @@ class MinistryAudioBridge(
         val result = try {
             executor.submit<Boolean> {
                 val s = synchronized(lock) { current }
-                val ok = s?.let { closeSession(it) } ?: true
+                val ok = (s?.let { closeSession(it) } ?: true) && releaseOrphan()
                 synchronized(lock) { if (ok) current = null }
                 ok
             }.get(DISPOSE_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
@@ -583,6 +793,13 @@ class MinistryAudioBridge(
         private const val K_DELAY = "encoderDelayFrames"
         private const val K_PADDING = "paddingFrames"
         private const val K_MPEG = "mpegAudioFrames"
+        private const val K_STRATEGY = "strategy"
+        private const val K_STEMS = "stems"
+        private const val K_SIZE = "sizeBytes"
+        private const val K_SHA = "sha256"
+        const val STRATEGY_INCREMENTAL = "incremental"
+        const val STRATEGY_FULL = "full"
+        private val SHA256 = Regex("^[a-f0-9]{64}$")
         const val MP3_CODEC = "mp3_cbr256"
         const val TEMP_DIR = "pcm_tmp"
         private const val SPACE_RESERVE_BYTES = 64L * 1024 * 1024

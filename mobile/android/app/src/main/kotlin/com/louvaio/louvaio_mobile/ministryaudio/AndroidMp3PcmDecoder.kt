@@ -25,18 +25,34 @@ class AndroidMp3PcmDecoder(
     private val pack = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) framesPerBuffer.coerceAtLeast(1) else 1
 
     override fun decode(file: File, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean) =
-        run(file, null, onInfo, sink, cancelled)
+        run(file, null, null, onInfo, sink, cancelled)
+
+    override fun decodeChecked(
+        file: File,
+        input: Mp3InputCheck,
+        onInfo: (Mp3StreamInfo) -> Unit,
+        sink: PcmSink,
+        cancelled: () -> Boolean,
+    ) = run(file, null, input, onInfo, sink, cancelled)
 
     override fun decodeFrom(
         file: File,
         byteOffset: Long,
+        input: Mp3InputCheck,
         onInfo: (Mp3StreamInfo) -> Unit,
         sink: PcmSink,
         cancelled: () -> Boolean,
-    ) = run(file, byteOffset, onInfo, sink, cancelled)
+    ) = run(file, byteOffset, input, onInfo, sink, cancelled)
 
     /** [windowOffset] null: the whole file with the platform's gapless handling; else raw PCM from that byte on. */
-    private fun run(file: File, windowOffset: Long?, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean) {
+    private fun run(
+        file: File,
+        windowOffset: Long?,
+        check: Mp3InputCheck?,
+        onInfo: (Mp3StreamInfo) -> Unit,
+        sink: PcmSink,
+        cancelled: () -> Boolean,
+    ) {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         var stream: java.io.FileInputStream? = null
@@ -75,7 +91,7 @@ class AndroidMp3PcmDecoder(
             } catch (_: Exception) {
                 throw Mp3CodecUnavailableException()
             }
-            pump(extractor, codec!!, input, windowOffset != null, onInfo, sink, cancelled)
+            pump(extractor, codec!!, input, windowOffset != null, check, onInfo, sink, cancelled)
         } catch (e: MinistryAudioException) {
             throw e
         } catch (_: Exception) {
@@ -93,6 +109,7 @@ class AndroidMp3PcmDecoder(
         codec: MediaCodec,
         input: MediaFormat,
         raw: Boolean,
+        check: Mp3InputCheck?,
         onInfo: (Mp3StreamInfo) -> Unit,
         sink: PcmSink,
         cancelled: () -> Boolean,
@@ -102,6 +119,7 @@ class AndroidMp3PcmDecoder(
         var outDone = false
         var announced: Pair<Int, Int>? = null
         val scratch = ByteArray(16 * 1024)
+        val compressed = if (check != null) ByteArray(MAX_MPEG_FRAME_BYTES) else null
         var lastProgress = System.nanoTime()
 
         // Called before the first PCM and again on every output format change, which must not alter the stream.
@@ -135,8 +153,9 @@ class AndroidMp3PcmDecoder(
                 if (ix >= 0) {
                     val buf = codec.getInputBuffer(ix)!!
                     val pts = extractor.sampleTime
-                    val n = fill(extractor, buf)
+                    val n = fill(extractor, buf, check, compressed)
                     if (n < 0) {
+                        check?.end()
                         codec.queueInputBuffer(ix, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                         inDone = true
                     } else {
@@ -183,7 +202,7 @@ class AndroidMp3PcmDecoder(
     }
 
     /** Puts up to [pack] whole MPEG frames into [buf]; returns the bytes written, or -1 at the end of the stream. */
-    private fun fill(extractor: MediaExtractor, buf: java.nio.ByteBuffer): Int {
+    private fun fill(extractor: MediaExtractor, buf: java.nio.ByteBuffer, check: Mp3InputCheck?, frame: ByteArray?): Int {
         var total = 0
         for (i in 0 until pack) {
             if (i > 0) {
@@ -192,6 +211,17 @@ class AndroidMp3PcmDecoder(
             }
             val n = extractor.readSampleData(buf, total)
             if (n < 0) break
+            if (check != null && frame != null) {
+                // One extractor sample is one MPEG frame; anything else is refused.
+                if (n > frame.size) {
+                    throw MinistryAudioException(MinistryAudioException.MP3_INVALID, "Quadro MP3 grande demais.")
+                }
+                val view = buf.duplicate()
+                view.limit(total + n)
+                view.position(total)
+                view.get(frame, 0, n)
+                check.frame(frame, n)
+            }
             total += n
             extractor.advance()
         }

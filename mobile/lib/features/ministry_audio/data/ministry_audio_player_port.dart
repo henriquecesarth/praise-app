@@ -11,6 +11,7 @@ enum MinistryAudioNativeState {
   loading,
   ready,
   playing,
+  buffering,
   paused,
   completed,
   error,
@@ -66,6 +67,8 @@ abstract interface class MinistryAudioPlayerPort {
 
   /// Opens the six verified stems of [recordingId] (replacing any previous
   /// session, which native closes first). Returns the validated format.
+  /// [incrementalStems] (MP3 only) asks for playback while decoding; native
+  /// then verifies each file against it before any audio.
   Future<({int sampleRate, int frames})> prepare({
     required String sessionId,
     required String userId,
@@ -74,6 +77,7 @@ abstract interface class MinistryAudioPlayerPort {
     required int sampleRate,
     required int frames,
     MinistryAudioMp3Alignment? mp3Alignment,
+    Map<MinistryStemId, MinistryAudioStemIntegrity>? incrementalStems,
   });
 
   Future<void> play(String sessionId);
@@ -179,6 +183,7 @@ final class MethodChannelMinistryAudioPlayerPort
     required int sampleRate,
     required int frames,
     MinistryAudioMp3Alignment? mp3Alignment,
+    Map<MinistryStemId, MinistryAudioStemIntegrity>? incrementalStems,
   }) async {
     final r = await _call('prepare', {
       'sessionId': sessionId,
@@ -192,6 +197,16 @@ final class MethodChannelMinistryAudioPlayerPort
         'encoderDelayFrames': mp3Alignment.encoderDelayFrames,
         'paddingFrames': mp3Alignment.paddingFrames,
         'mpegAudioFrames': mp3Alignment.mpegAudioFrames,
+        if (incrementalStems != null) ...{
+          'strategy': 'incremental',
+          'stems': {
+            for (final e in incrementalStems.entries)
+              e.key.name: {
+                'sizeBytes': e.value.sizeBytes,
+                'sha256': e.value.sha256,
+              },
+          },
+        },
       },
     });
     final rate = r['sampleRate'];

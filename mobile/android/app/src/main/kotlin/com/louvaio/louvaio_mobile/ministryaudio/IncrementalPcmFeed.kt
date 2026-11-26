@@ -10,7 +10,15 @@ import java.util.concurrent.atomic.AtomicReference
  */
 interface Mp3WindowDecoder {
     @Throws(MinistryAudioException::class)
-    fun decodeFrom(file: File, byteOffset: Long, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean)
+    fun decodeFrom(
+        file: File,
+        byteOffset: Long,
+        /** Must see every compressed frame handed to the codec, and [Mp3InputCheck.end] when the input is over. */
+        input: Mp3InputCheck,
+        onInfo: (Mp3StreamInfo) -> Unit,
+        sink: PcmSink,
+        cancelled: () -> Boolean,
+    )
 }
 
 /** What [MinistryAudioEngine] needs from a source that is still being produced while it plays. */
@@ -52,8 +60,9 @@ class IncrementalStem(val file: File, val index: Mp3StreamIndex)
  * No temporary PCM. A seek stops all six, waits for their codecs to be released and only then starts the next
  * generation, so a result of an older seek can never reach the mixer and no more than six codecs ever exist.
  *
- * Integrity is progressive and ends at EOS: a producer fails as soon as it delivers MORE samples than the frames it was
- * given allow, and at the end of the stream the count must be exact. A shortfall can therefore only be detected after
+ * Integrity is progressive and ends at EOS. The codec INPUT is checked frame by frame against the validated index. The
+ * OUTPUT can only be counted: a producer fails as soon as it delivers MORE samples than its window allows, and at the end
+ * of the stream the count must be exact. A codec that loses or repeats PCM internally is therefore only detected after
  * part of the audio was already played; any failure stops the whole set.
  */
 class IncrementalPcmFeed(
@@ -108,6 +117,8 @@ class IncrementalPcmFeed(
             if (!stopLocked()) {
                 throw MinistryAudioException(MinistryAudioException.SHUTDOWN_PENDING, "O áudio ainda está encerrando.")
             }
+            // A producer may have failed while it was being joined: a failed feed never opens new codecs.
+            if (firstFailure.get() != null) return
             startLocked(target)
         }
     }
@@ -120,7 +131,7 @@ class IncrementalPcmFeed(
         generationStartNanos = System.nanoTime()
         rings.forEach { it.reset(from) }
         // close() raises the flag before aborting the rings: re-checking after the reset leaves no window.
-        if (closed) {
+        if (closed || firstFailure.get() != null) {
             rings.forEach { it.abort() }
             return
         }
@@ -141,6 +152,7 @@ class IncrementalPcmFeed(
     private fun produce(i: Int, from: Long, gen: Int) {
         val stop = { closed || gen != generation || firstFailure.get() != null }
         try {
+            if (stop()) return
             val stem = stems[i]
             val raw = from + Mp3StemDecoder.tagDelay(alignment)
             val startFrame = maxOf(0, (raw / SAMPLES).toInt() - PREROLL_FRAMES)
@@ -150,11 +162,13 @@ class IncrementalPcmFeed(
                 rings[i].write(b, o, l)
             }
             var delivered = 0L
+            var detached = false // the ring was aborted: the audio is dropped, the count goes on
             // Window 0 starts at the file start so the Info frame is handled as in the linear decode.
             val offset = if (startFrame == 0) 0L else stem.index.offsets[startFrame].toLong()
             decoder.decodeFrom(
                 stem.file,
                 offset,
+                input = stem.index.inputCheck(startFrame),
                 onInfo = { info ->
                     if (info.sampleRate != sampleRate || info.channels != 2 || info.platformGapless) {
                         throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "Formato MP3 diverge do manifesto.")
@@ -168,16 +182,27 @@ class IncrementalPcmFeed(
                 },
                 sink = { b, o, l ->
                     delivered += l
-                    if (delivered > expectedBytes) throw lengthMismatch()
-                    trimmer.write(b, o, l)
+                    // Proven wrong whatever happens next: latched at once, so a concurrent seek cannot discard it.
+                    if (delivered > expectedBytes) throw lengthMismatch().also(::fail)
+                    if (!detached) {
+                        // An abort during the LAST buffer must not hide a short stream: the decoder still reaches EOS
+                        // and the count below is still checked. Otherwise it stops at its next cancellation check.
+                        try {
+                            trimmer.write(b, o, l)
+                        } catch (e: MinistryAudioException) {
+                            if (e.code != MinistryAudioException.CANCELLED) throw e
+                            detached = true
+                        }
+                    }
                 },
                 cancelled = stop,
             )
-            if (delivered != expectedBytes || trimmer.keptBytes != keep) throw lengthMismatch()
-            finished.incrementAndGet()
+            if (delivered != expectedBytes || (!detached && trimmer.keptBytes != keep)) throw lengthMismatch()
+            if (!detached) finished.incrementAndGet()
         } catch (e: MinistryAudioException) {
-            // A stop request surfaces as CANCELLED: a consequence, never the cause.
-            if (!stop() && e.code != MinistryAudioException.CANCELLED) fail(e)
+            // A stop request surfaces as CANCELLED: a consequence, never the cause. A refused input frame or a wrong
+            // length at EOS is a fact about the audio, kept even if a stop or a seek arrived in the meantime.
+            if (e.code in FACTS || (!stop() && e.code != MinistryAudioException.CANCELLED)) fail(e)
         } catch (e: Throwable) {
             if (!stop()) fail(MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "Falha ao decodificar o MP3."))
         }
@@ -251,5 +276,6 @@ class IncrementalPcmFeed(
         const val RING_SECONDS = 3
         private const val SAMPLES = Mp3Alignment.SAMPLES_PER_FRAME
         private const val JOIN_MS = 3_000L
+        private val FACTS = setOf(MinistryAudioException.MP3_INVALID, MinistryAudioException.MP3_LENGTH_MISMATCH)
     }
 }

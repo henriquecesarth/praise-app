@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-enum class EngineState { IDLE, LOADING, READY, PLAYING, PAUSED, COMPLETED, ERROR, DISPOSED }
+enum class EngineState { IDLE, LOADING, READY, PLAYING, BUFFERING, PAUSED, COMPLETED, ERROR, DISPOSED }
 
 fun interface MinistryAudioListener {
     /** Called for every state change, in order. `errorCode` only for ERROR. */
@@ -104,6 +104,7 @@ class MinistryAudioEngine internal constructor(
     private val tailStallTimeoutMs: Long = DEFAULT_TAIL_STALL_MS,
     private val sourceFactory: (File) -> StemSource = { FileStemSource.open(it) },
     private val joinMs: Long = JOIN_MS,
+    private val starvationTimeoutMs: Long = STARVATION_TIMEOUT_MS,
 ) {
     private class Session(val gen: Long, val core: MixerCore) {
         /** Counted down only when the render thread has fully finished. */
@@ -119,6 +120,8 @@ class MinistryAudioEngine internal constructor(
         @Volatile var headBase = 0L
         @Volatile var writtenFrames = 0L
         @Volatile var resumeOnGain = false
+        /** Streaming (guarded by the engine lock): the end was reached while playing; a pause can no longer apply. */
+        var finishing = false
         val finished = AtomicBoolean(false)
     }
 
@@ -140,8 +143,15 @@ class MinistryAudioEngine internal constructor(
     private var disposing: Session? = null
     private val closeLock = Any()
 
+    /** Present only for streaming playback; kept until its producers are confirmed gone. */
+    @Volatile
+    private var feed: StreamingFeed? = null
+
     @Volatile
     private var pendingSeek = -1L
+
+    /** Counts pauses (guarded by [lock]): lets the render thread notice one it did not wait through. */
+    private var pauseEpoch = 0L
 
     val sampleRate: Int get() = header?.sampleRate ?: 0
     val durationFrames: Long get() = header?.frames ?: 0L
@@ -178,7 +188,7 @@ class MinistryAudioEngine internal constructor(
         expectedFrames: Long? = null,
     ): WavHeader = lock.withLock {
         when (state) {
-            EngineState.DISPOSED, EngineState.PLAYING, EngineState.PAUSED -> invalidState()
+            EngineState.DISPOSED, EngineState.PLAYING, EngineState.BUFFERING, EngineState.PAUSED -> invalidState()
             else -> Unit
         }
         // A worker that has not been confirmed gone may still use the files.
@@ -234,6 +244,19 @@ class MinistryAudioEngine internal constructor(
         }
     }
 
+    /**
+     * Streaming variant of [load]: the six stems are still being decoded by [source]. Only on an engine that never loaded
+     * anything. The engine owns the feed from here on: [dispose] returns true only once its producers are gone.
+     */
+    @Throws(MinistryAudioException::class)
+    fun loadStreaming(source: StreamingFeed): Unit = lock.withLock {
+        if (state != EngineState.IDLE) invalidState()
+        feed = source
+        core = MixerCore(source.sources, source.sampleRate, source.totalFrames, chunkFrames)
+        header = WavHeader(source.sampleRate, source.totalFrames)
+        setStateLocked(EngineState.READY)
+    }
+
     // -------------------------------------------------------------- controls
 
     fun setTrackGain(stem: StemId, gain: Float) = requireCore().setGain(stem.ordinal, gain)
@@ -262,7 +285,7 @@ class MinistryAudioEngine internal constructor(
     @Throws(MinistryAudioException::class)
     fun pause() {
         lock.withLock {
-            if (state != EngineState.PLAYING) invalidState()
+            if (!isRunningLocked() || session?.finishing == true) invalidState()
             session?.resumeOnGain = false
             pauseLocked()
         }
@@ -303,6 +326,13 @@ class MinistryAudioEngine internal constructor(
             }
             return false
         }
+        // A stopped session must not keep six codecs open (the next start repositions the producers).
+        if (feed?.suspendProducers() == false) {
+            lock.withLock {
+                if (state != EngineState.DISPOSED) setStateLocked(EngineState.ERROR, MinistryAudioException.SHUTDOWN_PENDING)
+            }
+            return false
+        }
         lock.withLock {
             if (state == EngineState.DISPOSED) return true
             if (state == EngineState.ERROR && lastErrorCode == MinistryAudioException.SHUTDOWN_PENDING) {
@@ -313,9 +343,7 @@ class MinistryAudioEngine internal constructor(
             }
             core?.let {
                 it.seek(0)
-                if (state == EngineState.PLAYING || state == EngineState.PAUSED ||
-                    state == EngineState.COMPLETED
-                ) {
+                if (isRunningLocked() || state == EngineState.PAUSED || state == EngineState.COMPLETED) {
                     setStateLocked(EngineState.READY)
                 }
             }
@@ -329,7 +357,7 @@ class MinistryAudioEngine internal constructor(
         lock.withLock {
             val c = core
             when (state) {
-                EngineState.READY, EngineState.PLAYING, EngineState.PAUSED, EngineState.COMPLETED ->
+                EngineState.READY, EngineState.PLAYING, EngineState.BUFFERING, EngineState.PAUSED, EngineState.COMPLETED ->
                     if (c == null) invalidState()
                 else -> invalidState()
             }
@@ -361,22 +389,33 @@ class MinistryAudioEngine internal constructor(
                 val cur = session
                 if (cur != null) {
                     requestStopLocked(cur)
+                    feed?.abort()
                     synchronized(closeLock) { cur.closeOnExit = closing }
                     disposing = cur
                 } else {
+                    feed?.abort()
                     closing?.close()
                 }
                 setStateLocked(EngineState.DISPOSED)
             }
             s = disposing
         }
-        if (s == null) return true
-        return awaitDisposed(s)
+        if (s != null && !awaitDisposed(s)) return false
+        return releaseFeed()
     }
 
     private fun disposeConfirmed(): Boolean {
-        val s = lock.withLock { disposing } ?: return true
-        return awaitDisposed(s)
+        val s = lock.withLock { disposing }
+        if (s != null && !awaitDisposed(s)) return false
+        return releaseFeed()
+    }
+
+    /** Never under [lock]. True once no producer (codec, open file) is left. */
+    private fun releaseFeed(): Boolean {
+        val f = feed ?: return true
+        if (!f.close()) return false
+        feed = null
+        return true
     }
 
     private fun awaitDisposed(s: Session): Boolean {
@@ -419,12 +458,14 @@ class MinistryAudioEngine internal constructor(
             s.base = c.positionFrames
             s.headBase = track.headPositionFrames()
             noisy?.register { onNoisy(s.gen) }
-            track.play()
+            // Streaming: the output starts only once all six stems have data (decided by the render thread).
+            val streaming = feed != null
+            if (!streaming) track.play()
             val thread = Thread({ renderLoop(s) }, THREAD_NAME).apply { isDaemon = true }
             s.thread = thread
             session = s
             pendingSeek = -1L
-            setStateLocked(EngineState.PLAYING)
+            setStateLocked(if (streaming) EngineState.BUFFERING else EngineState.PLAYING)
             thread.start()
         } catch (e: Throwable) {
             session = null
@@ -438,14 +479,22 @@ class MinistryAudioEngine internal constructor(
 
     private fun pauseLocked() {
         val s = session ?: invalidState()
+        if (s.finishing) return // focus or noisy after the end was reached
+        pauseEpoch++
         runCatching { s.track?.pause() }
         setStateLocked(EngineState.PAUSED)
     }
 
     private fun resumeLocked() {
         val s = session ?: invalidState()
-        runCatching { s.track?.play() }
-        setStateLocked(EngineState.PLAYING)
+        if (feed == null) {
+            runCatching { s.track?.play() }
+            setStateLocked(EngineState.PLAYING)
+        } else {
+            // Streaming: only the render thread restarts the output, after applying a pending seek (so no audio of the
+            // old position is heard) and finding the six rings refilled.
+            setStateLocked(EngineState.BUFFERING)
+        }
         cond.signalAll()
     }
 
@@ -522,11 +571,24 @@ class MinistryAudioEngine internal constructor(
         var lastChange = System.nanoTime()
         var error: MinistryAudioException? = null
         var completed = false
+        val stream = feed
+        var starvedSince = 0L
+        var seenPause = 0L
         try {
             while (true) {
                 lock.withLock {
-                    while (!s.stopRequested && state == EngineState.PAUSED) cond.await()
+                    while (!s.stopRequested && state == EngineState.PAUSED && stream?.failure() == null) {
+                        // A producer may fail while paused: that has to end the session, not wait for a resume.
+                        if (stream == null) cond.await() else cond.await(PAUSED_POLL_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    }
                     if (s.stopRequested) return@withLock
+                    if (stream != null && pauseEpoch != seenPause) {
+                        // Even a pause that came and went between two iterations:
+                        seenPause = pauseEpoch
+                        starvedSince = 0L // time paused is not starvation
+                        lastChange = System.nanoTime() // nor a stalled tail
+                    }
+                    if (state != EngineState.BUFFERING) starvedSince = 0L
                     val seek = pendingSeek
                     if (seek >= 0) {
                         pendingSeek = -1L
@@ -539,31 +601,93 @@ class MinistryAudioEngine internal constructor(
                         off = 0
                         len = 0
                         ended = false
-                        if (state == EngineState.PLAYING) runCatching { track.play() }
+                        starvedSince = 0L
+                        if (stream == null) {
+                            if (state == EngineState.PLAYING) runCatching { track.play() }
+                        } else if (state == EngineState.PLAYING) {
+                            setStateLocked(EngineState.BUFFERING)
+                        }
                     }
                 }
                 if (s.stopRequested) break
+                if (stream != null) {
+                    stream.failure()?.let { throw it }
+                    val buffering = state == EngineState.BUFFERING
+                    if (!ended && (off >= len || buffering)) {
+                        val position = c.positionFrames
+                        // No-op unless a seek or a stop moved the timeline. Also at the very end: the producers of the
+                        // new position are the ones whose EOS has to be verified.
+                        stream.position(position)
+                        // Re-buffering waits for a comfortable amount on ALL stems, so they stop and resume together.
+                        if (!stream.isReady(position, if (buffering) maxOf(chunkFrames, c.sampleRate) else chunkFrames)) {
+                            lock.withLock {
+                                if (state == EngineState.PLAYING) {
+                                    runCatching { track.pause() } // queued audio is kept, nothing is flushed or padded
+                                    setStateLocked(EngineState.BUFFERING)
+                                }
+                            }
+                            if (starvedSince == 0L) starvedSince = System.nanoTime()
+                            if (System.nanoTime() - starvedSince > starvationTimeoutMs * 1_000_000L) {
+                                stream.failure()?.let { throw it }
+                                throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "Decodificação sem progresso.")
+                            }
+                            Thread.sleep(BUFFER_POLL_MS)
+                            continue
+                        }
+                        starvedSince = 0L
+                    }
+                    // Everything needed is buffered (or only the tail is left in the track): the output (re)starts.
+                    lock.withLock {
+                        // BUFFERING set after the readiness check above (a resume) waits for the next iteration, which
+                        // applies the refill threshold. An output that cannot start ends the session.
+                        if (state == EngineState.BUFFERING && (buffering || ended) && pendingSeek < 0 && !s.stopRequested) {
+                            track.play()
+                            setStateLocked(EngineState.PLAYING)
+                        }
+                    }
+                }
 
                 if (ended) {
                     val played = track.headPositionFrames() - s.headBase
                     val now = System.nanoTime()
                     if (played >= s.writtenFrames) {
-                        completed = true
-                        break
+                        // Streaming: the end is only real once all six decoders reached EOS with the exact length.
+                        if (stream != null && !stream.verified()) {
+                            stream.failure()?.let { throw it }
+                            if (now - lastChange > starvationTimeoutMs * 1_000_000L) {
+                                throw MinistryAudioException(MinistryAudioException.MP3_LENGTH_MISMATCH, "Fim do áudio não confirmado.")
+                            }
+                            Thread.sleep(TAIL_POLL_MS)
+                            continue
+                        }
+                        // Streaming: decided atomically against pause. A pause that won stays PAUSED and finishes on resume.
+                        if (stream == null || tryFinish(s, seenPause)) {
+                            completed = true
+                            break
+                        }
+                        Thread.sleep(TAIL_POLL_MS)
+                        continue
                     }
                     if (played != lastHead) {
                         lastHead = played
                         lastChange = now
-                    } else if (now - lastChange > tailStallTimeoutMs * 1_000_000L) {
-                        completed = true // device stalled at the tail: do not hang
-                        break
+                    } else if (now - lastChange > tailStallTimeoutMs * 1_000_000L && stream?.verified() != false) {
+                        // Streaming: a head frozen by a pause that arrived during this iteration is not a stall.
+                        if (stream == null || tryFinish(s, seenPause)) {
+                            completed = true // device stalled at the tail: do not hang
+                            break
+                        }
                     }
                     Thread.sleep(TAIL_POLL_MS)
                     continue
                 }
 
+                // Streaming: nothing is rendered (and so dropped from the rings) unless the output is playing.
+                if (stream != null && state != EngineState.PLAYING) continue
+
                 if (off >= len) {
                     val n = c.render(buf, chunkFrames)
+                    stream?.consumed(c.positionFrames)
                     if (n == 0) {
                         ended = true
                         lastHead = -1L
@@ -585,7 +709,7 @@ class MinistryAudioEngine internal constructor(
                 s.writtenFrames += (w / 2).toLong()
             }
         } catch (e: MinistryAudioException) {
-            error = e
+            error = stream?.failure() ?: e
         } catch (_: InterruptedException) {
             // treated as a stop request
         } catch (e: Throwable) {
@@ -597,6 +721,8 @@ class MinistryAudioEngine internal constructor(
             releaseTrack(track)
             if (!s.stopRequested) {
                 finishSession(s)
+                // Producers (codecs, open files) must be gone before ERROR is published; never waited for under the lock.
+                val released = error == null || stream == null || stream.close()
                 lock.withLock {
                     if (session === s && state != EngineState.DISPOSED) {
                         session = null
@@ -608,17 +734,32 @@ class MinistryAudioEngine internal constructor(
                                 core?.close()
                                 core = null
                                 header = null
-                                setStateLocked(EngineState.ERROR, error.code)
+                                setStateLocked(EngineState.ERROR, if (released) error.code else MinistryAudioException.SHUTDOWN_PENDING)
                             }
                             completed -> {
-                                c.seek(c.totalFrames)
-                                setStateLocked(EngineState.COMPLETED)
+                                val late = if (stream != null) pendingSeek else -1L
+                                if (late >= 0) {
+                                    // Accepted after the loop had decided to finish: keep it, ready to play from there.
+                                    pendingSeek = -1L
+                                    c.seek(late)
+                                    setStateLocked(EngineState.READY)
+                                } else {
+                                    c.seek(c.totalFrames)
+                                    setStateLocked(EngineState.COMPLETED)
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    private fun tryFinish(s: Session, seenPause: Long): Boolean = lock.withLock {
+        // A seek queued since the head was read wins over completion: the loop applies it on its next turn.
+        val ok = state == EngineState.PLAYING && pauseEpoch == seenPause && pendingSeek < 0
+        if (ok) s.finishing = true
+        ok
     }
 
     // -------------------------------------------------------------- callbacks
@@ -630,10 +771,10 @@ class MinistryAudioEngine internal constructor(
             when (change) {
                 AudioManager.AUDIOFOCUS_LOSS -> {
                     s.resumeOnGain = false
-                    if (state == EngineState.PLAYING) pauseLocked()
+                    if (isRunningLocked()) pauseLocked()
                 }
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                    if (state == EngineState.PLAYING) {
+                    if (isRunningLocked()) {
                         s.resumeOnGain = true
                         pauseLocked()
                     }
@@ -655,7 +796,7 @@ class MinistryAudioEngine internal constructor(
             val s = session
             if (s == null || s.gen != gen || s.stopRequested) return
             s.resumeOnGain = false
-            if (state == EngineState.PLAYING) pauseLocked()
+            if (isRunningLocked()) pauseLocked()
         }
     }
 
@@ -665,6 +806,9 @@ class MinistryAudioEngine internal constructor(
     }
 
     // ----------------------------------------------------------------- state
+
+    /** Playing, or about to as soon as the stems have data. */
+    private fun isRunningLocked() = state == EngineState.PLAYING || state == EngineState.BUFFERING
 
     private fun setStateLocked(next: EngineState, errorCode: String? = null) {
         state = next
@@ -688,6 +832,9 @@ class MinistryAudioEngine internal constructor(
         const val DEFAULT_TAIL_STALL_MS = 1500L
         private const val OWNER = "ministry-audio"
         private const val JOIN_MS = 2000L
+        private const val STARVATION_TIMEOUT_MS = 20_000L
+        private const val BUFFER_POLL_MS = 5L
+        private const val PAUSED_POLL_MS = 100L
         private const val OUTPUT_BUFFER_CHUNKS = 8
         private const val TAIL_POLL_MS = 5L
         private const val ZERO_WRITE_BACKOFF_MS = 2L

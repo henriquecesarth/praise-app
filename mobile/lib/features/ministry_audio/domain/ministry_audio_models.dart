@@ -8,7 +8,17 @@ abstract final class MinistryAudioFeatureFlags {
   /// still refuses to publish MP3, so this only matters for isolated harnesses.
   static const bool experimentalMp3 =
       bool.fromEnvironment('LOUVAIO_EXPERIMENTAL_MP3_AUDIO');
+
+  /// EXPERIMENTAL (M22-S4.2): play MP3 while it is being decoded instead of
+  /// decoding it whole first. Off by default and independent of the flag above:
+  /// pass `--dart-define=LOUVAIO_EXPERIMENTAL_MP3_INCREMENTAL=true` too. The
+  /// full length is then only confirmed during and at the end of playback.
+  static const bool experimentalMp3Incremental =
+      bool.fromEnvironment('LOUVAIO_EXPERIMENTAL_MP3_INCREMENTAL');
 }
+
+/// What the native side needs to verify one stored stem byte by byte.
+typedef MinistryAudioStemIntegrity = ({int sizeBytes, String sha256});
 
 /// Codec of a recording's stems. A recording never mixes codecs.
 enum MinistryAudioCodec {

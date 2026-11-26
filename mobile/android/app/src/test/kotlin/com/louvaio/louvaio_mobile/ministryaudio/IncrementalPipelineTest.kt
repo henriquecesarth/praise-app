@@ -225,6 +225,139 @@ class IncrementalPipelineTest {
     }
 
     @Test
+    fun aSkippedOrRepeatedInputFrameIsRefusedBeforeItsAudioExists() {
+        for (times in listOf(0, 2)) {
+            val stream = FakeStream(mpeg = 400)
+            val decoder = stream.Decoder().apply { inputFault[3] = 150 to times }
+            val feed = stream.feed(decoder)
+            feed.position(0)
+            assertTrue("times $times", waitUntil { feed.failure() != null })
+            assertEquals(MinistryAudioException.MP3_INVALID, feed.failure()!!.code)
+            // The faulty stem never delivered the PCM of the diverging frame.
+            val held = (feed.sources[3] as PcmRing).startFrame
+            assertEquals(0L, held)
+            assertFalse(feed.isReady(150L * 1152, 1))
+            assertTrue(feed.close())
+        }
+    }
+
+    @Test
+    fun aRefusedFrameSurvivesASeekThatStopsItsProducer() {
+        val stream = FakeStream(mpeg = 400)
+        val inner = stream.Decoder()
+        // The refusal of stem 2 only comes out while it is being stopped.
+        val late = object : Mp3WindowDecoder {
+            override fun decodeFrom(
+                file: java.io.File,
+                byteOffset: Long,
+                input: Mp3InputCheck,
+                onInfo: (Mp3StreamInfo) -> Unit,
+                sink: PcmSink,
+                cancelled: () -> Boolean,
+            ) {
+                try {
+                    inner.decodeFrom(file, byteOffset, input, onInfo, sink, cancelled)
+                } catch (e: MinistryAudioException) {
+                    if (file.name != "fake_2.mp3") throw e
+                    throw MinistryAudioException(MinistryAudioException.MP3_INVALID, "late")
+                }
+            }
+        }
+        val feed = stream.feed(late)
+        feed.position(0)
+        assertTrue(waitUntil { feed.isReady(0, 1) })
+        feed.position(100_000)
+        assertEquals(MinistryAudioException.MP3_INVALID, feed.failure()?.code)
+        assertTrue("no new generation", waitUntil { feed.aliveProducers == 0 })
+        assertFalse(feed.isReady(100_000, 1))
+        assertTrue(feed.close())
+    }
+
+    @Test
+    fun aShortfallSurvivesASeekThatStopsItsProducer() {
+        val stream = FakeStream(mpeg = 400)
+        val inner = stream.Decoder()
+        val late = object : Mp3WindowDecoder {
+            override fun decodeFrom(
+                file: java.io.File,
+                byteOffset: Long,
+                input: Mp3InputCheck,
+                onInfo: (Mp3StreamInfo) -> Unit,
+                sink: PcmSink,
+                cancelled: () -> Boolean,
+            ) {
+                try {
+                    inner.decodeFrom(file, byteOffset, input, onInfo, sink, cancelled)
+                } catch (e: MinistryAudioException) {
+                    if (file.name != "fake_2.mp3") throw e
+                    throw MinistryAudioException(MinistryAudioException.MP3_LENGTH_MISMATCH, "late")
+                }
+            }
+        }
+        val feed = stream.feed(late)
+        feed.position(0)
+        assertTrue(waitUntil { feed.isReady(0, 1) })
+        feed.position(100_000)
+        assertEquals(MinistryAudioException.MP3_LENGTH_MISMATCH, feed.failure()?.code)
+        assertTrue(waitUntil { feed.aliveProducers == 0 })
+        assertTrue(feed.close())
+    }
+
+    @Test
+    fun aShortLastBufferIsCaughtEvenWhenASeekAbortsItsWrite() {
+        val stream = FakeStream(mpeg = 400)
+        val entered = java.util.concurrent.CountDownLatch(6)
+        val last = object : Mp3WindowDecoder {
+            override fun decodeFrom(
+                file: java.io.File,
+                byteOffset: Long,
+                input: Mp3InputCheck,
+                onInfo: (Mp3StreamInfo) -> Unit,
+                sink: PcmSink,
+                cancelled: () -> Boolean,
+            ) {
+                onInfo(Mp3StreamInfo(stream.rate, 2, false, null, null, "fake.decoder"))
+                entered.countDown()
+                while (!cancelled()) Thread.sleep(1)
+                if (file.name != "fake_2.mp3") throw MinistryAudioException(MinistryAudioException.CANCELLED, "x")
+                // The final (EOS) buffer, one frame short, written into a ring that the seek has just aborted.
+                val pcm = ByteArray(400 * 1152 * 4 - 4)
+                sink.write(pcm, 0, pcm.size)
+            }
+        }
+        val feed = stream.feed(last)
+        feed.position(0)
+        assertTrue(entered.await(3, java.util.concurrent.TimeUnit.SECONDS))
+        feed.position(100_000)
+        assertEquals(MinistryAudioException.MP3_LENGTH_MISMATCH, feed.failure()?.code)
+        assertTrue(waitUntil { feed.aliveProducers == 0 })
+        assertTrue(feed.close())
+    }
+
+    @Test
+    fun theInputCheckComparesLengthContentAndCompleteness() {
+        val c = cases[2] // 48 kHz: every frame has the same length, only the content tells them apart
+        val bytes = fixture(c.name)
+        val index = index(c, bytes)
+        fun frame(k: Int): ByteArray {
+            val end = if (k + 1 < index.offsets.size) index.offsets[k + 1] else bytes.size
+            return bytes.copyOfRange(index.offsets[k], end)
+        }
+        val all = index.inputCheck(0)
+        for (k in index.offsets.indices) all.frame(frame(k), frame(k).size)
+        all.end()
+        val window = index.inputCheck(7)
+        window.frame(frame(7), frame(7).size)
+        // Byte-identical frames (digital silence) cannot be told apart; the first one that differs from the expected can.
+        val other = (9 until index.offsets.size).first { !frame(it).contentEquals(frame(8)) }
+        assertCode(MinistryAudioException.MP3_INVALID) { window.frame(frame(other), frame(other).size) }
+        assertCode(MinistryAudioException.MP3_INVALID) { index.inputCheck(3).frame(frame(3), frame(3).size - 1) }
+        val changed = frame(5).also { it[100] = (it[100].toInt() xor 1).toByte() }
+        assertCode(MinistryAudioException.MP3_INVALID) { index.inputCheck(5).frame(changed, changed.size) }
+        assertCode(MinistryAudioException.MP3_INVALID) { index.inputCheck(5).end() }
+    }
+
+    @Test
     fun anUncalibratedCodecIsRefused() {
         val stream = FakeStream(mpeg = 100)
         val decoder = stream.Decoder().apply { name = "other.decoder" }

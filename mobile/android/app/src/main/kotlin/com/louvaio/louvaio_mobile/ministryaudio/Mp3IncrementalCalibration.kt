@@ -36,11 +36,15 @@ class Mp3IncrementalCalibration(
             return name!!.also { verifiedDecoder = it }
         } catch (e: MinistryAudioException) {
             if (e.code == MinistryAudioException.CANCELLED) throw e
-            if (e.code == MinistryAudioException.MP3_ALIGNMENT_UNVERIFIED) rejected = true
+            if (e.code in DETERMINISTIC) rejected = true
             throw unverified()
         } catch (_: Exception) {
             throw unverified()
         }
+    }
+
+    private companion object {
+        val DETERMINISTIC = setOf(MinistryAudioException.MP3_ALIGNMENT_UNVERIFIED, MinistryAudioException.MP3_INVALID)
     }
 
     private fun unverified() = MinistryAudioException(
@@ -62,7 +66,8 @@ class Mp3IncrementalCalibration(
             fun window(start: Int): ByteArray {
                 val out = ByteArrayOutputStream()
                 val offset = if (start == 0) 0L else index.offsets[start].toLong()
-                decoder.decodeFrom(mp3, offset, { info ->
+                // The same input check as playback: an extractor that does not hand over exact frames cannot stream.
+                decoder.decodeFrom(mp3, offset, index.inputCheck(start), { info ->
                     if (info.channels != 2 || info.sampleRate != f.rate || info.platformGapless ||
                         (name != null && info.decoderName != name)
                     ) {

@@ -53,6 +53,8 @@ String ministryAudioErrorText(String? code) {
     case 'AUDIO_NATIVE_MP3_ALIGNMENT_UNVERIFIED':
     case 'AUDIO_NATIVE_MP3_UNSUPPORTED':
       return 'Este aparelho não consegue reproduzir esta gravação com precisão.';
+    case 'AUDIO_NATIVE_MP3_INVALID':
+      return 'Os arquivos de áudio estão inválidos. Tente abrir novamente.';
     case 'AUDIO_NATIVE_MP3_DECODE_FAILED':
     case 'AUDIO_NATIVE_MP3_LENGTH_MISMATCH':
     case 'AUDIO_NATIVE_WRITE_FAILED':
@@ -126,7 +128,8 @@ class _MinistryAudioMixerScreenState
   }
 
   void _syncPolling(MinistryAudioPlaybackPhase phase) {
-    final shouldPoll = phase == MinistryAudioPlaybackPhase.playing;
+    final shouldPoll = phase == MinistryAudioPlaybackPhase.playing ||
+        phase == MinistryAudioPlaybackPhase.buffering;
     if (shouldPoll && _poll == null) {
       _poll = Timer.periodic(widget.pollInterval, (_) async {
         if (!mounted || _inFlight) return; // never stack snapshots
@@ -353,7 +356,9 @@ class _Transport extends ConsumerWidget {
       ministryAudioPlaybackControllerProvider.select((s) => s.master),
     );
     final completed = phase == MinistryAudioPlaybackPhase.completed;
-    final playing = phase == MinistryAudioPlaybackPhase.playing;
+    final buffering = phase == MinistryAudioPlaybackPhase.buffering;
+    // Waiting for data is still "playing" for the controls: pause and stop work.
+    final playing = buffering || phase == MinistryAudioPlaybackPhase.playing;
     final paused = phase == MinistryAudioPlaybackPhase.paused;
     final ready = phase == MinistryAudioPlaybackPhase.ready;
 
@@ -373,6 +378,20 @@ class _Transport extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const _Progress(),
+        if (buffering)
+          Semantics(
+            liveRegion: true,
+            child: const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Column(
+                children: [
+                  LinearProgressIndicator(key: ValueKey('mixer_buffering')),
+                  SizedBox(height: 4),
+                  Text('Carregando o áudio…'),
+                ],
+              ),
+            ),
+          ),
         Slider(
           key: const ValueKey('mixer_progress'),
           value: ref.watch(ministryAudioPlaybackControllerProvider.select((s) {
@@ -478,6 +497,7 @@ class _ChannelStrip extends ConsumerWidget {
         s.solo[i],
         s.phase == MinistryAudioPlaybackPhase.ready ||
             s.phase == MinistryAudioPlaybackPhase.playing ||
+            s.phase == MinistryAudioPlaybackPhase.buffering ||
             s.phase == MinistryAudioPlaybackPhase.paused,
       ),
     ));

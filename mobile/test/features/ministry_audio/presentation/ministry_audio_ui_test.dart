@@ -150,6 +150,7 @@ class _Port implements MinistryAudioPlayerPort {
     required int sampleRate,
     required int frames,
     MinistryAudioMp3Alignment? mp3Alignment,
+    Map<MinistryStemId, MinistryAudioStemIntegrity>? incrementalStems,
   }) async {
     calls.add('prepare:$ministryId');
     if (prepareGate != null) await prepareGate!.future;
@@ -609,6 +610,26 @@ void main() {
       container.read(ministryAudioPlaybackControllerProvider.notifier);
     });
 
+    testWidgets('buffering is shown, keeps pause/stop/controls usable and disappears', (tester) async {
+      await openMixer(tester);
+      await tester.tap(find.byKey(const ValueKey('mixer_play')));
+      await tester.pump();
+      port.emit(MinistryAudioNativeState.buffering, ps().sessionId!);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('mixer_buffering')), findsOneWidget);
+      expect(find.text('Carregando o áudio…'), findsOneWidget);
+      expect(find.byKey(const ValueKey('mixer_pause')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('mute_bass')));
+      await tester.tap(find.byKey(const ValueKey('mixer_stop')));
+      await tester.pump();
+      expect(port.calls, containsAllInOrder(['play', 'mute:bass:true', 'stop']));
+      port.emit(MinistryAudioNativeState.playing, ps().sessionId!);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('mixer_buffering')), findsNothing);
+      port.emit(MinistryAudioNativeState.paused, ps().sessionId!);
+      await tester.pump();
+    });
+
     testWidgets('position polling: moderate, never stacked, only while playing',
         (tester) async {
       await openMixer(tester);
@@ -906,6 +927,7 @@ class _SlowClosePort implements MinistryAudioPlayerPort {
     required int sampleRate,
     required int frames,
     MinistryAudioMp3Alignment? mp3Alignment,
+    Map<MinistryStemId, MinistryAudioStemIntegrity>? incrementalStems,
   }) =>
       _inner.prepare(
         sessionId: sessionId,

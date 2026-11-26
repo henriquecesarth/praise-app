@@ -15,6 +15,8 @@ enum MinistryAudioPlaybackPhase {
   loading,
   ready,
   playing,
+  /// Playing, but waiting for decoded audio of all six stems.
+  buffering,
   paused,
   completed,
   error,
@@ -134,6 +136,7 @@ class MinistryAudioPlaybackController
     String Function()? newSessionId,
     this.closeAttempts = 3,
     this.closeRetryDelay = const Duration(milliseconds: 500),
+    this.incrementalMp3 = MinistryAudioFeatureFlags.experimentalMp3Incremental,
   })  : _cache = cache,
         _port = port,
         _context = context,
@@ -148,6 +151,7 @@ class MinistryAudioPlaybackController
   final String Function() _newSessionId;
   final int closeAttempts;
   final Duration closeRetryDelay;
+  final bool incrementalMp3;
 
   late final StreamSubscription<MinistryAudioNativeEvent> _events;
   int _epoch = 0;
@@ -210,10 +214,14 @@ class MinistryAudioPlaybackController
         sampleRate: cached.sampleRate,
         frames: cached.frames,
         mp3Alignment: cached.recording.mp3Alignment,
+        incrementalStems:
+            incrementalMp3 && cached.recording.mp3Alignment != null
+                ? cached.stemIntegrity
+                : null,
       );
       if (_stale(epoch, captured)) throw _contextFailure();
       if (cached.recording.mp3Alignment != null) {
-        // Decoding takes minutes: access may have been revoked meanwhile.
+        // Preparing may take long: access may have been revoked meanwhile.
         await _cache.revalidate(ministryId: captured.ministryId, cached: cached);
         if (_stale(epoch, captured)) throw _contextFailure();
       }
@@ -294,7 +302,9 @@ class MinistryAudioPlaybackController
     final stamp = _positionStamp;
     try {
       final snap = await _port.snapshot(sid);
-      if (_session != sid || _disposed) return; // late answer of an old session
+      // Late answer of an old session, or of one that is already being closed (error, natural end): the terminal
+      // state must stay.
+      if (_session != sid || _disposed || !_prepared) return;
       // A seek/stop happened while the snapshot was in flight: it is older
       // than what the user just did and must not move the position back.
       if (stamp != _positionStamp) return;
@@ -462,6 +472,8 @@ class MinistryAudioPlaybackController
         return MinistryAudioPlaybackPhase.ready;
       case MinistryAudioNativeState.playing:
         return MinistryAudioPlaybackPhase.playing;
+      case MinistryAudioNativeState.buffering:
+        return MinistryAudioPlaybackPhase.buffering;
       case MinistryAudioNativeState.paused:
         return MinistryAudioPlaybackPhase.paused;
       case MinistryAudioNativeState.completed:
