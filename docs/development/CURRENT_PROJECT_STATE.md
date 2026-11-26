@@ -26,7 +26,8 @@ Corrigidos em `MinistryAudioEngine.kt`: retomar após seek em pausa não toca ma
 
 - No Lenovo TB-J616F (Android 12), o AudioTrack pausado com tudo já escrito não voltou a avançar após `play()`. O motor passa a alimentar até 1 s de silêncio, sem bloquear, durante o dreno depois de uma pausa.
 - JVM `ministryaudio`: 158 executados, 0 falhas, 1 ignorado. Os testes novos falharam antes da respectiva correção.
-- Instrumentado `WavTransportDeviceTest` (flavor `vocal`, AudioTrack real): 3/3 PASS. Escuta humana: NOT_EXECUTED.
+- Instrumentado `WavTransportDeviceTest` (flavor `vocal`, AudioTrack real): 3/3 PASS.
+- Escuta humana (responsável, 2026-11-26, commit `be675ab`): PASS nos três cenários. Feita em app de escuta temporário com áudio sintético e o motor e AudioTrack reais; não cobre a tela de mixer do app.
 - Suíte Flutter: NOT_EXECUTED (nenhum código Dart alterado).
 
 ## Pendências
