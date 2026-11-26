@@ -71,9 +71,9 @@ class Mp3DecoderDeviceTest {
     fun calibrationGateVerifiesThisDevice() {
         val cal = Mp3DecoderCalibration(AndroidMp3PcmDecoder(), scratch) { inst.targetContext.assets.open(it) }
         val t0 = SystemClock.elapsedRealtime()
-        cal.requireVerified()
-        Log.i(tag, "calibration ms=${SystemClock.elapsedRealtime() - t0}")
-        cal.requireVerified() // cached
+        val name = cal.requireVerified { false }
+        Log.i(tag, "calibration ms=${SystemClock.elapsedRealtime() - t0} decoder=$name")
+        assertEquals(name, cal.requireVerified { false }) // cached
     }
 
     @Test

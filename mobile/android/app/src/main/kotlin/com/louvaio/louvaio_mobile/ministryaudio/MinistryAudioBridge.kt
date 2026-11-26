@@ -69,7 +69,8 @@ class MinistryAudioBridge(
     private var current: BridgeSession? = null
     private var disposed = false
 
-    @Volatile private var preparing: PrepareToken? = null
+    /** Prepares submitted and not finished yet (queued or decoding), so a close/dispose can cancel any of them. */
+    private val pendingPrepares = java.util.concurrent.CopyOnWriteArrayList<PrepareToken>()
     private var sweptAll = false
 
     // ------------------------------------------------------------------ entry
@@ -81,9 +82,11 @@ class MinistryAudioBridge(
             callback(run(method, args))
             return
         }
+        val token = register(method, args)
         try {
-            executor.execute { callback(run(method, args)) }
+            executor.execute { callback(run(method, args, token)) }
         } catch (_: RejectedExecutionException) {
+            token?.let { pendingPrepares.remove(it) }
             callback(fail(MinistryAudioException.INVALID_STATE, "Áudio indisponível."))
         }
     }
@@ -92,33 +95,43 @@ class MinistryAudioBridge(
     fun callBlocking(method: String, args: Map<*, *>? = null): Reply {
         if (method == M_CLOSE) cancelPreparing(args)
         if (method == M_SNAPSHOT) return run(method, args)
+        val token = register(method, args)
         return try {
-            executor.submit<Reply> { run(method, args) }.get()
+            executor.submit<Reply> { run(method, args, token) }.get()
         } catch (_: RejectedExecutionException) {
+            token?.let { pendingPrepares.remove(it) }
             fail(MinistryAudioException.INVALID_STATE, "Áudio indisponível.")
         }
     }
 
-    /** A close for the session whose MP3 is being decoded interrupts the decoding instead of waiting behind it. */
-    private fun cancelPreparing(args: Map<*, *>?) {
-        val id = args?.get(K_SESSION) as? String ?: return
-        preparing?.takeIf { it.id == id }?.cancelled = true
+    private fun register(method: String, args: Map<*, *>?): PrepareToken? {
+        if (method != M_PREPARE) return null
+        val id = args?.get(K_SESSION) as? String ?: return null
+        return PrepareToken(id).also { pendingPrepares.add(it) }
     }
 
-    private fun run(method: String, args: Map<*, *>?): Reply = try {
-        Reply(dispatch(method, args ?: emptyMap<String, Any?>()), null, null)
+    /** A close for a session still being prepared interrupts the decoding instead of waiting behind it. */
+    private fun cancelPreparing(args: Map<*, *>?) {
+        val id = args?.get(K_SESSION) as? String ?: return
+        pendingPrepares.forEach { if (it.id == id) it.cancelled = true }
+    }
+
+    private fun run(method: String, args: Map<*, *>?, token: PrepareToken? = null): Reply = try {
+        Reply(dispatch(method, args ?: emptyMap<String, Any?>(), token), null, null)
     } catch (e: MinistryAudioException) {
         fail(e.code, e.message ?: "Falha de áudio.")
     } catch (_: Throwable) {
         fail(INTERNAL, "Falha interna de áudio.")
+    } finally {
+        token?.let { pendingPrepares.remove(it) }
     }
 
     private fun fail(code: String, message: String) = Reply(null, code, message)
 
-    private fun dispatch(method: String, a: Map<*, *>): Map<String, Any?>? {
+    private fun dispatch(method: String, a: Map<*, *>, token: PrepareToken?): Map<String, Any?>? {
         synchronized(lock) { if (disposed) invalid("Áudio encerrado.") }
         return when (method) {
-            M_PREPARE -> prepare(a)
+            M_PREPARE -> prepare(a, token)
             M_CLOSE -> close(a)
             M_PLAY -> with(a, setOf(K_SESSION)) { it.engine.play() }
             M_PAUSE -> with(a, setOf(K_SESSION)) { it.engine.pause() }
@@ -162,7 +175,7 @@ class MinistryAudioBridge(
 
     // --------------------------------------------------------------- commands
 
-    private fun prepare(a: Map<*, *>): Map<String, Any?> {
+    private fun prepare(a: Map<*, *>, pending: PrepareToken?): Map<String, Any?> {
         val isMp3 = a.containsKey(K_CODEC)
         exactKeys(
             a,
@@ -216,19 +229,17 @@ class MinistryAudioBridge(
         var tempDir: File? = null
         if (alignment != null) {
             val support = mp3 ?: throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "MP3 indisponível.")
-            val token = PrepareToken(id)
-            preparing = token
+            val token = pending ?: PrepareToken(id)
             try {
-                support.calibration.requireVerified()
+                if (token.cancelled) throw MinistryAudioException(MinistryAudioException.CANCELLED, "Preparação cancelada.")
+                val decoderName = support.calibration.requireVerified { token.cancelled }
                 val dir = File(File(ministryRoot, TEMP_DIR), id)
                 tempDir = dir
-                decodeStems(support, directory, ministryRoot, dir, rate.toInt(), frames, alignment, token)
+                decodeStems(support, directory, ministryRoot, dir, rate.toInt(), frames, alignment, decoderName, token)
                 loadDir = dir
             } catch (e: Throwable) {
                 tempDir?.let { deleteTree(it) } // no engine holds these files yet
                 throw e
-            } finally {
-                preparing = null
             }
         }
 
@@ -303,6 +314,7 @@ class MinistryAudioBridge(
         rate: Int,
         frames: Long,
         alignment: Mp3Alignment,
+        decoderName: String,
         token: PrepareToken,
     ) {
         val files = MinistryAudioPaths.resolve(source, allowedRoot, "mp3")
@@ -316,7 +328,9 @@ class MinistryAudioBridge(
         for (stem in StemId.values()) {
             if (token.cancelled) throw MinistryAudioException(MinistryAudioException.CANCELLED, "Preparação cancelada.")
             val part = File(dir, "${stem.fileName}.part")
-            Mp3StemDecoder.decodeToWav(files.getValue(stem), part, rate, frames, alignment, support.decoder) { token.cancelled }
+            Mp3StemDecoder.decodeToWav(files.getValue(stem), part, rate, frames, alignment, support.decoder, decoderName) {
+                token.cancelled
+            }
             if (!part.renameTo(File(dir, stem.fileName))) {
                 part.delete()
                 throw MinistryAudioException(MinistryAudioException.WRITE_FAILED, "Falha ao gravar o áudio temporário.")
@@ -405,7 +419,7 @@ class MinistryAudioBridge(
      */
     fun dispose(): Boolean {
         synchronized(lock) { disposed = true }
-        preparing?.cancelled = true
+        pendingPrepares.forEach { it.cancelled = true }
         val result = try {
             executor.submit<Boolean> {
                 val s = synchronized(lock) { current }

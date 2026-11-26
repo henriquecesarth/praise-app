@@ -64,21 +64,29 @@ class AndroidMp3PcmDecoder(
         val info = MediaCodec.BufferInfo()
         var inDone = false
         var outDone = false
-        var announced = false
-        var scratch = ByteArray(16 * 1024)
+        var announced: Pair<Int, Int>? = null
+        val scratch = ByteArray(16 * 1024)
         var lastProgress = System.nanoTime()
 
-        fun announce(out: MediaFormat?) {
-            val rate = (out ?: input).intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: input.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: 0
-            val ch = (out ?: input).intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: input.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: 0
-            val enc = out?.intOrNull(MediaFormat.KEY_PCM_ENCODING)
+        // Called before the first PCM and again on every output format change, which must not alter the stream.
+        fun announce(out: MediaFormat) {
+            val rate = out.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: input.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: 0
+            val ch = out.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: input.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: 0
+            val enc = out.intOrNull(MediaFormat.KEY_PCM_ENCODING)
             if (enc != null && enc != AudioFormat.ENCODING_PCM_16BIT) {
                 throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "Saída PCM não é 16 bits.")
             }
+            val previous = announced
+            if (previous != null) {
+                if (previous != rate to ch) {
+                    throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "Formato PCM mudou no meio do áudio.")
+                }
+                return
+            }
             val delay = input.intOrNull(MediaFormat.KEY_ENCODER_DELAY)
             val padding = input.intOrNull(MediaFormat.KEY_ENCODER_PADDING)
-            onInfo(Mp3StreamInfo(rate, ch, delay != null || padding != null, delay, padding))
-            announced = true
+            onInfo(Mp3StreamInfo(rate, ch, delay != null || padding != null, delay, padding, codec.name))
+            announced = rate to ch
         }
 
         while (!outDone) {
@@ -103,7 +111,7 @@ class AndroidMp3PcmDecoder(
                 ox >= 0 -> {
                     lastProgress = System.nanoTime()
                     if (info.size > 0) {
-                        if (!announced) announce(null)
+                        if (announced == null) announce(codec.outputFormat)
                         val b = codec.getOutputBuffer(ox)!!
                         b.position(info.offset)
                         b.limit(info.offset + info.size)
@@ -120,7 +128,7 @@ class AndroidMp3PcmDecoder(
                 }
                 ox == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     lastProgress = System.nanoTime()
-                    if (!announced) announce(codec.outputFormat)
+                    announce(codec.outputFormat)
                 }
                 ox == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
             }
@@ -128,7 +136,7 @@ class AndroidMp3PcmDecoder(
                 throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "Decodificador MP3 sem progresso.")
             }
         }
-        if (!announced) throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "MP3 sem áudio.")
+        if (announced == null) throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "MP3 sem áudio.")
     }
 
     private fun MediaFormat.intOrNull(key: String): Int? = if (containsKey(key)) getInteger(key) else null

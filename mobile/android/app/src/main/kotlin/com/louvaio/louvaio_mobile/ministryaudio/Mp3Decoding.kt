@@ -41,6 +41,8 @@ data class Mp3StreamInfo(
     val platformGapless: Boolean,
     val platformDelayFrames: Int?,
     val platformPaddingFrames: Int?,
+    /** Name of the platform codec actually instantiated for this stream. */
+    val decoderName: String = "",
 )
 
 interface Mp3PcmDecoder {
@@ -92,8 +94,11 @@ object Mp3StemDecoder {
         frames: Long,
         alignment: Mp3Alignment,
         decoder: Mp3PcmDecoder,
+        /** When set, a stem decoded by any other codec is refused (it was not calibrated). */
+        expectedDecoder: String? = null,
         cancelled: () -> Boolean,
-    ) {
+    ): String {
+        var usedDecoder = ""
         if (!alignment.isConsistent(frames)) {
             throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "Alinhamento MP3 inconsistente.")
         }
@@ -119,6 +124,10 @@ object Mp3StemDecoder {
                     source,
                     onInfo = { info ->
                         validateInfo(info, sampleRate, alignment)
+                        if (expectedDecoder != null && info.decoderName != expectedDecoder) {
+                            throw MinistryAudioException(MinistryAudioException.MP3_ALIGNMENT_UNVERIFIED, "Decodificador não calibrado.")
+                        }
+                        usedDecoder = info.decoderName
                         manual[0] = !info.platformGapless
                         val skip = if (info.platformGapless) 0L else tagDelay(alignment).toLong() * BYTES_PER_FRAME
                         trimmerBox[0] = PcmTrimmer(skip, frames * BYTES_PER_FRAME, fileSink)
@@ -139,6 +148,7 @@ object Mp3StemDecoder {
                 throw MinistryAudioException(MinistryAudioException.MP3_LENGTH_MISMATCH, "Duração decodificada diverge do manifesto.")
             }
             ok = true
+            return usedDecoder
         } catch (e: MinistryAudioException) {
             throw e
         } catch (_: IOException) {
@@ -173,8 +183,9 @@ object Mp3StemDecoder {
             throw MinistryAudioException(MinistryAudioException.MP3_LENGTH_MISMATCH, "Duração decodificada diverge do manifesto.")
         }
         val ok = if (manual) {
-            delivered >= tagDelay(a).toLong() * BYTES_PER_FRAME + want &&
-                delivered <= a.mpegAudioFrames.toLong() * Mp3Alignment.SAMPLES_PER_FRAME * BYTES_PER_FRAME
+            // Exactly the untrimmed stream. Anything shorter may already have been trimmed by the platform without
+            // saying so, and dropping the tag delay again would cut the audio twice.
+            delivered == a.mpegAudioFrames.toLong() * Mp3Alignment.SAMPLES_PER_FRAME * BYTES_PER_FRAME
         } else {
             delivered == want // platform-trimmed output must be exact
         }

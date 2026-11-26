@@ -95,7 +95,7 @@ class MinistryAudioBridgeMp3Test {
         }
     }
 
-    private var gate: Mp3Gate = Mp3Gate { }
+    private var gate: Mp3Gate = Mp3Gate { "" }
     private var space: (File) -> Long = { Long.MAX_VALUE / 4 }
     private val decoder = FakeMp3Decoder(frames, alignment.encoderDelayFrames)
 
@@ -115,7 +115,7 @@ class MinistryAudioBridgeMp3Test {
                     sourceFactory = { TrackedSource(FileStemSource.open(it), stats) },
                 )
             },
-            if (withMp3) Mp3Support(decoder, { gate.requireVerified() }, { space(it) }) else null,
+            if (withMp3) Mp3Support(decoder, { cancelled -> gate.requireVerified(cancelled) }, { space(it) }) else null,
         )
         bridge = b
         return b
@@ -258,6 +258,44 @@ class MinistryAudioBridgeMp3Test {
         assertEquals(true, closed.get(5, TimeUnit.SECONDS).value!!["closed"])
         assertFalse(File(tempRoot(), sid).exists())
         assertEquals(listOf("stem_vocals.mp3", "stem_drums.mp3", "stem_bass.mp3"), decoder.decoded.toList()) // no stem after cancel
+    }
+
+    @Test
+    fun `closing during calibration cancels it before anything is decoded`() {
+        writeMp3s()
+        val reached = CountDownLatch(1)
+        gate = Mp3Gate { cancelled ->
+            reached.countDown()
+            val end = System.currentTimeMillis() + 5000
+            while (!cancelled() && System.currentTimeMillis() < end) Thread.sleep(5)
+            if (cancelled()) throw MinistryAudioException(MinistryAudioException.CANCELLED, "x")
+            ""
+        }
+        val b = newBridge()
+        val prepared = java.util.concurrent.CompletableFuture<MinistryAudioBridge.Reply>()
+        b.submit("prepare", args()) { prepared.complete(it) }
+        assertTrue(reached.await(5, TimeUnit.SECONDS))
+        b.submit("close", mapOf("sessionId" to sid)) { }
+        assertEquals(MinistryAudioException.CANCELLED, prepared.get(5, TimeUnit.SECONDS).errorCode)
+        assertTrue(decoder.decoded.isEmpty())
+    }
+
+    @Test
+    fun `a close that arrives while the prepare is still queued cancels it before it decodes`() {
+        writeMp3s()
+        val reached = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        decoder.onStem = { reached.countDown(); release.await(5, TimeUnit.SECONDS) }
+        val b = newBridge()
+        b.submit("prepare", args()) { }
+        assertTrue(reached.await(5, TimeUnit.SECONDS))
+        val queued = java.util.concurrent.CompletableFuture<MinistryAudioBridge.Reply>()
+        b.submit("prepare", args() + ("sessionId" to "session-0002")) { queued.complete(it) }
+        b.submit("close", mapOf("sessionId" to "session-0002")) { }
+        b.submit("close", mapOf("sessionId" to sid)) { }
+        release.countDown()
+        assertEquals(MinistryAudioException.CANCELLED, queued.get(5, TimeUnit.SECONDS).errorCode)
+        assertEquals(1, decoder.decoded.size)
     }
 
     @Test

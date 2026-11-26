@@ -75,9 +75,12 @@ final class MinistryAudioCachedRecording {
     this.revalidatedAtMillis,
     this.sampleRate,
     this.frames,
+    this._manifestDigest,
     this._onRelease,
     this._onDetach,
   );
+
+  final String _manifestDigest;
 
   final MinistryAudioLocalRecording recording;
   final bool fromCache;
@@ -196,6 +199,36 @@ final class MinistryAudioCache {
       );
     } finally {
       _tokens.remove(token);
+    }
+  }
+
+  /// Confirms online that access to an already released [cached] set is still
+  /// granted and its manifest unchanged. For callers whose preparation took long
+  /// after [ensureCached]. Fails closed; no disk access, no download.
+  Future<void> revalidate({
+    required String ministryId,
+    required MinistryAudioCachedRecording cached,
+  }) async {
+    final captured = _m._context();
+    if (_disposed ||
+        _m._disposed ||
+        captured == null ||
+        captured.ministryId != ministryId) {
+      throw _m._contextChanged();
+    }
+    final playback =
+        await _revalidate(ministryId, cached.recording.recordingId);
+    if (_disposed || _m._disposed || _m._context() != captured) {
+      throw _m._contextChanged();
+    }
+    final manifest = playback.manifest;
+    if (manifest.recordingId != cached.recording.recordingId ||
+        MinistryAudioDownloadManager._digestOfManifest(manifest) !=
+            cached._manifestDigest) {
+      throw const AppFailure(
+        message: 'A gravação mudou durante a preparação.',
+        code: MinistryAudioDownloadCodes.manifestChanged,
+      );
     }
   }
 
@@ -429,6 +462,7 @@ final class MinistryAudioCache {
       _m._now(),
       manifest.sampleRate,
       manifest.frames,
+      MinistryAudioDownloadManager._digestOfManifest(manifest),
       () {
         final n = (_leases[key] ?? 1) - 1;
         if (n <= 0) {

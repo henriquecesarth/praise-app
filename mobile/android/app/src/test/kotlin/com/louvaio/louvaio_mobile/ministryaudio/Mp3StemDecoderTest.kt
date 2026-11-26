@@ -64,7 +64,7 @@ class Mp3StemDecoderTest {
 
     private fun run(decoder: Mp3PcmDecoder, a: Mp3Alignment = alignment, cancelled: () -> Boolean = { false }): File {
         val dest = File(tmp.root, "stem_vocals.wav.part")
-        Mp3StemDecoder.decodeToWav(File(tmp.root, "in.mp3"), dest, rate, frames, a, decoder, cancelled)
+        Mp3StemDecoder.decodeToWav(File(tmp.root, "in.mp3"), dest, rate, frames, a, decoder, cancelled = cancelled)
         return dest
     }
 
@@ -121,6 +121,23 @@ class Mp3StemDecoderTest {
     @Test
     fun `non gapless output longer than the MPEG frames is refused`() {
         assertEquals(MinistryAudioException.MP3_LENGTH_MISMATCH, code { run(Fake(plainInfo, pcm(0, mpeg * 1152L + 1))) })
+    }
+
+    @Test
+    fun `a platform that trims without saying so is refused instead of being trimmed twice`() {
+        // delay already removed, padding still there: long enough to satisfy a mere range check
+        assertEquals(MinistryAudioException.MP3_LENGTH_MISMATCH, code { run(Fake(plainInfo, pcm(576, mpeg * 1152L - 576))) })
+    }
+
+    @Test
+    fun `a stem decoded by a codec other than the calibrated one is refused`() {
+        val dest = File(tmp.root, "stem_vocals.wav.part")
+        val other = Fake(gaplessInfo.copy(decoderName = "c2.other"), pcm(0, frames))
+        assertEquals(
+            MinistryAudioException.MP3_ALIGNMENT_UNVERIFIED,
+            code { Mp3StemDecoder.decodeToWav(File(tmp.root, "in.mp3"), dest, rate, frames, alignment, other, "c2.calibrated") { false } },
+        )
+        assertFalse(dest.exists())
     }
 
     @Test

@@ -212,6 +212,11 @@ class MinistryAudioPlaybackController
         mp3Alignment: cached.recording.mp3Alignment,
       );
       if (_stale(epoch, captured)) throw _contextFailure();
+      if (cached.recording.mp3Alignment != null) {
+        // Decoding takes minutes: access may have been revoked meanwhile.
+        await _cache.revalidate(ministryId: captured.ministryId, cached: cached);
+        if (_stale(epoch, captured)) throw _contextFailure();
+      }
       _prepared = true;
       _set(state.copyWith(
         phase: MinistryAudioPlaybackPhase.ready,

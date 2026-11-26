@@ -54,9 +54,10 @@ class Mp3PlaybackDeviceTest {
         override fun flush() {}
         override fun release() {}
         override fun headPositionFrames() = head
-        fun left(): ShortArray = synchronized(this) {
+        fun left(): ShortArray = channel(0)
+        fun channel(c: Int): ShortArray = synchronized(this) {
             val b = data.toByteArray()
-            ShortArray(b.size / 4) { ((b[it * 4 + 1].toInt() shl 8) or (b[it * 4].toInt() and 0xFF)).toShort() }
+            ShortArray(b.size / 4) { ((b[it * 4 + c * 2 + 1].toInt() shl 8) or (b[it * 4 + c * 2].toInt() and 0xFF)).toShort() }
         }
     }
 
@@ -68,14 +69,18 @@ class Mp3PlaybackDeviceTest {
         "ministry_audio_library/v1/users/${sha("louvaio-ministry-audio-user-v1:", user)}/ministries/${sha("louvaio-ministry-audio-ministry-v1:", ministry)}",
     )
 
+    private fun writeStems(asset: (Int) -> String) {
+        val dir = File(ministryRoot(), "recordings/$rec").apply { mkdirs() }
+        StemId.values().forEachIndexed { i, s ->
+            File(dir, "stem_${s.wireName}.mp3").writeBytes(inst.context.assets.open("mp3-alignment/${asset(i)}").readBytes())
+        }
+    }
+
     @Before
     fun setUp() {
         filesDir = File(inst.targetContext.cacheDir, "s4play").apply { deleteRecursively(); mkdirs() }
-        val dir = File(ministryRoot(), "recordings/$rec").apply { mkdirs() }
-        StemId.values().forEachIndexed { i, s ->
-            val asset = if (i % 2 == 0) "impulse_lame_44100.mp3" else "impulse_lavc_44100.mp3"
-            File(dir, "stem_${s.wireName}.mp3").writeBytes(inst.context.assets.open("mp3-alignment/$asset").readBytes())
-        }
+        // Mixed profiles exercise the MIXER only; the server contract (homogeneous sets) is covered separately below.
+        writeStems { if (it % 2 == 0) "impulse_lame_44100.mp3" else "impulse_lavc_44100.mp3" }
         val ctx = inst.targetContext
         bridge = MinistryAudioBridge(
             filesDir,
@@ -162,6 +167,35 @@ class Mp3PlaybackDeviceTest {
         mixOffs.forEach { assertTrue("mix offset $it", abs(it) <= 1) }
         Log.i(tag, "offsets per stem (start,middle,end)=$offsetsByStem mix=$mixOffs")
     }
+
+    /** Six stems of ONE profile and rate, for the four combinations the backend can publish. */
+    @Test
+    fun homogeneousSetsOfBothProfilesAndRatesLandOnBothChannels() {
+        for ((profile, r, padding, mpeg) in listOf(
+            Combo("lame", 44_100, 875, 40), Combo("lavc", 44_100, 875, 40),
+            Combo("lame", 48_000, 431, 43), Combo("lavc", 48_000, 431, 43),
+        )) {
+            writeStems { "impulse_${profile}_$r.mp3" }
+            val a = args + mapOf("sampleRate" to r, "frames" to r.toLong(), "paddingFrames" to padding, "mpegAudioFrames" to mpeg)
+            val reply = bridge!!.callBlocking("prepare", a)
+            assertTrue("$profile $r ${reply.errorCode}", reply.isOk)
+            cmd("setMasterVolume", mapOf("value" to 0.15))
+            val before = captures.size
+            cmd("play")
+            assertTrue(waitUntil { state() == "completed" })
+            val centres = if (r == 44_100) bursts else intArrayOf(3000, 24_000, 45_000)
+            for (ch in 0..1) {
+                val out = captures[before].channel(ch)
+                assertEquals(r, out.size)
+                val offs = centres.map { c -> val (p, amp) = peakAt(out, c); assertTrue("amp $amp", amp > 3_000); p - c }
+                Log.i(tag, "homogeneous $profile $r ch=$ch offsets=$offs")
+                offs.forEach { assertTrue("$profile $r ch=$ch offset $it", abs(it) <= 1) }
+            }
+            cmd("close")
+        }
+    }
+
+    private data class Combo(val profile: String, val rate: Int, val padding: Int, val mpeg: Int)
 
     @Test
     fun seekPauseResumeKeepAllStemsAligned() {

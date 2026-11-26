@@ -273,6 +273,40 @@ void main() {
     expect(leases(), 0);
   });
 
+  for (final status in [401, 403, 404]) {
+    test('access lost ($status) while an MP3 set was being decoded: never ready, closed, lease released', () async {
+      repo.byId[idA] = mp3Playback(id: idA);
+      transport = FakeTransport(behavior: (s, a, t) => Stream.value(mp3Payload(s.name)));
+      final c = build();
+      port.prepareGate = Completer<void>();
+      final opening = c.open(idA);
+      opening.ignore();
+      await _until(() => port.calls.contains('prepare:session-1'));
+      repo.error = AppFailure(message: 'Acesso negado.', statusCode: status);
+      port.prepareGate!.complete();
+      await expectLater(opening, throwsA(isA<AppFailure>().having((f) => f.statusCode, 'statusCode', status)));
+      expect(c.state.phase, MinistryAudioPlaybackPhase.error);
+      expect(port.calls, contains('close:session-1'));
+      expect(leases(), 0);
+      await expectLater(c.play(), throwsA(isA<AppFailure>()));
+      expect(port.calls.where((x) => x.startsWith('play')), isEmpty);
+    });
+  }
+
+  test('a manifest republished while an MP3 set was being decoded is refused', () async {
+    repo.byId[idA] = mp3Playback(id: idA);
+    transport = FakeTransport(behavior: (s, a, t) => Stream.value(mp3Payload(s.name)));
+    final c = build();
+    port.prepareGate = Completer<void>();
+    final opening = c.open(idA);
+    opening.ignore();
+    await _until(() => port.calls.contains('prepare:session-1'));
+    repo.byId[idA] = playbackFor(idN(1));
+    port.prepareGate!.complete();
+    await expectLater(opening, throwsA(code(MinistryAudioDownloadCodes.manifestChanged)));
+    expect(leases(), 0);
+  });
+
   test('a WAV set never sends an alignment', () async {
     final c = build();
     await c.open(idN(0));
