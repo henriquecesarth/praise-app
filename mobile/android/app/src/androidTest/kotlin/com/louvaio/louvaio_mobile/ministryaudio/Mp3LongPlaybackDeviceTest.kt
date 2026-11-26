@@ -267,6 +267,54 @@ class Mp3LongPlaybackDeviceTest {
         Log.i(tag, "seek playToFirstBlockMs=$latencies targets=$targets bitExact=true")
     }
 
+    /** Close in the middle of a real parallel decode, many times: prompt, nothing left behind, codecs reusable. */
+    @Test
+    fun repeatedCancellationOfParallelDecodingLeavesNothing() {
+        setUpStems()
+        newBridge(silentFactory)
+        val temp = File(ministryRoot(), "pcm_tmp")
+        fun decodeThreads() = Thread.getAllStackTraces().keys.count { it.name.startsWith(MinistryAudioBridge.DECODE_THREAD) && it.isAlive }
+        fun openFiles() = File("/proc/self/fd").list()!!.size
+        fun kinds() = File("/proc/self/fd").listFiles()!!
+            .map { runCatching { android.system.Os.readlink(it.path) }.getOrDefault("?") }
+            .groupingBy { it.replace(Regex("\\[\\d+]|\\d+"), "#") }.eachCount()
+        val latencies = ArrayList<Long>()
+        val fds = ArrayList<Int>()
+        var early = emptyMap<String, Int>()
+        for (round in 0 until 32) {
+            val prepared = java.util.concurrent.CompletableFuture<MinistryAudioBridge.Reply>()
+            bridge!!.submit("prepare", args()) { prepared.complete(it) }
+            assertTrue(waitUntil(10_000) { decodeThreads() == 3 && (File(temp, sid).listFiles()?.size ?: 0) >= 3 })
+            Thread.sleep(150L * (round % 8))
+            val t0 = SystemClock.elapsedRealtime()
+            bridge!!.submit("close", mapOf("sessionId" to sid)) { }
+            val reply = prepared.get(10, java.util.concurrent.TimeUnit.SECONDS)
+            latencies.add(SystemClock.elapsedRealtime() - t0)
+            assertEquals(MinistryAudioException.CANCELLED, reply.errorCode)
+            assertEquals(0, decodeThreads())
+            assertTrue(!File(temp, sid).exists())
+            if (round % 4 == 3) {
+                // Codec client objects hold descriptors until finalized.
+                Runtime.getRuntime().gc()
+                System.runFinalization()
+                Thread.sleep(500)
+                fds.add(openFiles())
+                if (round == 7) early = kinds()
+            }
+        }
+        val late = kinds()
+        Log.i(tag, "cancel fdEvery4Rounds=$fds")
+        Log.i(tag, "cancel fdGrowthByKind=${(late.keys + early.keys).associateWith { (late[it] ?: 0) - (early[it] ?: 0) }.filterValues { it != 0 }}")
+        val ok = bridge!!.callBlocking("prepare", args())
+        assertTrue(ok.errorCode, ok.isOk)
+        cmd("close")
+        assertTrue(!File(temp, sid).exists())
+        Log.i(tag, "cancel latencyMs=$latencies decodeThreads=${decodeThreads()}")
+        // The count swings with finalization; a per-round leak would lift the FLOOR of the later rounds.
+        val half = fds.size / 2
+        assertTrue("descriptors keep growing: $fds", fds.drop(half).minOrNull()!! <= fds.take(half).minOrNull()!! + 12)
+    }
+
     private class RealTrack(val track: AudioTrack) : StereoTrackHandle {
         @Volatile var underruns = 0
         @Volatile var firstWriteNs = 0L
