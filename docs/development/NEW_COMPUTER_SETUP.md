@@ -19,7 +19,7 @@ Este guia contém todos os passos e comandos prontos para copiar no **Windows Po
 | **Java (JDK)** | `JDK 17` (Eclipse Temurin / Android Studio JBR) | `java -version` |
 | **Android SDK** | API 34 / 35 + Build-Tools + Platform-Tools (`adb`) | `flutter doctor -v` |
 | **Obsidian** | Última versão estável (opcional, para leitura da base `docs/`) | Interface Desktop |
-| **Codex CLI / Gemini (Antigravity)** | Última versão do CLI | `codex --version` / `agy --version` |
+| **Claude Code** (Gemini opcional) | Última versão | `claude --version` |
 
 ---
 
@@ -196,22 +196,13 @@ flutter run
 1. Abra o **Obsidian**.
 2. Clique em **Open folder as vault** (Abrir pasta como cofre).
 3. Selecione a pasta `<raiz-do-clone>/docs` (ou a própria raiz `<raiz-do-clone>`).
-4. O ponto de entrada da documentação é `docs/00-PAINEL.md` e o estado de engenharia atual está em `docs/development/CURRENT_PROJECT_STATE.md`.
+4. O estado de engenharia atual está em `docs/development/CURRENT_PROJECT_STATE.md`.
 
 ---
 
-## 8. Como Configurar o Codex CLI e o Gemini / Antigravity
+## 8. Como Configurar o Claude Code
 
-O repositório já inclui toda a configuração multi-agente versionada:
-- Regras globais: `AGENTS.md` e `GEMINI.md` (na raiz do repositório).
-- Configuração nativa do Codex CLI: `.codex/config.toml` e os 6 perfis em `.codex/agents/*.toml`.
-- Prompts canônicos dos 6 papéis: `.agents/agents/*/agent.md` (`product-architect`, `feature-engineer`, `feature-reviewer`, `billing-engineer`, `billing-reviewer`, `sandbox-auditor`).
-- Política de workflow multi-agente: `docs/development/multi-agent-workflow.md`.
-
-Para iniciar uma sessão no novo computador:
-1. Abra o terminal na raiz do clone (`louvaio`).
-2. Certifique-se de estar na branch `handoff/louvaio-workstation-migration`.
-3. Inicie o **Codex CLI** (`codex`) ou o **Gemini / Antigravity** apontando para o workspace `louvaio` e cole o prompt curto de retomada disponível em `docs/development/AI_AGENT_HANDOFF.md`.
+Regras em `AGENTS.md` (importado por `CLAUDE.md`) e subagentes em `.claude/agents/`. Na raiz do clone, execute `claude` na branch indicada em `docs/development/CURRENT_PROJECT_STATE.md`.
 
 ---
 

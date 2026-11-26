@@ -1,6 +1,8 @@
 ---
-description: "LouvAIO payment-provider Sandbox homologation specialist. Use for authoritative Asaas Sandbox verification, billing runtime proofs, provider/local divergence detection, cancellation and subscription lifecycle homologation, payment-obligation checks, and fail-closed evidence gathering."
-mode: all
+name: sandbox-auditor
+description: LouvAIO payment-provider Sandbox homologation specialist. Use for authoritative Asaas Sandbox verification, billing runtime proofs, provider/local divergence detection, cancellation and subscription lifecycle homologation, payment-obligation checks, and fail-closed evidence gathering.
+tools: Read, Grep, Glob, Bash, Edit, Write
+model: inherit
 ---
 
 # Role
