@@ -95,6 +95,8 @@ class MinistryAudioBridgeMp3Test {
         }
     }
 
+    /** 1 = the sequential reference, so order assertions are deterministic; the parallel default has its own tests. */
+    private var parallel = 1
     private var gate: Mp3Gate = Mp3Gate { "" }
     private var space: (File) -> Long = { Long.MAX_VALUE / 4 }
     private val decoder = FakeMp3Decoder(frames, alignment.encoderDelayFrames)
@@ -115,7 +117,7 @@ class MinistryAudioBridgeMp3Test {
                     sourceFactory = { TrackedSource(FileStemSource.open(it), stats) },
                 )
             },
-            if (withMp3) Mp3Support(decoder, { cancelled -> gate.requireVerified(cancelled) }, { space(it) }) else null,
+            if (withMp3) Mp3Support(decoder, { cancelled -> gate.requireVerified(cancelled) }, { space(it) }, parallel) else null,
         )
         bridge = b
         return b
@@ -296,6 +298,64 @@ class MinistryAudioBridgeMp3Test {
         release.countDown()
         assertEquals(MinistryAudioException.CANCELLED, queued.get(5, TimeUnit.SECONDS).errorCode)
         assertEquals(1, decoder.decoded.size)
+    }
+
+    @Test
+    fun `parallel decoding is bounded and exposes the same six complete stems`() {
+        writeMp3s()
+        parallel = Mp3Support.DEFAULT_PARALLEL_STEMS
+        val three = CountDownLatch(3)
+        decoder.onStem = { three.countDown(); three.await(5, TimeUnit.SECONDS) }
+        val b = newBridge()
+        val r = b.callBlocking("prepare", args())
+        assertTrue(r.errorCode, r.isOk)
+        assertEquals(3, decoder.maxConcurrent.get())
+        assertEquals(6, decoder.decoded.size)
+        val tempDir = File(tempRoot(), sid)
+        assertEquals(StemId.values().map { it.fileName }.sorted(), tempDir.list()!!.sorted())
+        val k = StemId.OTHER.ordinal
+        val f = File(tempDir, StemId.OTHER.fileName).readBytes()
+        assertEquals(100 * k + 5, (f[44 + 5 * 4 + 1].toInt() shl 8) or (f[44 + 5 * 4].toInt() and 0xFF))
+    }
+
+    @Test
+    fun `a failure or a close during parallel decoding replies only after every decoder has stopped`() {
+        for (cancel in listOf(false, true)) {
+            writeMp3s()
+            parallel = 3
+            decoder.decoded.clear()
+            val reached = CountDownLatch(3)
+            val release = CountDownLatch(1)
+            val finished = AtomicInteger()
+            decoder.onStem = { name ->
+                reached.countDown()
+                if (!cancel && name == "stem_vocals.mp3") {
+                    reached.await(5, TimeUnit.SECONDS)
+                    throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "x")
+                }
+                release.await(5, TimeUnit.SECONDS)
+                finished.incrementAndGet()
+            }
+            val b = newBridge()
+            val prepared = java.util.concurrent.CompletableFuture<MinistryAudioBridge.Reply>()
+            b.submit("prepare", args()) { prepared.complete(it) }
+            assertTrue(reached.await(5, TimeUnit.SECONDS))
+            if (cancel) b.submit("close", mapOf("sessionId" to sid)) { }
+            Thread.sleep(100)
+            assertFalse("replied while decoders were still running", prepared.isDone)
+            assertTrue(File(tempRoot(), sid).exists())
+            release.countDown()
+            val reply = prepared.get(5, TimeUnit.SECONDS)
+            assertEquals(
+                if (cancel) MinistryAudioException.CANCELLED else MinistryAudioException.MP3_DECODE_FAILED,
+                reply.errorCode,
+            )
+            assertEquals(0, decoder.concurrent.get())
+            assertEquals(3, decoder.decoded.size) // nothing new was started
+            assertEquals(if (cancel) 3 else 2, finished.get())
+            assertFalse(File(tempRoot(), sid).exists())
+            b.dispose()
+        }
     }
 
     @Test

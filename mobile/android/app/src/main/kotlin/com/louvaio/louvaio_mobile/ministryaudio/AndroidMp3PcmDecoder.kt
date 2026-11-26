@@ -4,6 +4,7 @@ import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.os.Build
 import java.io.File
 
 /**
@@ -12,9 +13,16 @@ import java.io.File
  * reports; the trimming/length policy lives in [Mp3StemDecoder] and is verified on the device by [Mp3DecoderCalibration].
  */
 class AndroidMp3PcmDecoder(
-    private val dequeueTimeoutUs: Long = 10_000L,
+    private val dequeueTimeoutUs: Long = 2_000L,
     private val stallLimitMs: Long = 15_000L,
+    /**
+     * MPEG frames handed to the codec per input buffer. The cost measured on the TB-J616F is the round trip per buffer,
+     * not the decoding: 1 frame/buffer ran at ~8x realtime, 64 at ~80-100x, with identical PCM. 1 = reference pump.
+     */
+    private val framesPerBuffer: Int = DEFAULT_FRAMES_PER_BUFFER,
 ) : Mp3PcmDecoder {
+    // MediaExtractor.getSampleSize (needed to pack safely) is API 28; older devices keep one frame per buffer.
+    private val pack = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) framesPerBuffer.coerceAtLeast(1) else 1
 
     override fun decode(file: File, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean) {
         val extractor = MediaExtractor()
@@ -33,6 +41,7 @@ class AndroidMp3PcmDecoder(
                 throw MinistryAudioException(MinistryAudioException.MP3_UNSUPPORTED, "Formato de áudio não é MP3.")
             }
             extractor.selectTrack(0)
+            if (pack > 1) input.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, pack * MAX_MPEG_FRAME_BYTES)
             codec = try {
                 MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_MPEG).also {
                     it.configure(input, null, null, 0)
@@ -89,24 +98,29 @@ class AndroidMp3PcmDecoder(
             announced = rate to ch
         }
 
+        // Neither side is waited for while the other has work; only an idle pass blocks on the output.
+        var idle = false
         while (!outDone) {
             if (cancelled()) throw MinistryAudioException(MinistryAudioException.CANCELLED, "Preparação cancelada.")
+            var fed = false
             if (!inDone) {
-                val ix = codec.dequeueInputBuffer(dequeueTimeoutUs)
+                val ix = codec.dequeueInputBuffer(0)
                 if (ix >= 0) {
                     val buf = codec.getInputBuffer(ix)!!
-                    val n = extractor.readSampleData(buf, 0)
+                    val pts = extractor.sampleTime
+                    val n = fill(extractor, buf)
                     if (n < 0) {
                         codec.queueInputBuffer(ix, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                         inDone = true
                     } else {
-                        codec.queueInputBuffer(ix, 0, n, extractor.sampleTime, 0)
-                        extractor.advance()
+                        codec.queueInputBuffer(ix, 0, n, pts, 0)
                     }
+                    fed = true
                     lastProgress = System.nanoTime()
                 }
             }
-            val ox = codec.dequeueOutputBuffer(info, dequeueTimeoutUs)
+            val ox = codec.dequeueOutputBuffer(info, if (idle) dequeueTimeoutUs else 0L)
+            idle = !fed && ox == MediaCodec.INFO_TRY_AGAIN_LATER
             when {
                 ox >= 0 -> {
                     lastProgress = System.nanoTime()
@@ -139,5 +153,28 @@ class AndroidMp3PcmDecoder(
         if (announced == null) throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "MP3 sem áudio.")
     }
 
+    /** Puts up to [pack] whole MPEG frames into [buf]; returns the bytes written, or -1 at the end of the stream. */
+    private fun fill(extractor: MediaExtractor, buf: java.nio.ByteBuffer): Int {
+        var total = 0
+        for (i in 0 until pack) {
+            if (i > 0) {
+                val next = extractor.sampleSize
+                if (next < 0 || next > buf.capacity() - total) break
+            }
+            val n = extractor.readSampleData(buf, total)
+            if (n < 0) break
+            total += n
+            extractor.advance()
+        }
+        return if (total == 0) -1 else total
+    }
+
     private fun MediaFormat.intOrNull(key: String): Int? = if (containsKey(key)) getInteger(key) else null
+
+    companion object {
+        const val DEFAULT_FRAMES_PER_BUFFER = 64
+
+        /** Above the largest MPEG-1 Layer III frame this app accepts (CBR 256 at 44.1 kHz: 836 bytes). */
+        private const val MAX_MPEG_FRAME_BYTES = 1045
+    }
 }

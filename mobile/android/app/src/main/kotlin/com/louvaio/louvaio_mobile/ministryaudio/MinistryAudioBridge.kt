@@ -16,7 +16,13 @@ class Mp3Support(
     val decoder: Mp3PcmDecoder,
     val calibration: Mp3Gate,
     val usableSpace: (File) -> Long = { it.usableSpace },
-)
+    /** Stems decoded at the same time. 3 was measured on the TB-J616F; never one codec per stem. 1 = reference. */
+    val parallelStems: Int = DEFAULT_PARALLEL_STEMS,
+) {
+    companion object {
+        const val DEFAULT_PARALLEL_STEMS = 3
+    }
+}
 
 /**
  * Typed command surface between Flutter and [MinistryAudioEngine].
@@ -303,8 +309,10 @@ class MinistryAudioBridge(
     // ------------------------------------------------------- MP3 decoded PCM
 
     /**
-     * Decodes the six stems one at a time into [dir]/stem_<id>.wav. Each stem is written as `.part` and renamed only
-     * when complete and exactly sized, so the engine never sees a partial set. Reserves space first.
+     * Decodes the six stems, at most [Mp3Support.parallelStems] at a time, into [dir]/stem_<id>.wav. Each stem is
+     * written as `.part` and renamed only when complete and exactly sized, so the engine never sees a partial set.
+     * Reserves space first. Returns or throws ONLY after every decoding thread has finished: the caller deletes files
+     * and (in Dart) releases the cache lease on that guarantee.
      */
     private fun decodeStems(
         support: Mp3Support,
@@ -325,17 +333,52 @@ class MinistryAudioBridge(
         if (support.usableSpace(dir) < needed) {
             throw MinistryAudioException(MinistryAudioException.INSUFFICIENT_SPACE, "Espaço insuficiente para preparar o áudio.")
         }
-        for (stem in StemId.values()) {
-            if (token.cancelled) throw MinistryAudioException(MinistryAudioException.CANCELLED, "Preparação cancelada.")
-            val part = File(dir, "${stem.fileName}.part")
-            Mp3StemDecoder.decodeToWav(files.getValue(stem), part, rate, frames, alignment, support.decoder, decoderName) {
-                token.cancelled
-            }
-            if (!part.renameTo(File(dir, stem.fileName))) {
-                part.delete()
-                throw MinistryAudioException(MinistryAudioException.WRITE_FAILED, "Falha ao gravar o áudio temporário.")
+        val queue = java.util.concurrent.ConcurrentLinkedQueue(StemId.values().toList())
+        // The first real failure wins and stops the other workers; their CANCELLED is a consequence, not the cause.
+        val failure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+        val stop = { token.cancelled || failure.get() != null }
+        val work = Runnable {
+            try {
+                while (!stop()) {
+                    val stem = queue.poll() ?: break
+                    val part = File(dir, "${stem.fileName}.part")
+                    Mp3StemDecoder.decodeToWav(files.getValue(stem), part, rate, frames, alignment, support.decoder, decoderName, stop)
+                    if (!part.renameTo(File(dir, stem.fileName))) {
+                        part.delete()
+                        throw MinistryAudioException(MinistryAudioException.WRITE_FAILED, "Falha ao gravar o áudio temporário.")
+                    }
+                }
+            } catch (e: Throwable) {
+                failure.compareAndSet(null, e)
             }
         }
+        val workers = ArrayList<Thread>()
+        try {
+            repeat(support.parallelStems.coerceIn(1, StemId.values().size)) { i ->
+                workers.add(Thread(work, "$DECODE_THREAD-$i").apply { isDaemon = true; start() })
+            }
+        } catch (e: Throwable) {
+            failure.compareAndSet(null, e) // the workers already started must stop before anything is deleted
+        } finally {
+            joinAll(workers)
+        }
+        if (token.cancelled) throw MinistryAudioException(MinistryAudioException.CANCELLED, "Preparação cancelada.")
+        failure.get()?.let { throw it }
+    }
+
+    /** Unconditional join: an interrupt is remembered, never a reason to walk away from a live decoder. */
+    private fun joinAll(threads: List<Thread>) {
+        var interrupted = false
+        for (t in threads) {
+            while (t.isAlive) {
+                try {
+                    t.join()
+                } catch (_: InterruptedException) {
+                    interrupted = true
+                }
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt()
     }
 
     /** Removes decoded PCM of this ministry (and, once per process, of every account/ministry we own). */
@@ -487,6 +530,7 @@ class MinistryAudioBridge(
     companion object {
         const val COMMAND_THREAD = "ministry-audio-command"
         const val INTERNAL = "AUDIO_NATIVE_INTERNAL"
+        const val DECODE_THREAD = "ministry-audio-decode"
 
         const val M_PREPARE = "prepare"
         const val M_CLOSE = "close"
