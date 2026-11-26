@@ -2,6 +2,8 @@
 
 Estado: **experimental, desligada por padrão**. `MP3_RELEASE_GATE = BLOCKED`, `PRODUCTION_DEPLOY_GATE = BLOCKED`. O backend continua sem abrir o codec nas rotas normais; nada nesta fase acessa o R2 real.
 
+> O S4.1 ([`m22s41-android-mp3-performance.md`](m22s41-android-mp3-performance.md)) mudou partes deste registro: calibração com quatro fixtures e dois canais, regra de comprimento exato no caminho sem gapless, decodificação empacotada de três stems em paralelo e revalidação online após a preparação. As medidas abaixo são as do S4 (histórico).
+
 ## S4-A — contrato e armazenamento (Dart)
 
 - Flag de build `LOUVAIO_EXPERIMENTAL_MP3_AUDIO` (`MinistryAudioFeatureFlags.experimentalMp3`, padrão `false`), além do flag já existente da biblioteca (que em produção é sempre desligado). Sem a flag, MP3 e `schemaVersion` 2 continuam sendo recusados com os mesmos códigos (`AUDIO_CODEC_UNSUPPORTED` / `AUDIO_SCHEMA_UNSUPPORTED`).

@@ -82,6 +82,7 @@ class Mp3IncrementalPrototypeTest {
      * n is exactly raw sample startFrame*1152+n of the stream. [sink] may throw [Stop].
      */
     private fun decodeRaw(file: File, index: LongArray, startFrame: Int, sink: PcmSink) {
+        assumeTrue("packing needs API 28", android.os.Build.VERSION.SDK_INT >= 28)
         val ex = MediaExtractor()
         var codec: MediaCodec? = null
         val input = java.io.FileInputStream(file)

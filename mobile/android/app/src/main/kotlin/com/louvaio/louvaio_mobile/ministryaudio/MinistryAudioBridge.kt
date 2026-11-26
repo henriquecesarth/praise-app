@@ -209,6 +209,9 @@ class MinistryAudioBridge(
             alignment = al
         }
 
+        // A prepare cancelled while it was still queued must not replace (and so close) the current session.
+        if (pending?.cancelled == true) throw MinistryAudioException(MinistryAudioException.CANCELLED, "Preparação cancelada.")
+
         // A previous session must be CONFIRMED closed (worker gone, files
         // closed) before anything new is opened.
         val previous = synchronized(lock) { current }
@@ -333,6 +336,31 @@ class MinistryAudioBridge(
         if (support.usableSpace(dir) < needed) {
             throw MinistryAudioException(MinistryAudioException.INSUFFICIENT_SPACE, "Espaço insuficiente para preparar o áudio.")
         }
+        fun attempt(parallel: Int) =
+            decodeAttempt(support, files, dir, rate, frames, alignment, decoderName, token, parallel)
+        val parallel = support.parallelStems.coerceIn(1, StemId.values().size)
+        try {
+            attempt(parallel)
+        } catch (e: MinistryAudioException) {
+            // The calibration opens one codec at a time: a device may not have resources for several. Every decoder
+            // of the failed attempt has already stopped, so retry once, sequentially, from an empty directory.
+            if (parallel == 1 || e.code != MinistryAudioException.MP3_DECODE_FAILED || token.cancelled) throw e
+            dir.listFiles()?.forEach { deleteTree(it) }
+            attempt(1)
+        }
+    }
+
+    private fun decodeAttempt(
+        support: Mp3Support,
+        files: Map<StemId, File>,
+        dir: File,
+        rate: Int,
+        frames: Long,
+        alignment: Mp3Alignment,
+        decoderName: String,
+        token: PrepareToken,
+        parallel: Int,
+    ) {
         val queue = java.util.concurrent.ConcurrentLinkedQueue(StemId.values().toList())
         // The first real failure wins and stops the other workers; their CANCELLED is a consequence, not the cause.
         val failure = java.util.concurrent.atomic.AtomicReference<Throwable>()
@@ -354,7 +382,7 @@ class MinistryAudioBridge(
         }
         val workers = ArrayList<Thread>()
         try {
-            repeat(support.parallelStems.coerceIn(1, StemId.values().size)) { i ->
+            repeat(parallel) { i ->
                 workers.add(Thread(work, "$DECODE_THREAD-$i").apply { isDaemon = true; start() })
             }
         } catch (e: Throwable) {

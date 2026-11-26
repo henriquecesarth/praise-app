@@ -71,11 +71,15 @@ class MinistryAudioBridgeMp3Test {
         var onStem: (String) -> Unit = {}
         var failOn: String? = null
 
+        /** The bridge's own stop predicate, as last handed to a decoder. */
+        @Volatile var stopRequested: () -> Boolean = { false }
+
         override fun decode(file: File, onInfo: (Mp3StreamInfo) -> Unit, sink: PcmSink, cancelled: () -> Boolean) {
             val n = concurrent.incrementAndGet()
             maxConcurrent.updateAndGet { maxOf(it, n) }
             try {
                 decoded.add(file.name)
+                stopRequested = cancelled
                 onStem(file.name)
                 if (failOn == file.name) throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "x")
                 onInfo(Mp3StreamInfo(44_100, 2, false, null, null))
@@ -341,7 +345,9 @@ class MinistryAudioBridgeMp3Test {
             b.submit("prepare", args()) { prepared.complete(it) }
             assertTrue(reached.await(5, TimeUnit.SECONDS))
             if (cancel) b.submit("close", mapOf("sessionId" to sid)) { }
-            Thread.sleep(100)
+            // The bridge must have registered the stop before the blocked workers are let go.
+            assertTrue(waitUntil(5000) { decoder.stopRequested() })
+            Thread.sleep(50)
             assertFalse("replied while decoders were still running", prepared.isDone)
             assertTrue(File(tempRoot(), sid).exists())
             release.countDown()
@@ -351,11 +357,51 @@ class MinistryAudioBridgeMp3Test {
                 reply.errorCode,
             )
             assertEquals(0, decoder.concurrent.get())
-            assertEquals(3, decoder.decoded.size) // nothing new was started
+            // nothing new was started; a failure then gets its single sequential retry, which fails on the first stem
+            assertEquals(if (cancel) 3 else 4, decoder.decoded.size)
             assertEquals(if (cancel) 3 else 2, finished.get())
             assertFalse(File(tempRoot(), sid).exists())
             b.dispose()
         }
+    }
+
+    @Test
+    fun `a device that cannot run several decoders at once falls back to the sequential decode`() {
+        writeMp3s()
+        parallel = 3
+        val two = CountDownLatch(2)
+        decoder.onStem = {
+            if (decoder.concurrent.get() > 1) {
+                two.countDown()
+                two.await(1, TimeUnit.SECONDS)
+                throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "no codec resources")
+            }
+            if (decoder.decoded.size <= 3) two.await(1, TimeUnit.SECONDS)
+        }
+        val b = newBridge()
+        val r = b.callBlocking("prepare", args())
+        assertTrue(r.errorCode, r.isOk)
+        assertEquals(StemId.values().map { it.fileName }.sorted(), File(tempRoot(), sid).list()!!.sorted())
+    }
+
+    @Test
+    fun `cancelling a queued prepare leaves the current session alone`() {
+        writeMp3s()
+        val reached = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        decoder.onStem = { reached.countDown(); release.await(5, TimeUnit.SECONDS) }
+        val b = newBridge()
+        val first = java.util.concurrent.CompletableFuture<MinistryAudioBridge.Reply>()
+        b.submit("prepare", args()) { first.complete(it) }
+        assertTrue(reached.await(5, TimeUnit.SECONDS))
+        val queued = java.util.concurrent.CompletableFuture<MinistryAudioBridge.Reply>()
+        b.submit("prepare", args() + ("sessionId" to "session-0002")) { queued.complete(it) }
+        b.submit("close", mapOf("sessionId" to "session-0002")) { }
+        release.countDown()
+        assertTrue(first.get(5, TimeUnit.SECONDS).isOk)
+        assertEquals(MinistryAudioException.CANCELLED, queued.get(5, TimeUnit.SECONDS).errorCode)
+        assertTrue(b.callBlocking("snapshot", mapOf("sessionId" to sid)).isOk)
+        assertTrue(File(tempRoot(), sid).exists())
     }
 
     @Test

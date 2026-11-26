@@ -53,6 +53,7 @@ class Mp3DecoderProfileTest {
     }
 
     private fun stems(): List<File> {
+        assumeTrue("packing needs API 28", android.os.Build.VERSION.SDK_INT >= 28)
         val cases = File(dir, "cases.json")
         assumeTrue("long fixtures not pushed", cases.exists())
         val arr = JSONObject(cases.readText()).getJSONArray("cases")

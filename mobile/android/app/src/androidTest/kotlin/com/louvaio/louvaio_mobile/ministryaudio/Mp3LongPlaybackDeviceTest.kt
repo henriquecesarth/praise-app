@@ -281,7 +281,7 @@ class Mp3LongPlaybackDeviceTest {
         val latencies = ArrayList<Long>()
         val fds = ArrayList<Int>()
         var early = emptyMap<String, Int>()
-        for (round in 0 until 32) {
+        for (round in 0 until 64) {
             val prepared = java.util.concurrent.CompletableFuture<MinistryAudioBridge.Reply>()
             bridge!!.submit("prepare", args()) { prepared.complete(it) }
             assertTrue(waitUntil(10_000) { decodeThreads() == 3 && (File(temp, sid).listFiles()?.size ?: 0) >= 3 })
@@ -310,9 +310,10 @@ class Mp3LongPlaybackDeviceTest {
         cmd("close")
         assertTrue(!File(temp, sid).exists())
         Log.i(tag, "cancel latencyMs=$latencies decodeThreads=${decodeThreads()}")
-        // The count swings with finalization; a per-round leak would lift the FLOOR of the later rounds.
+        // The count swings with finalization (tens of ashmem descriptors). One leaked descriptor per round would put
+        // the PEAK of the later 32 rounds about 32 above the peak of the first 32.
         val half = fds.size / 2
-        assertTrue("descriptors keep growing: $fds", fds.drop(half).minOrNull()!! <= fds.take(half).minOrNull()!! + 12)
+        assertTrue("descriptors keep growing: $fds", fds.drop(half).maxOrNull()!! <= fds.take(half).maxOrNull()!! + 20)
     }
 
     private class RealTrack(val track: AudioTrack) : StereoTrackHandle {
@@ -358,9 +359,12 @@ class Mp3LongPlaybackDeviceTest {
         cmd("play")
         assertTrue(waitUntil(5_000) { (snapshot()["positionFrames"] as Long) > 0 })
         val firstMs = (System.nanoTime() - t0) / 1_000_000
-        Thread.sleep(40_000)
+        Thread.sleep(1_000)
+        val atStart = real!!.underruns
+        Thread.sleep(39_000)
         val position = snapshot()["positionFrames"] as Long
         val steady = real!!.underruns
+        Log.i(tag, "realTrack underrunsInFirstSecond=$atStart underrunsFrom1sTo40s=${steady - atStart}")
         val seekMs = ArrayList<Long>()
         for (target in listOf(frames / 2, 0L, frames - rate * 8L, rate * 30L)) {
             val s0 = System.nanoTime()
