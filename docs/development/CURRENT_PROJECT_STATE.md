@@ -34,7 +34,11 @@ Corrigidos em `MinistryAudioEngine.kt`: retomar após seek em pausa não toca ma
 - Reproduzido no Lenovo TB-J616F: head parado em 38080 de 44100 frames após `resume`. Corrigido em `MinistryAudioEngine.kt`: o silêncio de até 1 s no dreno vale também para o incremental.
 - JVM `ministryaudio`: 160 executados, 0 falhas, 1 ignorado. O teste novo de streaming falhou antes da correção; o do limite de 1 s do WAV falha se o limite for removido.
 - Instrumentado (flavor `vocal`): `Mp3IncrementalDeviceTest` e `WavTransportDeviceTest`, 0 falhas; os casos que exigem fixtures longas foram ignorados (não estavam no app de teste). O teste de pausa no dreno passou 3 vezes nas quatro fixtures curtas.
-- Depois do commit `d8417de`: `Mp3IncrementalDeviceTest` completo, com as gravações longas `s4long` e `s42lavc48`: 15/15 PASS, nenhum ignorado. Busca até voltar a avançar: medianas 1480 ms e 1129 ms (o documento de arquitetura registra 702 e 1118 ms); causa da diferença na LAME: **Unknown / Not yet verified**.
+- Depois do commit `d8417de`: `Mp3IncrementalDeviceTest` completo, com as gravações longas `s4long` e `s42lavc48`: 15/15 PASS, nenhum ignorado. Busca até voltar a avançar: medianas 1480 ms (LAME) e 1129 ms (Lavc).
+- Investigação dos 1480 ms (mesmo tablet e fixtures, aparelho parado, um só harness; fase interrompida após 5 de 18 execuções). Medianas LAME / Lavc: `c65b283` 538 / 568 ms (n=12); `cbe36c6` 627 / 626 ms (n=6); `d8417de` 595 / 588 ms (n=12). Os 1480 ms não se reproduziram e não há sinal de regressão, com amostra menor que a planejada (36 por variante).
+- **Sem regressão de seek.**
+- Causa **provável, não demonstrada**, dos 1480 ms: o YouTube com o foco de áudio, tocando em paralelo (pediu o foco às 17:10:59 e só pausou às 17:21:10, durante a medição). A abertura dos seis codecs é a maior parte de cada busca.
+- **Prova adiada para a homologação de foco de áudio** (rodada com o YouTube tocando: NOT_EXECUTED). O teste de busca cria o motor sem controle de foco; no app, que pede o foco, o YouTube tende a pausar. Para provar, medir com o harness sem foco e o YouTube tocando.
 - Escuta humana (responsável, 2026-11-26): PASS ("está tudo ok"). Feita no app temporário "Escuta MP3" (pacote `com.louvaio.app.m21vocal`, fora do repositório), gravação `s4long`, motor e `AudioTrack` reais; não cobre a tela de mixer do app, download nem foco de áudio. Suíte Flutter (nenhum Dart alterado): NOT_EXECUTED.
 
 ## Pendências
