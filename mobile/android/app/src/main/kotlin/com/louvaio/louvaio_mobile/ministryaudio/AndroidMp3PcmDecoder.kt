@@ -42,15 +42,16 @@ class AndroidMp3PcmDecoder(
             }
             extractor.selectTrack(0)
             if (pack > 1) input.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, pack * MAX_MPEG_FRAME_BYTES)
-            codec = try {
-                MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_MPEG).also {
-                    it.configure(input, null, null, 0)
-                    it.start()
-                }
+            try {
+                // Owned (and so released by `finally`) from creation on: configure/start may fail for lack of resources.
+                val created = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_MPEG)
+                codec = created
+                created.configure(input, null, null, 0)
+                created.start()
             } catch (_: Exception) {
                 throw MinistryAudioException(MinistryAudioException.MP3_DECODE_FAILED, "Decodificador MP3 indisponível.")
             }
-            pump(extractor, codec, input, onInfo, sink, cancelled)
+            pump(extractor, codec!!, input, onInfo, sink, cancelled)
         } catch (e: MinistryAudioException) {
             throw e
         } catch (_: Exception) {

@@ -375,6 +375,8 @@ class Mp3IncrementalPrototypeTest {
 
     @Test
     fun incrementalMixMatchesFullDecodeThroughOneAudioTrack() {
+        // Checked here too: on a producer thread an assumption would surface as a failure, not as a skip.
+        assumeTrue("packing needs API 28", android.os.Build.VERSION.SDK_INT >= 28)
         val f = fixture()
         // Reference: the production full decode, mixed by the same MixerCore.
         val decoder = AndroidMp3PcmDecoder()
