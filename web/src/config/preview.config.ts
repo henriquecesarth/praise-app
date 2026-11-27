@@ -4,7 +4,7 @@ export function isVercelPreview(): boolean {
 }
 
 export const VERCEL_PREVIEW_API_URL =
-  'https://praise-87tmrr3kj-henriquecesarths-projects.vercel.app/api/v1';
+  'https://praise-qvjml6wfi-henriquecesarths-projects.vercel.app/api/v1';
 
 export function normalizeApiUrl(value: string | undefined): string | undefined {
   const trimmed = value?.trim();

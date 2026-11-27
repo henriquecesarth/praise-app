@@ -1,5 +1,5 @@
 name = "billing-reviewer"
-model = "gpt-6.1-sol"
+model = "gpt-6.2-sol"
 model_reasoning_effort = "high"
 description = "Independent read-only specialist for LouvAIO billing monetary correctness, state machines, webhook ordering, idempotency, effective dates, grace, cancellation, and entitlement projection."
 developer_instructions = """

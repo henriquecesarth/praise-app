@@ -5,6 +5,7 @@ import {
   UpdatePreferencesInput,
   SUPPORTED_CHORD_FONTS,
   DEFAULT_CHORD_FONT,
+  DEFAULT_CHORD_LINE_SPACING_PX,
 } from './auth.types';
 import { AppError } from '../../middleware/error-handler';
 import { config, isPreviewEnvironment } from '../../config/unifiedConfig';
@@ -91,6 +92,7 @@ export class AuthService {
       preferences: {
         ...userPrefs,
         chord_font_family: effectiveChordFont,
+        chord_line_spacing_px: this.getEffectiveChordLineSpacing(userPrefs.chord_line_spacing_px),
       },
     };
   }
@@ -105,16 +107,22 @@ export class AuthService {
 
     const updatedPreferences = await this.userRepository.updatePreferences(userId, input);
 
-    const effectiveChordFont = (
-      typeof updatedPreferences.chord_font_family === 'string' &&
-      SUPPORTED_CHORD_FONTS.includes(updatedPreferences.chord_font_family as any)
-    )
-      ? updatedPreferences.chord_font_family
-      : DEFAULT_CHORD_FONT;
-
     return {
       ...updatedPreferences,
-      chord_font_family: effectiveChordFont,
+      chord_font_family: this.getEffectiveChordFont(updatedPreferences.chord_font_family),
+      chord_line_spacing_px: this.getEffectiveChordLineSpacing(updatedPreferences.chord_line_spacing_px),
     };
+  }
+
+  private getEffectiveChordFont(value: unknown) {
+    return typeof value === 'string' && SUPPORTED_CHORD_FONTS.includes(value as any)
+      ? value
+      : DEFAULT_CHORD_FONT;
+  }
+
+  private getEffectiveChordLineSpacing(value: unknown) {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 24 && value % 2 === 0
+      ? value
+      : DEFAULT_CHORD_LINE_SPACING_PX;
   }
 }

@@ -1,10 +1,10 @@
-# M20-C7A checkpoint - 2026-10-29
+﻿# M20-C7A checkpoint - 2026-10-29
 
 STATUS = BLOCKED; SECURITY GATE = NOT APPROVED. Branch `feat/m20-phase-2a-android-share`, HEAD `e3c4902e0d8786e164ea0686486c564f9dea1578`. Existing WIP preserved; no production auth source was edited in C7A.
 
 ## Real Firebase Android SDK results
 
-Device: Lenovo TB-J616F `REDACTED_DEVICE_IDENTIFIER`; Firebase Auth/Firestore emulators and isolated backend used project `demo-m20-c1` only. See ignored logs in `mobile/build/m20-c7a/`.
+Device: Lenovo TB-J616F `HND29KG9`; Firebase Auth/Firestore emulators and isolated backend used project `demo-m20-c1` only. See ignored logs in `mobile/build/m20-c7a/`.
 
 - PASS: normal login; actual Authorization token `sub` equals Firebase SDK UID and backend `/auth/me` UID; session generation bound/stable.
 - PASS: delayed login then logout; delayed signup then logout; A pending then B login. SDK, repository and notifier end at the expected null/B identities.

@@ -34,14 +34,13 @@ Configuração nativa: `.codex/config.toml` e `.codex/agents/*.toml`; responsabi
 
 | Papel | Modelo configurado | Esforço |
 | --- | --- | --- |
-| Principal / product-architect | gpt-6.1-sol | medium |
-| feature-engineer / billing-engineer (trabalho rotineiro delimitado) | gpt-6-luna | low |
-| feature-reviewer / billing-reviewer (separados, somente leitura) | gpt-6.1-sol | high |
-| sandbox-auditor (guardrails de provedor preservados) | gpt-6.1-sol | high |
+| Principal / product-architect | gpt-6.2-sol | high |
+| feature-engineer / billing-engineer (Codex) | gpt-6.2-sol | high |
+| feature-reviewer / billing-reviewer (separados, somente leitura) | gpt-6.2-sol | high |
+| sandbox-auditor (guardrails de provedor preservados) | gpt-6.2-sol | high |
 
-- Modelos/esforços foram encontrados em `codex debug models --bundled` do CLI 0.164.0. O catálogo comprova compatibilidade declarada; disponibilidade da conta/identidade efetiva de inferência não deve ser inventada.
-- Escale para Sol com esforço adequado quando houver contratos complexos, concorrência, segurança, regras monetárias ou dependências não resolvidas. O default low não autoriza mudanças financeiras complexas sem essa avaliação e revisão especializada.
-- Papéis com modelo/esforço fixos não aceitam override no spawn deste runtime: use o papel de arquitetura/revisão ou agente Sol explicitamente delimitado para a escalação, mantendo a especialidade e a responsabilidade.
+- Regra permanente para Codex (2026-11-18): sempre que for usar um modelo no Codex (agente principal ou subagentes dos seis papéis), utilize **Sol 6.2 high** (`-m gpt-6.2-sol -c model_reasoning_effort="high"`), mantendo estrita a separação de papéis (`feature-reviewer` e `billing-reviewer` permanecem independentes e somente leitura).
+- Modelos/esforços históricos de referência foram verificados em `codex debug models --bundled` e `models_cache.json`; disponibilidade da conta/identidade efetiva de inferência não deve ser inventada.
 - Alterar configuração não comprova troca do modelo de uma sessão já iniciada. Registre modelo solicitado/configurado separadamente do efetivo; quando não exposto: **Unknown / Not yet verified**.
 
 ## Delegação verificável
@@ -49,6 +48,7 @@ Configuração nativa: `.codex/config.toml` e `.codex/agents/*.toml`; responsabi
 - Em tarefa simples, trabalhe sem subagente. Delegue apenas quando isolamento de contexto ou paralelismo independente compensar o custo de instruir, acompanhar e integrar o resultado. Investigações são somente leitura; no máximo dois workers de implementação simultâneos por padrão.
 - Antes de implementar em paralelo, congele contratos compartilhados e atribua um único escritor por arquivo; transfira posse explicitamente. Worktree só quando necessário.
 - Cada delegação registra ID real, escopo, modelo/esforço solicitado e resultado observado. Uma lista textual não comprova spawn. Não duplique revisão equivalente.
+- Todas as reviews feitas por um agente (`feature-reviewer`, `billing-reviewer` ou revisão de código/diff) devem usar o **Codex** (subagente nativo do Codex ou `codex exec review` / `codex exec -s read-only` quando acionado a partir do Antigravity) e não o Antigravity; use o Antigravity somente se o Codex estiver comprovadamente indisponível (falha real de CLI, autenticação ou cota com evidência registrada).
 - Fluxo proporcional: investigar → delimitar → implementar → validar → revisar separadamente quando pertinente → documentar/entregar. ExecPlan só para mudança relevante; nenhum plano extenso em ajuste pontual.
 
 ## Validação e Git

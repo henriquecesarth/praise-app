@@ -49,3 +49,6 @@ Thumbs.db
 
 # Obsidian personal workspace settings (vault lives in docs/)
 docs/.obsidian/
+
+.vercel
+.env*

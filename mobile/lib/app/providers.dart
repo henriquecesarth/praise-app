@@ -387,6 +387,11 @@ final chordFontPreferenceProvider = Provider<String>((ref) {
   return authState.chordFontFamily;
 });
 
+final chordLineSpacingPreferenceProvider = Provider<int>((ref) {
+  final authState = ref.watch(authNotifierProvider);
+  return authState.chordLineSpacingPx;
+});
+
 /// Provider for the ministry repository.
 final ministryRepositoryProvider = Provider<MinistryRepository>((ref) {
   return HttpMinistryRepository(

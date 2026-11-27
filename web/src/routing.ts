@@ -36,6 +36,7 @@ export function parseAppRoute(pathname: string): AppRouteState {
   if (normalized === '/') return { module: 'dashboard', isKnown: true };
   if (normalized === '/escalas') return { module: 'schedules', isKnown: true };
   if (normalized === '/repertorio') return { module: 'repertoire', isKnown: true };
+  if (/^\/cifras\/(nova|[^/]+\/editar)$/.test(normalized)) return { module: 'cifrador', isKnown: true };
   if (normalized === '/cifras') return { module: 'cifrador', isKnown: true };
   if (normalized === '/ministerio') return { module: 'ministry', isKnown: true };
   if (normalized === '/liturgias') return { module: 'liturgies', isKnown: true };

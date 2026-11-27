@@ -32,6 +32,15 @@ void main() {
       expect(user.chordFontFamily, 'Georgia');
     });
 
+    test('parses bounded even line spacing and defaults invalid legacy values', () {
+      expect(AuthUser.fromJson({'preferences': {'chord_line_spacing_px': 24}})
+          .chordLineSpacingPx, 24);
+      expect(AuthUser.fromJson({'preferences': {'chord_line_spacing_px': 9}})
+          .chordLineSpacingPx, 0);
+      expect(AuthUser.fromJson({'preferences': {'chord_line_spacing_px': 26}})
+          .chordLineSpacingPx, 0);
+    });
+
     test('falls back to default monospace for unknown font preference', () {
       final json = {
         'id': 'usr_123',
@@ -74,6 +83,7 @@ void main() {
         'name': 'Admin User',
         'preferences': {
           'chord_font_family': 'Verdana',
+          'chord_line_spacing_px': 0,
         },
       });
     });

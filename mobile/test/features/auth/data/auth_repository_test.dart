@@ -151,6 +151,45 @@ void main() {
   });
 
   group('FirebaseAuthRepository', () {
+    test('serializes spacing PATCHes and preserves the last requested value', () async {
+      final user = MockUser();
+      when(() => user.uid).thenReturn('usr_current_123');
+      when(() => mockFirebaseAuth.currentUser).thenReturn(user);
+      final firstResponse = Completer<ResponseBody>();
+      final secondResponse = Completer<ResponseBody>();
+      final seen = <int>[];
+      var active = 0;
+      var maxActive = 0;
+      apiClient.dio.httpClientAdapter = MockAdapter((options) async {
+        final spacing = (options.data as Map<String, dynamic>)['chord_line_spacing_px'] as int;
+        seen.add(spacing);
+        active++;
+        if (active > maxActive) maxActive = active;
+        final response = spacing == 24 ? await firstResponse.future : await secondResponse.future;
+        active--;
+        return response;
+      });
+
+      final first = repository.updateChordLineSpacingPreference(spacingPx: 24);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final last = repository.updateChordLineSpacingPreference(spacingPx: 0);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(seen, [24]);
+      firstResponse.complete(ResponseBody.fromString(
+        '{"preferences":{"chord_line_spacing_px":24}}', 200,
+        headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+      ));
+      expect(await first, 24);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(seen, [24, 0]);
+      secondResponse.complete(ResponseBody.fromString(
+        '{"preferences":{"chord_line_spacing_px":0}}', 200,
+        headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+      ));
+      expect(await last, 0);
+      expect(maxActive, 1);
+    });
+
     test(
       'same-user auth event before sign-in completion keeps the initial transition generation stable',
       () async {

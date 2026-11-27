@@ -110,6 +110,7 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
         name: validLegacyName,
         preferences: {
           chord_font_family: 'monospace',
+          chord_line_spacing_px: 0,
         },
       });
     });
@@ -286,6 +287,7 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
         name: pwaName,
         preferences: {
           chord_font_family: 'monospace',
+          chord_line_spacing_px: 0,
         },
       });
     });
@@ -341,6 +343,7 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
         name: 'Direct User',
         preferences: {
           chord_font_family: 'monospace',
+          chord_line_spacing_px: 0,
         },
       });
       // Crucial: verifyToken must NOT have been called when userId is provided directly
@@ -364,6 +367,7 @@ describe('Auth Feature & Mobile V1-M0 Firebase ID Token Compatibility Suite', ()
         name: 'Dotted UID User',
         preferences: {
           chord_font_family: 'monospace',
+          chord_line_spacing_px: 0,
         },
       });
       // Crucial: verifyToken must NOT be called; dotted UID must NOT be parsed as token syntax

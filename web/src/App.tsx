@@ -11,7 +11,7 @@ import { FilterPopover } from './components/FilterPopover';
 import { SongDetail } from './components/SongDetail';
 import { SongFormModal } from './components/SongFormModal';
 import { FolderDetail } from './components/FolderDetail';
-import { SmartChordsWorkspace } from './components/SmartChordsWorkspace';
+import { RoutedSmartChords } from './components/smart-chords/RoutedSmartChords';
 import { preferenceWriter } from './utils/preferenceWriter';
 import { JoinGroupModal } from './components/JoinGroupModal';
 import { InviteCodeModal } from './components/InviteCodeModal';
@@ -298,7 +298,10 @@ export default function App() {
     setAuthReady(true);
   };
 
+  const allowContextChange = () => window.dispatchEvent(new Event('smart-chord-context-change', { cancelable: true }));
+
   const handleLogout = () => {
+    if (!allowContextChange()) return;
     localStorage.removeItem('praise_auth_token');
     localStorage.removeItem('louvaio_last_auth_user_id');
     localStorage.removeItem('louvaio_smart_chord_font_family');
@@ -867,7 +870,7 @@ export default function App() {
               value={activeGroup.id}
               onChange={(e) => {
                 const selected = groups.find((g) => g.id === e.target.value);
-                if (selected) setActiveGroup(selected);
+                if (selected && allowContextChange()) setActiveGroup(selected);
               }}
               className="sidebar-group-select"
             >
@@ -1092,6 +1095,7 @@ export default function App() {
                   activeGroup={activeGroup}
                   userRole={userRole}
                   onSelectGroup={(group) => {
+                    if (!allowContextChange()) return;
                     clearDetailSelection();
                     setActiveGroup(group);
                     navigate(MODULE_PATHS[mainModule]);
@@ -1202,7 +1206,7 @@ export default function App() {
                   activeGroup={activeGroup}
                   schedules={schedules}
                   userRole={userRole}
-                  onSelectGroup={(g) => setActiveGroup(g)}
+                  onSelectGroup={(g) => { if (allowContextChange()) setActiveGroup(g); }}
                   onCreateGroup={() => setShowCreateGroupModal(true)}
                   onJoinGroup={() => setShowJoinModal(true)}
                   onNavigateToRepertoire={() => {
@@ -1396,7 +1400,7 @@ export default function App() {
               )}
 
               {mainModule === 'cifrador' && (
-                <SmartChordsWorkspace
+                <RoutedSmartChords
                   currentUserId={currentUser?.id}
                   ministryId={groupId}
                   initialChordId={selectedSmartChordId || undefined}

@@ -1,5 +1,5 @@
 name = "sandbox-auditor"
-model = "gpt-6.1-sol"
+model = "gpt-6.2-sol"
 model_reasoning_effort = "high"
 description = "Controlled LouvAIO provider sandbox investigator and homologation auditor for Asaas, Meta, and Zernio, with source freeze and fail-closed evidence rules."
 developer_instructions = """
