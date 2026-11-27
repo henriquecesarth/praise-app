@@ -56,9 +56,9 @@ Arquivos propostos: componentes dedicados sob `web/src/components/smart-chords/`
 
 Consome `Chord`/`chordTones` T2; produz painel visual+texto sem alteração de cifra. Reusar desenho M21 somente se isolado do transporte vocal.
 
-- [ ] Testar C, Cm, C7 e slash bass; unknown mostra estado indisponível.
-- [ ] Implementar toque/teclado, foco/Escape, leitor de tela e alvos >=44 px/dp.
-- [ ] Validar Web/Android, retrato/tela pequena e regressão do leitor/estante.
+- [x] Testar C, Cm, C7 e slash bass; unknown mostra estado indisponível.
+- [ ] Implementar toque/teclado, foco/Escape, leitor de tela e alvos >=44 px/dp. *(Parcial: ver [auditoria de 2026-11-27](#auditoria-somente-leitura--t3-acordes-interativos-e-prática-2026-11-27).)*
+- [ ] Validar Web/Android, retrato/tela pequena e regressão do leitor/estante. *(Parcial: ver a mesma auditoria.)*
 
 Aceite: notas coerentes com contrato, nenhum parse novo na UI nem escrita de cifra.
 
@@ -462,3 +462,37 @@ Logs RED/GREEN e relatórios dos executores estão no temporário `louvaio-t10-r
   - `ANDROID_PRODUCTION_HOMOLOGATION = PENDING` (reprodução musical nativa Android ainda não implementada; testes físicos pendentes da T8 continuam pendentes); `OFFLINE_COLD_START = NOT_SUPPORTED / NOT_HOMOLOGATED`.
 
 **Gate T10:** **PASS** local dentro de `.worktrees/louvaio-audit-remediation` (pronto para autorização de checkpoint; sem stage, commit ou push; T11 não iniciada).
+
+---
+
+## Auditoria somente leitura — T3, acordes interativos e prática (2026-11-27)
+
+Base: HEAD `9715f0c`. Inspeção estática de código, testes e registros; nenhum teste, build, navegador ou aparelho foi executado (**NOT_EXECUTED**). Resultados PASS citados vêm dos registros T4/T5 acima. Escopo: T3, acordes interativos e loop/velocidade/metrônomo. Os checkboxes de T8–T12 não foram reavaliados item a item.
+
+### T3 — painel de piano
+
+Implementado na Web ([ChordPianoDiagram.tsx](../../../web/src/components/smart-chords/ChordPianoDiagram.tsx)) e no Android ([chord_piano_diagram_sheet.dart](../../../mobile/lib/features/smart_chords/presentation/widgets/chord_piano_diagram_sheet.dart)), com testes para C, Cm, C7, C/E, C/F# e estado indisponível. Lacunas que mantêm dois itens abertos:
+
+- Os acordes que abrem o painel têm o tamanho do texto, sem alvo mínimo de 44 px/dp, nas duas plataformas. O botão `Ver piano` do editor Web declara `minHeight: 26px`.
+- No Android, os acordes (`GestureDetector` em `ChordLyricLine`, `TapGestureRecognizer` em `MusicalProgressionLine`) não recebem foco de teclado explícito; os de progressão também não têm o rótulo `Ver diagrama do acorde`. Escape no painel Android não tem teste.
+- Há testes de widget em 320/360/393/840 dp com texto 1,3x. Não foi encontrado E2E Web do painel nem registro de validação dele em navegador real ou aparelho Android.
+
+### Acordes interativos na estante e no culto
+
+| Superfície | Web | Android |
+| --- | --- | --- |
+| Estante (detalhe da música) | Sim (`SongDetail.tsx`) | Sim (`SongDetailView`) |
+| Culto (tela cheia da estante) | Não existe modo; a sequência da escala usa o próprio `SongDetail`, com acordes interativos | Sim (`_SongFullscreenStandScreen`), com teste de widget |
+| Leitor do Cifrador (fora da estante) | Sim, somente com a opção de piano ligada (desligada por padrão); tem tela cheia | Sim, inclusive em tela cheia |
+
+O "Modo Culto" do ADR (controles grandes, bloqueio de alterações, metrônomo/autoavanço desligados) não existe como modo em nenhuma plataforma. No Android, tocar um acorde não pausa a rolagem automática antes de abrir o painel; o leitor Web do Cifrador pausa.
+
+### Loop A–B, velocidade e metrônomo fora dos exercícios vocais
+
+| Recurso | Web | Android |
+| --- | --- | --- |
+| Loop A–B | Ausente. O validador de pacote aceita `loopAFrame`/`loopBFrame`, mas nenhum player os consome | Ausente; mesmo caso |
+| Velocidade de áudio | 0,5x–1,5x com pitch preservado no mini-player do áudio local vinculado (WAV `original`); `LocalAudioTransportHarness` é experimental, fora das rotas | Ausente |
+| Metrônomo / count-in | Ausente | Ausente |
+
+BPM é exibido e editado como metadado. A velocidade de rolagem automática da cifra não altera áudio. T12 permanece sem itens concluídos.
