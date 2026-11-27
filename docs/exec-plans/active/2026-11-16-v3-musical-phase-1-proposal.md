@@ -57,8 +57,8 @@ Arquivos propostos: componentes dedicados sob `web/src/components/smart-chords/`
 Consome `Chord`/`chordTones` T2; produz painel visual+texto sem alteração de cifra. Reusar desenho M21 somente se isolado do transporte vocal.
 
 - [x] Testar C, Cm, C7 e slash bass; unknown mostra estado indisponível.
-- [ ] Implementar toque/teclado, foco/Escape, leitor de tela e alvos >=44 px/dp. *(Parcial: ver [auditoria de 2026-11-27](#auditoria-somente-leitura--t3-acordes-interativos-e-prática-2026-11-27).)*
-- [ ] Validar Web/Android, retrato/tela pequena e regressão do leitor/estante. *(Parcial: ver a mesma auditoria.)*
+- [x] Implementar toque/teclado, foco/Escape, leitor de tela e alvos >=44 px/dp. *(Ver [Fechamento da T3](#fechamento-da-t3-2026-11-27), inclusive os limites.)*
+- [ ] Validar Web/Android, retrato/tela pequena e regressão do leitor/estante. *(Parcial: falta a conferência humana no tablet, inclusive retrato. Ver [Fechamento da T3](#fechamento-da-t3-2026-11-27).)*
 
 Aceite: notas coerentes com contrato, nenhum parse novo na UI nem escrita de cifra.
 
@@ -496,3 +496,29 @@ O "Modo Culto" do ADR (controles grandes, bloqueio de alterações, metrônomo/a
 | Metrônomo / count-in | Ausente | Ausente |
 
 BPM é exibido e editado como metadado. A velocidade de rolagem automática da cifra não altera áudio. T12 permanece sem itens concluídos.
+
+---
+
+## Fechamento da T3 (2026-11-27)
+
+Base `5b92119`; mudanças ainda sem commit. Sem alteração de áudio, backend ou cifras salvas.
+
+### Implementado
+- Web: área de toque por `::after` (`.chord-hit-target`), sem ocupar espaço; `Ver piano` com 44 px. No Cifrador, só com "Piano ao tocar" ligado.
+- Android: `ChordTapTarget` (foco, Enter/Espaço, rótulo `Ver diagrama do acorde`, inclusive em compasso) e `ChordHitSlopScope` (área de 44 dp por proximidade, dentro da rolagem); tocar um acorde pausa a rolagem automática.
+- Correção da auditoria: a Web já dava `min-height: 44px` a todo `button` (`index.css`). Na estante faltava a largura; no Cifrador, os acordes de compasso (28 px) e os de sílaba.
+
+### Evidências
+- Web: Vitest direcionado 102 PASS; `tsc --noEmit` PASS; build `--mode test` PASS; E2E `smart-chord-t3-panel.spec.ts` 48 PASS (12 projetos, API simulada, Chrome); E2E relacionados 22 PASS em `360x800-light`.
+- Android: `flutter analyze` PASS; 320 testes de widget/view PASS.
+- Lenovo TB-J616F (Android 12, paisagem, variante `cifraProbe` com leitor real e repositórios falsos, entradas por `adb`): toque a 20 dp do acorde abre o diagrama; Tab percorre os acordes, Enter abre, Escape fecha e o foco volta; rolagem automática pausa ao tocar. PASS.
+- Revisão `feature-reviewer` (somente leitura, sem executar testes): sem BLOCKER/HIGH. Corrigidos depois e revalidados por teste: limiar de arraste do aparelho, acorde fora da tela, testes da área nas telas e nó semântico.
+
+### Limites
+- NOT_EXECUTED: conferência humana (dedo, retrato, cifra sem deslocamento), teclado físico, TalkBack.
+- No tablet, um Escape logo após abrir **por toque** não chegou ao app (teclado virtual do `adb`); depois de Tab, chega. Comportamento com teclado físico: Unknown / Not yet verified.
+- O anel de foco não aparece com teclas do `adb` (o Flutter ignora teclado virtual nesse modo); coberto por teste de widget.
+- Onde as áreas se sobrepõem (linhas a menos de 44 px), vence o acorde posterior na Web e o centro mais próximo no Android; o texto do próprio acorde sempre abre o próprio acorde.
+- Android: toque na letra logo abaixo de um acorde (menos de 22 dp do centro) abre o diagrama.
+- Web: linha de compasso longa que termina em acorde, sem `|` final, pode ganhar alguns pixels de rolagem horizontal (leitura do CSS, não medido).
+- Preexistente, não alterado: nos acordes de sílaba da estante, o botão de 44 px posiciona o acorde alto e junto ao topo da folha.

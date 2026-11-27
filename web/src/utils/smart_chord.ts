@@ -87,7 +87,10 @@ export function isTablatureLine(line: string): boolean {
 }
 
 export const ROOT_REGEX = /^([A-G][#b]?)(.*)$/i;
-export const EXT_REGEX = /^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|9|11|#11|13|b13|5-|5\+)\)|b5|#5|b9|#9|b13|#11|alt|7M|M7)*$/;
+export const EXT_REGEX = /^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|4|9|b11|11|#11|13|b13|#13|5-|5\+|maj7|M7|7M|add(?:11|13))\)|b5|#5|b9|#9|b11|b13|#11|#13|alt|7M|M7|º|°|ø)*$/;
+// Slash parts that extend the chord instead of naming a bass: /9, /4(9).
+// Only chord degrees, so a marker such as A/2 or a date is not a chord.
+const NUMERIC_EXTENSION_REGEX = /^(?:4|5|6|7|9|11|13)(\((?:4|9|11|13|[b#](?:5|9|11|13))\))*$/;
 
 // Am(G) or Am (G) means Am with alternative G; performance text is never an alternative.
 function alternativeChordParts(token: string): RegExpMatchArray | null {
@@ -108,7 +111,6 @@ export function isMusicalChord(token: string): boolean {
   if (alternativeChordParts(trimmed)) return true;
 
   const slashParts = trimmed.split('/');
-  if (slashParts.length > 2) return false;
 
   const mainPart = slashParts[0];
   const match = mainPart.match(ROOT_REGEX);
@@ -117,12 +119,14 @@ export function isMusicalChord(token: string): boolean {
   const ext = match[2];
   if (ext && !EXT_REGEX.test(ext)) return false;
 
-  if (slashParts.length === 2) {
-    const bassPart = slashParts[1];
+  const rest = slashParts.slice(1);
+  while (rest.length && NUMERIC_EXTENSION_REGEX.test(rest[0])) rest.shift();
+  if (rest.length > 1) return false;
+  if (rest.length === 1) {
+    const bassPart = rest[0];
     if (!bassPart) return false;
     const isBassRoot = ROOT_REGEX.test(bassPart) && EXT_REGEX.test(bassPart.match(ROOT_REGEX)?.[2] || '');
-    const isNumericExtension = /^[0-9]+$/.test(bassPart);
-    if (!isBassRoot && !isNumericExtension) return false;
+    if (!isBassRoot) return false;
   }
 
   return true;
@@ -185,11 +189,9 @@ export function transposeChord(chord: string, semitones: number): string {
 
   if (!isMusicalChord(chord)) return chord;
   if (chord.includes('/')) {
-    const parts = chord.split('/');
-    if (parts.length === 2 && /^[0-9]+$/.test(parts[1])) {
-      return transposeChordSingle(parts[0], semitones) + '/' + parts[1];
-    }
-    return parts.map(part => transposeChordSingle(part, semitones)).join('/');
+    return chord.split('/')
+      .map((part, index) => (index > 0 && NUMERIC_EXTENSION_REGEX.test(part) ? part : transposeChordSingle(part, semitones)))
+      .join('/');
   }
   return transposeChordSingle(chord, semitones);
 }

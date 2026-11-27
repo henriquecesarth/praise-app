@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:louvaio_mobile/core/music/guitar_generator.dart';
 import 'package:louvaio_mobile/core/music/guitar_voicings.dart';
 import 'package:louvaio_mobile/core/music/theory.dart';
 
@@ -271,6 +272,8 @@ Future<void> showChordPianoDiagramSheet(
   String chordSymbol, {
   ChordDiagramInstrument initialInstrument = ChordDiagramInstrument.piano,
   String? keyContext,
+  String? previousChord,
+  String? nextChord,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -281,8 +284,21 @@ Future<void> showChordPianoDiagramSheet(
       chordSymbol: chordSymbol,
       initialInstrument: initialInstrument,
       keyContext: keyContext,
+      previousChord: previousChord,
+      nextChord: nextChord,
     ),
   );
+}
+
+/// Where a guitar shape came from, as shown to the musician.
+String guitarOriginLabel(GuitarVoicing voicing) {
+  final origin = voicing.provenance.origin;
+  if (origin.startsWith('chords-db')) {
+    return 'Forma do chords-db (MIT © 2016 David Rubert)';
+  }
+  if (origin.startsWith('Gerador')) return 'Forma gerada';
+  if (origin.startsWith('Forma comum')) return 'Forma comum';
+  return 'Forma curada';
 }
 
 /// The interactive piano/guitar diagram modal sheet.
@@ -290,12 +306,17 @@ class ChordPianoDiagramSheet extends StatefulWidget {
   final String chordSymbol;
   final ChordDiagramInstrument initialInstrument;
   final String? keyContext;
+  /// Chords around this one on the same line, used to read passing basses.
+  final String? previousChord;
+  final String? nextChord;
 
   const ChordPianoDiagramSheet({
     super.key,
     required this.chordSymbol,
     this.initialInstrument = ChordDiagramInstrument.piano,
     this.keyContext,
+    this.previousChord,
+    this.nextChord,
   });
 
   @override
@@ -312,12 +333,14 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
   late ChordDiagramInstrument _instrument = widget.initialInstrument;
   late String? _analysisKey = widget.keyContext;
   bool _isKeyPickerOpen = false;
+  int _guitarPosition = 0;
 
   @override
   void didUpdateWidget(covariant ChordPianoDiagramSheet oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.chordSymbol != widget.chordSymbol) {
       _octaveOffset = 0;
+      _guitarPosition = 0;
     }
     if (oldWidget.keyContext != widget.keyContext) {
       _analysisKey = widget.keyContext;
@@ -376,31 +399,54 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
     final seventhTranslated = translateSeventh(chord.seventh);
 
     final guitarLookup = _instrument == ChordDiagramInstrument.guitar
-        ? lookupGuitarVoicing(widget.chordSymbol)
+        ? findGuitarVoicings(widget.chordSymbol)
+        : null;
+    final positionCount = guitarLookup?.voicings.length ?? 0;
+    final positionIndex = _guitarPosition < positionCount ? _guitarPosition : 0;
+    final guitarVoicing = positionCount > 0
+        ? guitarLookup!.voicings[positionIndex]
         : null;
     final harmonyResult = analyzeDegree(widget.chordSymbol, key: _analysisKey);
+    final harmonyReadings = analyzeHarmony(
+      widget.chordSymbol,
+      key: _analysisKey,
+      previous: widget.previousChord,
+      next: widget.nextChord,
+    );
+    final readings = harmonyReadings.status == 'analyzed'
+        ? harmonyReadings.readings
+        : const <HarmonyReading>[];
+    // A single diatonic reading is already what the degree badge says.
+    final showReadings =
+        readings.length > 1 ||
+        (readings.length == 1 && readings.first.kind != 'diatonic');
 
     final String baseSummaryText;
     if (_instrument == ChordDiagramInstrument.guitar && guitarLookup != null) {
-      if (!guitarLookup.isAvailable || guitarLookup.primaryVoicing == null) {
+      if (!guitarLookup.isAvailable || guitarVoicing == null) {
         baseSummaryText =
             'Diagrama indisponível para ${widget.chordSymbol} no violão. ${guitarLookup.message}';
       } else {
-        final v = guitarLookup.primaryVoicing!;
+        final v = guitarVoicing;
+        final omitSummary = v.omits.isEmpty ? '' : ' Omite a 5ª justa.';
         final barreSummary = v.barres.isNotEmpty
             ? ' Pestana na ${v.barres.first.fret}ª casa, dedo ${v.barres.first.finger}.'
             : '';
         baseSummaryText =
-            'Violão para ${v.chordSymbol}. Posição: ${v.positionName}. Afinação padrão E2 A2 D3 G3 B3 E4.$barreSummary Nota mais grave: ${v.lowestNote.note} na ${v.lowestNote.stringNumber}ª corda. Notas: ${v.soundingNotes.join(", ")}.';
+            'Violão para ${v.chordSymbol}. Posição: ${v.positionName}. Afinação padrão E2 A2 D3 G3 B3 E4.$barreSummary Nota mais grave: ${v.lowestNote.note} na ${v.lowestNote.stringNumber}ª corda. Notas: ${v.soundingNotes.join(", ")}.$omitSummary ${guitarOriginLabel(v)}.';
       }
     } else {
       baseSummaryText =
           'Acorde ${widget.chordSymbol}, qualidade $qualityTranslated. '
           'Notas: ${projection.activeNotes.map((n) => "${n.spelling} (${n.intervalName})").join(", ")}.';
     }
-    final summaryText = harmonyResult is HarmonyAnalyzed
-        ? '$baseSummaryText Grau harmônico: ${harmonyResult.analysis.degree} em ${harmonyResult.key.canonicalKey}.'
-        : baseSummaryText;
+    final degreeSummary = harmonyResult is HarmonyAnalyzed
+        ? ' Grau harmônico: ${harmonyResult.analysis.degree} em ${harmonyResult.key.canonicalKey}.'
+        : '';
+    final readingsSummary = showReadings
+        ? ' Leituras harmônicas: ${readings.map((r) => r.label).join('; ')}.'
+        : '';
+    final summaryText = '$baseSummaryText$degreeSummary$readingsSummary';
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -591,7 +637,48 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
             ],
           ),
         ] else if (guitarLookup != null) ...[
-          _buildGuitarSection(context, theme, chord, guitarLookup),
+          if (positionCount > 1)
+            Row(
+              key: const Key('guitar_position_selector'),
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  key: const Key('guitar_position_prev'),
+                  tooltip: 'Posição anterior',
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: () => setState(
+                    () => _guitarPosition =
+                        (positionIndex - 1 + positionCount) % positionCount,
+                  ),
+                ),
+                Text(
+                  '${positionIndex + 1}/$positionCount',
+                  key: const Key('guitar_position_count'),
+                ),
+                IconButton(
+                  key: const Key('guitar_position_next'),
+                  tooltip: 'Próxima posição',
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: () => setState(
+                    () => _guitarPosition = (positionIndex + 1) % positionCount,
+                  ),
+                ),
+              ],
+            ),
+          if (guitarVoicing != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                '${guitarOriginLabel(guitarVoicing)}'
+                '${guitarVoicing.omits.isEmpty ? '' : ' · Omite a 5ª justa'}',
+                key: const Key('chord_guitar_origin'),
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          _buildGuitarSection(context, theme, chord, guitarVoicing),
         ],
 
         const SizedBox(height: 12),
@@ -681,6 +768,7 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
             theme: theme,
             qualityTranslated: qualityTranslated,
             harmonyResult: harmonyResult,
+            readings: showReadings ? readings : const <HarmonyReading>[],
           ),
 
         if (harmonyResult is! HarmonyUnsupported) const SizedBox(height: 14),
@@ -699,7 +787,7 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
               Text(
                 _instrument == ChordDiagramInstrument.piano
                     ? 'Visualização didática das notas e classes de altura (sem voicing fixo ou digitação física inferida).'
-                    : 'Posição curada e verificada contra o motor harmônico v1 na afinação padrão (E2 A2 D3 G3 B3 E4).',
+                    : 'Posição verificada contra as notas do acorde na afinação padrão (E2 A2 D3 G3 B3 E4).',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                   fontStyle: FontStyle.italic,
@@ -728,6 +816,7 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
     required ThemeData theme,
     required String qualityTranslated,
     required HarmonyAnalysisResult harmonyResult,
+    required List<HarmonyReading> readings,
   }) {
     final KeyContext? activeKey = harmonyResult is HarmonyAnalyzed
         ? harmonyResult.key
@@ -739,6 +828,8 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
         : (harmonyResult as HarmonyIndeterminate).bassAnalysis;
     final String degreeText = harmonyResult is HarmonyAnalyzed
         ? 'Grau harmônico: ${harmonyResult.analysis.degree} (${harmonyResult.analysis.degreeNumber}º grau em ${harmonyResult.key.canonicalKey})'
+        : readings.isNotEmpty
+        ? 'Grau harmônico: veja as leituras possíveis'
         : 'Grau harmônico: Grau não determinado';
     final String qualityText =
         'Qualidade harmônica: ${harmonyResult is HarmonyAnalyzed ? harmonyResult.analysis.qualityLabel : qualityTranslated}';
@@ -884,14 +975,33 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  explanationText,
-                  key: const Key('harmony_explanation'),
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    height: 1.4,
+                if (harmonyResult is HarmonyAnalyzed || readings.isEmpty)
+                  Text(
+                    explanationText,
+                    key: const Key('harmony_explanation'),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
                   ),
-                ),
+                if (readings.isNotEmpty)
+                  Column(
+                    key: const Key('harmony_readings'),
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final reading in readings)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            '${reading.label} — ${reading.explanation}',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
               ],
             );
           },
@@ -938,9 +1048,9 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
     BuildContext context,
     ThemeData theme,
     ChordNormalized chord,
-    GuitarLookupResult lookup,
+    GuitarVoicing? voicing,
   ) {
-    if (!lookup.isAvailable || lookup.primaryVoicing == null) {
+    if (voicing == null) {
       return Card(
         key: const Key('chord_guitar_unavailable'),
         elevation: 0,
@@ -963,7 +1073,7 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Posição de violão ainda não verificada no catálogo v1 para este acorde. As notas teóricas e o diagrama de piano continuam disponíveis.',
+                'Não há posição de violão tocável para este acorde. As notas teóricas e o diagrama de piano continuam disponíveis.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onTertiaryContainer,
                 ),
@@ -975,7 +1085,7 @@ class _ChordPianoDiagramSheetState extends State<ChordPianoDiagramSheet> {
     }
 
     return GuitarFretboardView(
-      voicing: lookup.primaryVoicing!,
+      voicing: voicing,
       chord: chord,
     );
   }
@@ -1442,7 +1552,9 @@ String _describeGuitarStringLegend(
     return '${s.stringNumber}ª corda ($openName): Abafada (X)';
   }
   final isLowest = s.stringNumber == voicing.lowestNote.stringNumber;
-  final isRoot = s.spelling == chord.root.spelling;
+  // Inversion 0 covers a root spelled enharmonically in the bass (C/B#).
+  final isRoot =
+      s.spelling == chord.root.spelling || (isLowest && chord.inversion == 0);
   final String roleDesc;
   if (isRoot && isLowest) {
     roleDesc = 'Fundamental / Baixo';

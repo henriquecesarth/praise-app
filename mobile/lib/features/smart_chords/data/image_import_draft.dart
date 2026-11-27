@@ -134,7 +134,7 @@ ImportWarning? _mergedChordWarning(String line, int lineNumber) {
   final candidates = <String>{};
   for (final tokenMatch in tokens) {
     final token = tokenMatch.group(0)!;
-    final chord = token.replaceAll(RegExp(r'^\(|\)$'), '');
+    final chord = SmartChordParser.unwrapParentheses(token);
     if (SmartChordParser.isMusicalChord(chord)) continue;
     if (chord.length < 2 || chord.length > 24) continue;
     for (var split = 1; split < chord.length; split++) {
@@ -167,7 +167,7 @@ String _bracketChordRow(String line) {
   var chordCount = 0;
   for (final token in tokens) {
     final value = token.group(0)!;
-    final chord = value.replaceAll(RegExp(r'^\(|\)$'), '');
+    final chord = SmartChordParser.unwrapParentheses(value);
     if (SmartChordParser.isMusicalChord(chord)) {
       chordCount++;
     } else if (!RegExp(r'^(?:\(?\d+[xX]\)?|%)$').hasMatch(value)) {
@@ -178,10 +178,8 @@ String _bracketChordRow(String line) {
   return line.substring(0, start) +
       tail.replaceAllMapped(RegExp(r'[^\s|:]+'), (match) {
         final value = match.group(0)!;
-        final chord = value.replaceAll(RegExp(r'^\(|\)$'), '');
+        final chord = SmartChordParser.unwrapParentheses(value);
         if (!SmartChordParser.isMusicalChord(chord)) return value;
-        return value.startsWith('(') && value.endsWith(')')
-            ? '([$chord])'
-            : '[$chord]';
+        return value == '($chord)' ? '([$chord])' : '[$chord]';
       });
 }

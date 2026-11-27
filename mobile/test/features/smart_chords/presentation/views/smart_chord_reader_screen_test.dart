@@ -19,6 +19,7 @@ import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_repertoi
 import 'package:louvaio_mobile/features/smart_chords/presentation/views/smart_chord_reader_screen.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_lyric_line.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_piano_diagram_sheet.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_tap_target.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
 import 'package:louvaio_mobile/features/smart_chords/services/smart_chord_pdf_exporter.dart';
 
@@ -947,10 +948,15 @@ void main() {
             }
             expect(find.descendant(of: line, matching: find.byType(SelectionArea)), findsOneWidget);
             for (final progression in find.byType(MusicalProgressionLine).evaluate()) {
-              final textFinder = find.descendant(of: find.byWidget(progression.widget), matching: find.byType(Text));
+              // The row is one paragraph; each chord inside it is its own widget.
+              final textFinder = find.descendant(of: find.byWidget(progression.widget),
+                matching: find.byWidgetPredicate((w) => w is Text && w.textSpan != null));
               final text = tester.widget<Text>(textFinder);
               expect(text.softWrap, isFalse);
-              expect(text.textSpan!.toPlainText(), contains(offset == -1 ? 'B' : 'D'));
+              expect(find.descendant(of: find.byWidget(progression.widget),
+                matching: find.byType(ChordTapTarget)), findsWidgets);
+              expect(find.descendant(of: find.byWidget(progression.widget),
+                matching: find.textContaining(offset == -1 ? 'B' : 'D')), findsWidgets);
               expect(tester.getSize(textFinder).height, lessThan(15 * scale * 1.6));
             }
             expect(find.byType(MusicalProgressionLine), findsNWidgets(2));
@@ -987,10 +993,16 @@ void main() {
       final row = tester.widget<Text>(
         find.descendant(
           of: find.byType(MusicalProgressionLine),
-          matching: find.byType(Text),
+          matching: find.byWidgetPredicate(
+            (w) => w is Text && w.textSpan != null,
+          ),
         ),
       );
-      expect(row.textSpan!.toPlainText(), 'Bb       Eb      F');
+      // Chords are widget placeholders; the spacing between them is unchanged.
+      expect(row.textSpan!.toPlainText(), '￼       ￼      ￼');
+      for (final chordName in ['Bb', 'Eb', 'F']) {
+        expect(find.text(chordName), findsOneWidget);
+      }
       final lyrics = tester.widget<SelectableText>(
         find.byWidgetPredicate(
           (w) => w is SelectableText && w.data == 'A luz me guia pelo caminho',
@@ -1025,8 +1037,11 @@ void main() {
       expect(find.byType(MusicalProgressionLine), findsOneWidget);
       final line = tester.widget<MusicalProgressionLine>(find.byType(MusicalProgressionLine));
       expect(line.fontFamily, font);
-      final text = tester.widget<Text>(find.descendant(of: find.byType(MusicalProgressionLine), matching: find.byType(Text)));
-      expect(text.textSpan!.toPlainText(), 'Intro: (riff viol)  ||: A | D | % :|| ');
+      final text = tester.widget<Text>(find.descendant(of: find.byType(MusicalProgressionLine),
+        matching: find.byWidgetPredicate((w) => w is Text && w.textSpan != null)));
+      expect(text.textSpan!.toPlainText(), 'Intro: (riff viol)  ||: ￼ | ￼ | % :|| ');
+      expect(find.text('A'), findsOneWidget);
+      expect(find.text('D'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }
@@ -1510,8 +1525,8 @@ void main() {
       expect(find.text('D'), findsOneWidget);
       expect(find.text('A'), findsOneWidget);
 
-      // Tap on transposed chord D
-      await tester.tap(find.text('D'));
+      // Near miss, 18 dp above transposed chord D: the screen's 44 dp area
+      await tester.tapAt(tester.getCenter(find.text('D')) - const Offset(0, 18));
       await tester.pumpAndSettle();
 
       // Verify ChordPianoDiagramSheet opens
@@ -1533,4 +1548,46 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('tapping a chord pauses auto-scroll before opening the diagram',
+      (tester) async {
+    final longChord = SmartChord(
+      id: sampleChord.id,
+      userId: sampleChord.userId,
+      title: sampleChord.title,
+      originalKey: sampleChord.originalKey,
+      content: List.filled(60, '[C]Tu és [G]Deus').join('\n'),
+      createdAt: sampleChord.createdAt,
+      updatedAt: sampleChord.updatedAt,
+    );
+    repo.chord = longChord;
+    await tester.pumpWidget(
+      buildApp(chordId: longChord.id, initialChord: longChord),
+    );
+    await tester.tap(find.text('Abrir Reader'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rolagem automática'));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byTooltip('Pausar rolagem'), findsOneWidget);
+    // The sheet scroll view (lines may have their own horizontal scrollers).
+    final sheet = tester
+        .widget<SingleChildScrollView>(find.byWidgetPredicate((w) =>
+            w is SingleChildScrollView &&
+            w.physics is AlwaysScrollableScrollPhysics))
+        .controller!;
+    expect(sheet.offset, greaterThan(0));
+
+    await tester.tap(find.text('C').at(5));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChordPianoDiagramSheet), findsOneWidget);
+    final paused = sheet.offset;
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(sheet.offset, paused);
+
+    await tester.tap(find.byTooltip('Fechar diagrama'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Pausar rolagem'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

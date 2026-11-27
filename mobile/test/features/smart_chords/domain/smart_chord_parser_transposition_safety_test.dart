@@ -2,6 +2,46 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/features/smart_chords/domain/smart_chord_parser.dart';
 
 void main() {
+  test('Brazilian notations transpose', () {
+    const cases = {
+      'C(4)': 'D(4)',
+      'C7(4)': 'D7(4)',
+      'C7/4(9)': 'D7/4(9)',
+      'C7/4/9': 'D7/4/9',
+      'D7/4(9)/F#': 'E7/4(9)/G#',
+      'A7M/9': 'B7M/9',
+      'Gº': 'Aº',
+      'G°7': 'A°7',
+      'Gø7': 'Aø7',
+      'Gm(maj7)': 'Am(maj7)',
+      'Cm(M7)': 'Dm(M7)',
+      'C(add11)': 'D(add11)',
+      'C7(#13)': 'D7(#13)',
+      'C7(b11)': 'D7(b11)',
+      'C#7#13': 'D#7#13',
+    };
+    for (final entry in cases.entries) {
+      expect(SmartChordParser.isMusicalChord(entry.key), isTrue,
+          reason: entry.key);
+      expect(SmartChordParser.transposeChord(entry.key, 2), entry.value,
+          reason: entry.key);
+    }
+  });
+  test('markers and dates are not chords', () {
+    for (final marker in ['A/2', 'D/12/2025']) {
+      expect(SmartChordParser.isMusicalChord(marker), isFalse, reason: marker);
+      expect(SmartChordParser.transposeChord(marker, 2), marker);
+    }
+  });
+  test('rows without brackets keep the parentheses of a chord', () {
+    expect(SmartChordParser.transposeSmartChord('Intro: C7(4) F', 2),
+        'Intro: D7(4) G');
+    expect(SmartChordParser.transposeSmartChord('(C7(4) F)', 2), '(D7(4) G)');
+    expect(SmartChordParser.transposeSmartChord('[C(4)] [G]', 2),
+        '[D(4)] [A]');
+    final segments = SmartChordParser.parse('G  C(4)').single.segments;
+    expect(segments.map((s) => s.comment).join(), isEmpty);
+  });
   test('tablet alternatives transpose in progressions and lyric segments', () {
     expect(SmartChordParser.isMusicalChord('Am(G)'), isTrue);
     expect(SmartChordParser.transposeChord('Am(G)', 1), 'A#m(G#)');

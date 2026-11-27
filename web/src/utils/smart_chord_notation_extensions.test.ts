@@ -2,6 +2,7 @@
 import { parseNotation, transposeNotation, transposeNotationChord } from './smart_chord_notation';
 import { findAdvancedSymbols, transposeAccidentalNotation } from './smart_chord_notation_advanced';
 import { extractMusicalInstructions } from './smart_chord_annotation_semantics';
+import { isMusicalChord } from './smart_chord';
 
 describe('P5 expressive musical marks', () => {
   it('preserves a Unicode sharp slash bass while transposing both notes', () => {
@@ -36,6 +37,33 @@ describe('P5 expressive musical marks', () => {
   ])('transposes Unicode accidental notation only in musical positions', (source, expected) => {
     expect(transposeAccidentalNotation(source, 2)).toBe(expected);
     expect(transposeAccidentalNotation(source, 0)).toBe(source);
+  });
+});
+
+describe('Brazilian notation transposition', () => {
+  it.each([
+    ['C(4)', 'D(4)'],
+    ['C7(4)', 'D7(4)'],
+    ['C7/4(9)', 'D7/4(9)'],
+    ['C7/4/9', 'D7/4/9'],
+    ['D7/4(9)/F#', 'E7/4(9)/G#'],
+    ['A7M/9', 'B7M/9'],
+    ['Gº', 'Aº'],
+    ['G°7', 'A°7'],
+    ['Gø7', 'Aø7'],
+    ['Gm(maj7)', 'Am(maj7)'],
+    ['Cm(M7)', 'Dm(M7)'],
+    ['C(add11)', 'D(add11)'],
+    ['C7(#13)', 'D7(#13)'],
+    ['C7(b11)', 'D7(b11)'],
+    ['C#7#13', 'D#7#13'],
+  ])('transposes %s', (source, expected) => {
+    expect(transposeNotationChord(source, 2)).toBe(expected);
+  });
+
+  it.each(['A/2', 'D/12/2025'])('does not read the marker %s as a chord', (marker) => {
+    expect(isMusicalChord(marker)).toBe(false);
+    expect(transposeNotationChord(marker, 2)).toBe(marker);
   });
 });
 

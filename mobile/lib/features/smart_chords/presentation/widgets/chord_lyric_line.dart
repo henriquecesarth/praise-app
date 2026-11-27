@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../../auth/domain/auth_user.dart';
 import '../../domain/smart_chord_parser.dart';
+import 'chord_tap_target.dart';
 
 /// Measured syllabic reader layout. No padding is written into musical content.
 class ChordLyricLine extends StatelessWidget {
@@ -14,13 +15,16 @@ class ChordLyricLine extends StatelessWidget {
   final double spacingPx;
   final bool alignedLyrics;
   final ValueChanged<String>? onChordTap;
+  /// Called right before [onChordTap].
+  final ValueChanged<ChordNeighbours>? onChordNeighbours;
 
   const ChordLyricLine({super.key, required this.line, required this.semitones,
     required this.fontSize, required this.fontFamily,
     required this.fontFamilyFallback, required this.monospace,
     this.spacingPx = AuthUser.defaultChordLineSpacingPxDouble,
     this.alignedLyrics = false,
-    this.onChordTap});
+    this.onChordTap,
+    this.onChordNeighbours});
 
   @override
   Widget build(BuildContext context) {
@@ -62,6 +66,8 @@ class ChordLyricLine extends StatelessWidget {
       return measured;
     }
 
+    final chordFragments = <SmartChordSegment>[];
+
     Widget buildChordTier(SmartChordSegment fragment) {
       final hasChord = fragment.hasChord;
       final hasComment = fragment.hasComment;
@@ -88,14 +94,16 @@ class ChordLyricLine extends StatelessWidget {
       }
 
       if (onChordTap != null && hasChord) {
-        return Semantics(
-          button: true,
-          label: 'Ver diagrama do acorde $chord',
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => onChordTap!(chord),
-            child: chordWidget,
-          ),
+        return ChordTapTarget(
+          chord: chord,
+          onActivate: () {
+            onChordNeighbours?.call(lineNeighbours(
+              [for (final item in chordFragments) SmartChordParser.transposeChord(item.chord, semitones)],
+              chordFragments.indexWhere((item) => identical(item, fragment)),
+            ));
+            onChordTap!(chord);
+          },
+          child: chordWidget,
         );
       }
       return chordWidget;
@@ -128,7 +136,8 @@ class ChordLyricLine extends StatelessWidget {
           comment: i == 0 ? segment.comment : '',
           text: pieces[i],
         ));
-        if (RegExp(r'\s$').hasMatch(pieces[i])) {
+        if (word.last.hasChord) chordFragments.add(word.last);
+        if(RegExp(r'\s$').hasMatch(pieces[i])) {
           words.add(word);
           word = [];
         }

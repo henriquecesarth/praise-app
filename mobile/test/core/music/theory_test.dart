@@ -226,9 +226,10 @@ void main() {
       moved.toJson(),
       parseChord('Dmaj7/A').toJson()..['originalText'] = 'Dbmaj7/Ab',
     );
+    // An enharmonic bass counts as the chord tone it sounds like.
     expect(
       parseChord('C/B#').toJson()['normalized'],
-      containsPair('bassRole', 'nonChordTone'),
+      containsPair('bassRole', 'chordTone'),
     );
     expect(
       transposeChord(

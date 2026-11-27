@@ -27,7 +27,7 @@ pitchClasses: integer[]
 
 `ChordResult` contém `kind`, `canonicalSymbol`, `root`, `quality`, `seventh`, `intervals`, `extensions`, `omissions`, `alterations`, `bass`, `bassRole`, `inversion`. Qualidades: major/minor/diminished/augmented/suspended2/suspended4. Sétima é null/major/minor/diminished. Intervalos (incluindo raiz 0/0) são a autoridade das notas; não aplicar alterações duas vezes. Listas de notas/spellings/classes são paralelas, em ordem teórica da raiz; não são voicing executável. V1 não gera omissões implícitas. 9/11/13 incluem extensões ímpares anteriores e sétima; add9 não implica sétima; 7#11 explícito não implica nona. `/9` numérico é extensão, não baixo.
 
-Baixo slash fica separado dos constituintes. Se sua grafia coincide com uma nota do acorde, bassRole=chordTone e inversion é seu índice na lista teórica (G/B=1); caso contrário nonChordTone/null (C/F#). Sem baixo explícito: unspecified/null. Isso descreve relação simbólica do baixo, sem deduzir voicing, oitavas ou posição instrumental.
+Baixo slash fica separado dos constituintes. Se sua grafia, ou na falta dela sua altura (grafia enarmônica, como D#/G), coincide com uma nota do acorde, bassRole=chordTone e inversion é seu índice na lista teórica (G/B=1); caso contrário nonChordTone/null (C/F#). Sem baixo explícito: unspecified/null. Isso descreve relação simbólica do baixo, sem deduzir voicing, oitavas ou posição instrumental.
 
 ## Nomenclatura brasileira e limites
 
@@ -70,6 +70,17 @@ Fonte única: [harmony-analysis-v1.json](harmony-analysis-v1.json). `format = lo
 - `BassAnalysis`: reutiliza diretamente `bass`, `bassRole` e `inversion` da T2 (`chordTone` + `inversion >= 1` indica inversão real mesmo sem tonalidade; `nonChordTone` indica baixo externo ao acorde; `unspecified` indica posição fundamental).
 - Três estados em `analyzeDegree`: `analysis` (interpretação diatônica sustentada pelo `KeyContext` explícito), `indeterminate` (`missingKeyContext`, `invalidKeyContext`, `externalSlashBass`, `enharmonicMismatch`, `nonDiatonicToNaturalMinor`, `nonDiatonicChord`) e `unsupported` (entrada fora da gramática/contexto v1).
 - Corpus inicial com 61 vetores verificados entre tonalidades maiores (17), menores naturais (16), inversões/baixos externos (10), casos indeterminados (14) e não suportados (4). Empréstimos modais, dominantes secundárias e menor harmônica/melódica permanecem fora das regras de grau natural na v1 (`indeterminate`).
+
+## Violão v2 e gerador (T6)
+
+- [guitar-voicings-v2.json](guitar-voicings-v2.json): catálogo compacto (formas v1 curadas, formas comuns próprias `pop` e formas do chords-db, ver [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Gerado por `web/scripts/import-chords-db.mjs`, que também grava o relatório de importação e a cópia Dart; não editar à mão.
+- [guitar-generator-v1.json](guitar-generator-v1.json): saída esperada do gerador determinístico e da busca, comparada em TypeScript e Dart.
+- Omissão permitida: somente a 5ª justa, em acorde com sétima ou extensão, declarada em `omits: ["5"]`.
+- A UI usa o catálogo v2 (`findGuitarVoicings`); a amostra foi aprovada em 2026-11-27.
+
+## Harmony analysis v2 — leituras múltiplas (T6)
+
+[harmony-analysis-v2.json](harmony-analysis-v2.json): `analyzeHarmony(chord, key, vizinhos)` devolve todas as leituras plausíveis (diatônica, menor harmônico, dominante secundária, empréstimo modal e baixo fora do acorde). `analyzeDegree` e o corpus v1 não mudam.
 
 ## Rehearsal Package v1 — `.louvaio-rehearsal.zip` (T7)
 

@@ -7767,6 +7767,55 @@ a:focus-visible {
   }
 }
 
+/* Tappable chords: a 44px hit area that takes no space in the chord sheet. */
+.chord-hit-target {
+  position: relative;
+}
+.chord-hit-target::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+  /* Above the positioned syllable cells that follow in the DOM. */
+  z-index: 1;
+}
+/*
+ * Lyric chords are buttons anchored above their syllable and already 44px tall, but the sheet
+ * clips what sticks out above the first line or left of a line start. Extend those downwards
+ * (over the lyric) and rightwards instead.
+ */
+button.print-chord-span.chord-hit-target::after {
+  top: 0;
+  left: -8px;
+  width: max(calc(100% + 16px), 44px);
+  height: calc(100% + 16px);
+  transform: none;
+}
+/* Reader bar chords are shorter than 44px: grow upwards so the scrolling row gains no height. */
+.smart-chord-inline-btn.chord-hit-target::after {
+  top: auto;
+  bottom: 0;
+  transform: translateX(-50%);
+}
+/* The chord text stays above neighbouring hit areas, so a direct tap never changes chord. */
+.chord-hit-target .chord-hit-label {
+  position: relative;
+  z-index: 2;
+}
+/* Keep those layers inside the sheet, below sticky bars and menus around it. */
+.song-detail-sheet,
+.smart-chords-reading-sheet {
+  isolation: isolate;
+}
+@media print {
+  .chord-hit-target::after {
+    display: none;
+  }
+}
+
 
 
 

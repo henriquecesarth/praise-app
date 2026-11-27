@@ -314,7 +314,8 @@ class SmartChordParser {
         final trailingParenMatch =
             RegExp(r'^(.*?)\s*(\([^\)]+\))\s*$').firstMatch(lineText);
         if (trailingParenMatch != null &&
-            !isMusicalChord(trailingParenMatch.group(2)!)) {
+            !isMusicalChord(trailingParenMatch.group(2)!) &&
+            !_endsWithChord(lineText)) {
           segments.add(SmartChordSegment(
             chord: '',
             text: trailingParenMatch.group(1)!,
@@ -367,7 +368,7 @@ class SmartChordParser {
                 RegExp(r'^(.*?)\s*(\([^\)]+\))\s*$').firstMatch(nextText);
             if (commentMatch != null) {
               final paren = commentMatch.group(2)!;
-              if (!isMusicalChord(paren)) {
+              if (!isMusicalChord(paren) && !_endsWithChord(nextText)) {
                 comment = paren;
                 nextText = commentMatch.group(1)! +
                     (nextText.endsWith(' ') ? ' ' : '');
@@ -408,8 +409,32 @@ class SmartChordParser {
   static final RegExp rootRegex =
       RegExp(r'^([A-G][#b]?)(.*)$', caseSensitive: false);
   static final RegExp extRegex = RegExp(
-    r'^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|9|11|#11|13|b13|5-|5\+|add[249]?)\)|b5|#5|b9|#9|b13|#11|alt|7M|M7)*$',
+    r'^(m|min|maj|M|dim|aug|sus[24]?|add[249]?|[0-9]+|\+|\-|\((b5|#5|b9|#9|4|9|b11|11|#11|13|b13|#13|5-|5\+|maj7|M7|7M|add(?:11|13)|add[249]?)\)|b5|#5|b9|#9|b11|b13|#11|#13|alt|7M|M7|º|°|ø)*$',
   );
+
+  /// Slash parts that extend the chord instead of naming a bass: /9, /4(9).
+  /// Only chord degrees, so a marker such as A/2 or a date is not a chord.
+  static final RegExp _numericExtensionRegex = RegExp(
+    r'^(?:4|5|6|7|9|11|13)(\((?:4|9|11|13|[b#](?:5|9|11|13))\))*$',
+  );
+
+  /// Removes the parentheses around a token, or the single unmatched one left
+  /// by a group such as "(C  D)". Those of "C7(4)" belong to the chord.
+  static String unwrapParentheses(String token) {
+    final open = '('.allMatches(token).length;
+    final close = ')'.allMatches(token).length;
+    if (open == close && token.startsWith('(') && token.endsWith(')')) {
+      return token.substring(1, token.length - 1);
+    }
+    if (open > close && token.startsWith('(')) return token.substring(1);
+    if (close > open && token.endsWith(')')) {
+      return token.substring(0, token.length - 1);
+    }
+    return token;
+  }
+
+  static bool _endsWithChord(String text) =>
+      isMusicalChord(text.trim().split(RegExp(r'\s+')).last);
 
   static String _normalizeUnicodeAccidentals(String token) {
     return token
@@ -440,7 +465,6 @@ class SmartChordParser {
     if (_alternativeChordParts(trimmed) != null) return true;
 
     final slashParts = trimmed.split('/');
-    if (slashParts.length > 2) return false;
 
     final mainPart = slashParts[0];
     final match = rootRegex.firstMatch(mainPart);
@@ -449,14 +473,18 @@ class SmartChordParser {
     final ext = match.group(2) ?? '';
     if (ext.isNotEmpty && !extRegex.hasMatch(ext)) return false;
 
-    if (slashParts.length == 2) {
-      final bassPart = slashParts[1];
+    final rest = slashParts
+        .sublist(1)
+        .skipWhile(_numericExtensionRegex.hasMatch)
+        .toList();
+    if (rest.length > 1) return false;
+    if (rest.length == 1) {
+      final bassPart = rest.first;
       if (bassPart.isEmpty) return false;
       final bassMatch = rootRegex.firstMatch(bassPart);
       final isBassRoot =
           bassMatch != null && extRegex.hasMatch(bassMatch.group(2) ?? '');
-      final isNumericExtension = RegExp(r'^[0-9]+$').hasMatch(bassPart);
-      if (!isBassRoot && !isNumericExtension) return false;
+      if (!isBassRoot) return false;
     }
 
     return true;
@@ -545,13 +573,13 @@ class SmartChordParser {
 
     if (chord.contains('/')) {
       final parts = chord.split('/');
-      if (parts.length == 2 && RegExp(r'^[0-9]+$').hasMatch(parts[1])) {
-        // Compound extension like A7M/9
-        return '${_transposeChordSingle(parts[0], semitones)}/${parts[1]}';
-      }
-      return parts
-          .map((part) => _transposeChordSingle(part, semitones))
-          .join('/');
+      // Compound extensions such as A7M/9 are kept as written.
+      return [
+        for (var i = 0; i < parts.length; i++)
+          i > 0 && _numericExtensionRegex.hasMatch(parts[i])
+              ? parts[i]
+              : _transposeChordSingle(parts[i], semitones),
+      ].join('/');
     }
 
     return _transposeChordSingle(chord, semitones);
@@ -707,7 +735,7 @@ class SmartChordParser {
         ? 0 : label?.end ?? 0;
     final tail = row.substring(start);
     final rowTokens = RegExp(r'\s+|[|:%]+|[^\s|:%]+').allMatches(tail).toList();
-    String chordOf(String value) => value.replaceAll(RegExp(r'^\(|\)$'), '');
+    const chordOf = unwrapParentheses;
     if (rowTokens.any((m) => isMusicalChord(chordOf(m.group(0)!))) &&
         rowTokens.every((m) => isMusicalChord(chordOf(m.group(0)!)) ||
           RegExp(r'^(?:\s+|[|:%]+|\(?\d+[xX]\)?)$').hasMatch(m.group(0)!))) {

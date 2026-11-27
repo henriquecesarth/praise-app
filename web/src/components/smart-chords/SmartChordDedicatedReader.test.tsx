@@ -324,9 +324,13 @@ describe('D2-A Dedicated Musical Reader & Auto-Scroll Engine', () => {
 
     setEditingCell.mockClear();
 
+    // Edit mode keeps natural targets, so neighbouring characters stay tappable
+    expect(document.querySelectorAll('.chord-hit-target')).toHaveLength(0);
+
     // 2. Enable "Piano ao tocar" toggle
     fireEvent.click(toggleBtn);
     expect(toggleBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(document.querySelectorAll('.chord-hit-target')).toHaveLength(2);
 
     // aria-label updates to "Ver diagrama do acorde ..." when pianoOnTap is true
     const pianoChordButtons = screen.getAllByRole('button', { name: /Ver diagrama do acorde/i });
@@ -346,6 +350,42 @@ describe('D2-A Dedicated Musical Reader & Auto-Scroll Engine', () => {
     const closeBtn = within(dialog).getByTestId('chord-piano-close-btn');
     fireEvent.click(closeBtn);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['lyric line', '[C]Um [C/B]dois [Am]tres'],
+    ['bar progression', '[ C | C/B | Am ]'],
+  ])('reads a passing bass from the neighbouring chords of a %s', (_label, content) => {
+    render(
+      <SmartChordReader
+        title="Passagem"
+        selectedArtistName="Artista"
+        originalKey="C"
+        currentKeyTransposed="C"
+        content={content}
+        semitones={0}
+        sheetFontFamily="monospace"
+        printFontSize={14}
+        pdfFontSize={12}
+        chordLineSpacingPx={0}
+        editingCell={null}
+        setEditingCell={vi.fn()}
+        setEditingChordValue={vi.fn()}
+        setSemitones={vi.fn()}
+        setPrintFontSize={vi.fn()}
+        handleChordLineSpacingChange={vi.fn().mockResolvedValue(undefined)}
+        handleFontFamilyChange={vi.fn()}
+        renderInlineEditor={() => null}
+        isActive={true}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId('reader-piano-on-tap-toggle'));
+    fireEvent.click(screen.getByRole('button', { name: /Ver diagrama do acorde C\/B/ }));
+    fireEvent.click(screen.getByTestId('harmony-key-picker-btn'));
+    fireEvent.click(screen.getByTestId('harmony-key-option-C'));
+
+    expect(screen.getByTestId('harmony-readings')).toHaveTextContent('I com baixo de passagem');
   });
 
   it('preserves offline reading for previously cached chords when navigator.onLine is false', async () => {

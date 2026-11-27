@@ -6,8 +6,8 @@ import {
   GuitarLookupResult,
   GuitarStringState,
   GuitarVoicing,
-  lookupGuitarVoicing,
 } from '../../music/guitarVoicings';
+import { findGuitarVoicings } from '../../music/guitarCatalog';
 
 export interface ChordGuitarDiagramProps {
   chordSymbol: string;
@@ -46,7 +46,8 @@ function describeStringRole(
     return { role: 'muted', roleDesc: 'Abafada (X)' };
   }
   const isLowest = s.stringNumber === voicing.lowestNote.stringNumber;
-  const isRoot = s.spelling === parsed.normalized.root.spelling;
+  // Inversion 0 covers a root spelled enharmonically in the bass (C/B#).
+  const isRoot = s.spelling === parsed.normalized.root.spelling || (isLowest && parsed.normalized.inversion === 0);
   const hasExplicitBass = parsed.normalized.bass !== null;
   if (isRoot && isLowest) {
     return { role: 'root-bass', roleDesc: 'Fundamental / Baixo' };
@@ -97,7 +98,16 @@ export function describeGuitarAriaSummary(
   const barreText = v.barres.length > 0
     ? ` Pestana na ${v.barres[0].fret}ª casa, dedo ${v.barres[0].finger}.`
     : '';
-  return `Violão para ${v.chordSymbol}. Posição: ${v.positionName}. Afinação padrão E2 A2 D3 G3 B3 E4.${barreText} Nota mais grave: ${v.lowestNote.note} na ${v.lowestNote.stringNumber}ª corda. Notas produzidas: ${v.soundingNotes.join(', ')}.`;
+  const omitText = v.omits?.length ? ' Omite a 5ª justa.' : '';
+  return `Violão para ${v.chordSymbol}. Posição: ${v.positionName}. Afinação padrão E2 A2 D3 G3 B3 E4.${barreText} Nota mais grave: ${v.lowestNote.note} na ${v.lowestNote.stringNumber}ª corda. Notas produzidas: ${v.soundingNotes.join(', ')}.${omitText} ${guitarOriginLabel(v)}.`;
+}
+
+export function guitarOriginLabel(voicing: GuitarVoicing): string {
+  const { origin } = voicing.provenance;
+  if (origin.startsWith('chords-db')) return 'Forma do chords-db (MIT © 2016 David Rubert)';
+  if (origin.startsWith('Gerador')) return 'Forma gerada';
+  if (origin.startsWith('Forma comum')) return 'Forma comum';
+  return 'Forma curada';
 }
 
 export function ChordGuitarDiagram({
@@ -106,7 +116,7 @@ export function ChordGuitarDiagram({
   lookup: providedLookup,
   className,
 }: ChordGuitarDiagramProps) {
-  const lookup = providedLookup ?? lookupGuitarVoicing(chordSymbol);
+  const lookup = providedLookup ?? findGuitarVoicings(chordSymbol);
 
   if (lookup.status === 'unavailable') {
     return (
@@ -119,7 +129,7 @@ export function ChordGuitarDiagram({
           Diagrama indisponível para {parsed.originalText} no violão
         </p>
         <p className="chord-guitar-unavailable-desc" data-testid="chord-guitar-unavailable-reason">
-          Posição de violão ainda não verificada no catálogo v1 para este acorde. As notas teóricas e o diagrama de piano continuam disponíveis.
+          Não há posição de violão tocável para este acorde. As notas teóricas e o diagrama de piano continuam disponíveis.
         </p>
       </div>
     );
@@ -148,6 +158,10 @@ export function ChordGuitarDiagram({
         </strong>
         {' · '}
         <span data-testid="chord-guitar-tuning">Afinação: E2 A2 D3 G3 B3 E4</span>
+        {' · '}
+        <span data-testid="chord-guitar-origin">
+          {guitarOriginLabel(voicing)}{voicing.omits?.length ? ' · Omite a 5ª justa' : ''}
+        </span>
       </div>
 
       <div className="chord-guitar-highlights">

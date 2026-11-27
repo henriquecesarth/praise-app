@@ -66,6 +66,8 @@ export interface GuitarVoicing {
   lowestNote: GuitarLowestNote;
   soundingNotes: string[];
   provenance: GuitarVoicingProvenance;
+  /** Only ['5']: a perfect fifth left out of a chord with a seventh or extension. */
+  omits?: string[];
 }
 
 export interface GuitarVoicingCatalog {
@@ -118,6 +120,12 @@ export const GUITAR_CATALOG_V1 = catalogJson as GuitarVoicingCatalog;
 
 const EXPECTED_STANDARD_MIDI = [40, 45, 50, 55, 59, 64] as const;
 const EXPECTED_STRING_NUMBERS = [6, 5, 4, 3, 2, 1] as const;
+
+/** Index of the tone that may be left out, or -1. Altered fifths always sound. */
+export function omittableFifth(chord: ChordNormalized): number {
+  if (chord.seventh === null && chord.extensions.length === 0) return -1;
+  return chord.intervals.findIndex(interval => interval.diatonicSteps === 4 && interval.semitones === 7);
+}
 
 export function validateGuitarVoicing(
   voicing: GuitarVoicing,
@@ -329,8 +337,8 @@ export function validateGuitarVoicing(
     // 6. Chord-tone compatibility & unwanted/missing notes
     for (const entry of sounding) {
       const isLowest = entry.stringNumber === lowest.stringNumber;
-      if (isLowest && normalized.bassRole === 'nonChordTone' && normalized.bass !== null) {
-        // Already checked against normalized.bass above
+      if (isLowest && entry.spelling === normalized.bass?.spelling) {
+        // The declared bass, external or spelled enharmonically.
         continue;
       }
       const matchesSpelling = chordResult.notes.some(
@@ -345,16 +353,28 @@ export function validateGuitarVoicing(
       }
     }
 
-    for (const chordNote of chordResult.notes) {
+    const omittable = omittableFifth(normalized);
+    const declared = voicing.omits ?? [];
+    let omitted = false;
+    for (const [index, chordNote] of chordResult.notes.entries()) {
       const covered = sounding.some(
-        s => s.pitchClass === chordNote.pitchClass && s.spelling === chordNote.spelling,
+        // An enharmonic slash bass still sounds its chord tone.
+        s => s.pitchClass === chordNote.pitchClass
+          && (s.spelling === chordNote.spelling || (s.stringNumber === lowest.stringNumber && index === normalized.inversion)),
       );
+      if (!covered && index === omittable && declared.includes('5')) {
+        omitted = true;
+        continue;
+      }
       if (!covered) {
         addIssue(
           'missingChordTone',
           `Chord tone "${chordNote.spelling}" of "${voicing.chordSymbol}" is absent from sounding strings.`,
         );
       }
+    }
+    if (declared.length > (omitted ? 1 : 0)) {
+      addIssue('invalidOmission', `Declared omission [${declared.join(', ')}] is not an omitted perfect fifth of "${voicing.chordSymbol}".`);
     }
   }
 

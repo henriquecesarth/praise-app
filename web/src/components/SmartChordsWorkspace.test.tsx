@@ -1926,6 +1926,7 @@ describe('SmartChordsWorkspace', () => {
       // "Ver piano" button is present in the inline popover
       const viewPianoBtn = screen.getByTestId('inline-chord-view-piano');
       expect(viewPianoBtn).toBeInTheDocument();
+      expect(viewPianoBtn).toHaveStyle({ minHeight: '44px', minWidth: '44px' });
 
       // Clicking "Ver piano" closes inline input without mutating content and opens ChordPianoDiagramPanel
       fireEvent.mouseDown(viewPianoBtn);

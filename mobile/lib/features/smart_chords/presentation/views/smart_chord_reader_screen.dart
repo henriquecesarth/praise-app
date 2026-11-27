@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../widgets/chord_lyric_line.dart';
+import '../widgets/chord_tap_target.dart';
 import '../widgets/chord_piano_diagram_sheet.dart';
 import '../widgets/musical_progression_line.dart';
 import 'package:flutter/material.dart';
@@ -143,6 +144,20 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
       _isAutoScrolling = false;
     }
   }
+
+  ChordNeighbours? _tappedNeighbours;
+
+  void _openChordDiagram(String chord) {
+    _stopAutoScroll();
+    showChordPianoDiagramSheet(
+      context,
+      chord,
+      previousChord: _tappedNeighbours?.previous,
+      nextChord: _tappedNeighbours?.next,
+    );
+  }
+
+  void _rememberNeighbours(ChordNeighbours value) => _tappedNeighbours = value;
 
   void _toggleAutoScroll() {
     if (_isAutoScrolling) {
@@ -847,9 +862,10 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                         constraints: const BoxConstraints(maxWidth: 900),
                         child: SingleChildScrollView(
                           controller: _scrollController,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                           physics: const AlwaysScrollableScrollPhysics(),
-                          child: Column(
+                          child: ChordHitSlopScope(child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                            child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               for (int i = 0; i < lines.length; i++) ...[
@@ -861,6 +877,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                               SizedBox(height: _isFullscreen ? 88 : 48),
                             ],
                           ),
+                          )),
                         ),
                       ),
                     ),
@@ -926,7 +943,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     if (SmartChordParser.progressionTokens(lineText) != null) {
       return MusicalProgressionLine(line: lineText, semitones: semitones, fontSize: _fontSize,
         fontFamily: fontConfig.fontFamily, fontFamilyFallback: fontConfig.fallback,
-        onChordTap: (chord) => showChordPianoDiagramSheet(context, chord));
+        onChordNeighbours: _rememberNeighbours,
+        onChordTap: _openChordDiagram);
     }
     if (alignedLyrics && !SmartChordParser.parse(lineText).any(
         (line) => line.segments.any((segment) => segment.hasChord))) {
@@ -964,7 +982,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     double spacingPx,
   ) => ChordLyricLine(line: lineText, semitones: semitones, fontSize: _fontSize,
       fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: true, spacingPx: spacingPx,
-      onChordTap: (chord) => showChordPianoDiagramSheet(context, chord));
+      onChordNeighbours: _rememberNeighbours,
+      onChordTap: _openChordDiagram);
 
   Widget _buildProportionalLine(
     String lineText,
@@ -975,7 +994,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     double spacingPx,
   ) => ChordLyricLine(line: lineText, semitones: semitones, fontSize: _fontSize,
       fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: false, spacingPx: spacingPx,
-      onChordTap: (chord) => showChordPianoDiagramSheet(context, chord));
+      onChordNeighbours: _rememberNeighbours,
+      onChordTap: _openChordDiagram);
 
   Widget _buildRepertoireLinkBanner(
     BuildContext context,

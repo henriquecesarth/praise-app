@@ -1,0 +1,44 @@
+{
+  "source": "https://github.com/tombatossals/chords-db@df06fa7b425cf5fd29485ff6591236b3557e3fac",
+  "positionsRead": 3283,
+  "accepted": 2527,
+  "duplicates": 38,
+  "acceptedOmittingFifth": 232,
+  "acceptedAfterMutingBassStrings": 167,
+  "acceptedAfterRefingering": 90,
+  "rejected": 598,
+  "rejectedByIssue": {
+    "wrongBassNote": 200,
+    "insufficientSoundingStrings": 35,
+    "incoherentBarre": 111,
+    "missingChordTone": 315,
+    "incoherentFingerAssignment": 103,
+    "invalidStringNote": 21,
+    "soundingNotesMismatch": 26,
+    "lowestNoteMismatch": 9,
+    "invalidOpenNote": 5,
+    "invalidFinger": 5
+  },
+  "unmappedSuffixes": {
+    "5": 37,
+    "sus2sus4": 35,
+    "alt": 48
+  },
+  "commonShapesAdded": [
+    "D/F# 200232",
+    "D/F# 2x0232",
+    "E/G# 422100",
+    "E/G# 4x2100",
+    "A/C# x42220",
+    "G/F# 2x0003",
+    "F/G 3x3211",
+    "Am/G 3x2210",
+    "G 320033",
+    "Em7 022033",
+    "Cadd9 x32033",
+    "Bm7 x20202"
+  ],
+  "commonShapesRejected": [],
+  "chordsInCatalog": 737,
+  "shapesInCatalog": 2549
+}

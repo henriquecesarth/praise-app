@@ -107,7 +107,10 @@ describe('T1 shared musical corpus integrity (not engine conformance)', () => {
         major: [0, 4, 7], minor: [0, 3, 7], diminished: [0, 3, 6],
         augmented: [0, 4, 8], suspended2: [0, 2, 7], suspended4: [0, 5, 7],
       };
-      expect(normalized.intervals!.slice(0, 3).map(value => value.semitones)).toEqual(triads[normalized.quality!]);
+      // An altered fifth, as in C(b5), moves the third tone of the triad.
+      const altered = (normalized as { alterations?: { degree: number; accidental: number }[] }).alterations?.find(value => value.degree === 5);
+      const triad = triads[normalized.quality!];
+      expect(normalized.intervals!.slice(0, 3).map(value => value.semitones)).toEqual([triad[0], triad[1], triad[2] + (altered?.accidental ?? 0)]);
       if (normalized.seventh !== null) {
         const seventh: Record<string, number> = { major: 11, minor: 10, diminished: 9 };
         expect(normalized.intervals!.find(value => value.diatonicSteps === 6)?.semitones).toBe(seventh[normalized.seventh!]);
@@ -119,7 +122,8 @@ describe('T1 shared musical corpus integrity (not engine conformance)', () => {
       });
       if (normalized.bass) {
         checkNote(normalized.bass);
-        const index = expected.notes.findIndex(tone => tone.spelling === normalized.bass!.spelling);
+        let index = expected.notes.findIndex(tone => tone.spelling === normalized.bass!.spelling);
+        if (index < 0) index = expected.notes.findIndex(tone => tone.pitchClass === normalized.bass!.pitchClass);
         expect(normalized.inversion).toBe(index < 0 ? null : index);
         expect(normalized.bassRole).toBe(index < 0 ? 'nonChordTone' : 'chordTone');
       } else {

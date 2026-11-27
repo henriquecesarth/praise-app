@@ -1367,11 +1367,19 @@ void main() {
         lessThan(280),
       );
 
-      final scrollWidget = tester.widget<SingleChildScrollView>(
-        find.byKey(const ValueKey('song_fullscreen_scroll_container')),
+      // The padding lives inside the chord touch scope, which covers it.
+      final scrollPadding = tester.widget<Padding>(
+        find
+            .descendant(
+              of: find.byKey(
+                const ValueKey('song_fullscreen_scroll_container'),
+              ),
+              matching: find.byType(Padding),
+            )
+            .first,
       );
       expect(
-        (scrollWidget.padding as EdgeInsets).bottom,
+        (scrollPadding.padding as EdgeInsets).bottom,
         greaterThanOrEqualTo(96),
       );
 
@@ -2627,8 +2635,12 @@ void main() {
         expect(find.text('C'), findsWidgets);
         expect(find.text('G'), findsWidgets);
 
-        // Tap chord in inline card
-        await tester.tap(find.text('C').first);
+        // Near miss in the inline card, 18 dp above the chord: 44 dp area
+        await tester.ensureVisible(find.text('C').first);
+        await tester.pumpAndSettle();
+        await tester.tapAt(
+          tester.getCenter(find.text('C').first) - const Offset(0, 18),
+        );
         await tester.pumpAndSettle();
 
         // Verify sheet opened
@@ -2648,8 +2660,10 @@ void main() {
         await tester.tap(fullscreenBtn);
         await tester.pumpAndSettle();
 
-        // Tap chord in fullscreen view
-        await tester.tap(find.text('G').first);
+        // Near miss in the fullscreen view
+        await tester.tapAt(
+          tester.getCenter(find.text('G').first) - const Offset(0, 18),
+        );
         await tester.pumpAndSettle();
 
         expect(find.byType(ChordPianoDiagramSheet), findsOneWidget);
@@ -2658,6 +2672,108 @@ void main() {
         await tester.tap(find.byTooltip('Fechar diagrama'));
         await tester.pumpAndSettle();
         expect(find.byType(ChordPianoDiagramSheet), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'tapping a chord pauses auto-scroll in the inline and fullscreen views',
+      (tester) async {
+        final chord = SmartChord(
+          id: 'sc_scroll',
+          userId: 'member_user',
+          title: 'Em Teus Braços',
+          originalKey: 'E',
+          content: List.filled(60, '[C]Tu és [G]Deus').join('\n'),
+          createdAt: '2026-11-10T00:00:00Z',
+          updatedAt: '2026-11-10T00:00:00Z',
+        );
+        fakeRepo.detail = const SongDetail(
+          id: 'song_diag',
+          ministryId: 'min_1',
+          title: 'Em Teus Braços',
+          artistName: 'Laura Souguellis',
+          originalKey: 'E',
+        );
+        final linkRepo = _FakeLinkRepo(
+          onGetChordsForSong: () async => [chord],
+          onRemoveLink: (_, __) async {},
+        );
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              appEnvironmentProvider.overrideWithValue(
+                const AppEnvironment(
+                  env: AppEnv.development,
+                  apiBaseUrl: 'http://localhost:3000/api/v1',
+                ),
+              ),
+              repertoireRepositoryProvider.overrideWithValue(fakeRepo),
+              songDetailNotifierProvider.overrideWith((ref) {
+                return SongDetailNotifier(repository: fakeRepo);
+              }),
+              ministryContextNotifierProvider
+                  .overrideWith((ref) => FakeMinistryContextNotifier()),
+              authNotifierProvider.overrideWith((ref) => _FakeAuthNotifier()),
+              smartChordRepertoireLinkRepositoryProvider
+                  .overrideWithValue(linkRepo),
+              songSmartChordsNotifierProvider.overrideWith(
+                (ref) => SongSmartChordsNotifier(
+                  repository: _NoopSmartChordRepo(),
+                  linkRepository: linkRepo,
+                ),
+              ),
+              smartChordRepertoireLinkNotifierProvider.overrideWith(
+                (ref) => SmartChordRepertoireLinkNotifier(
+                  repository: linkRepo,
+                ),
+              ),
+            ],
+            child: const MaterialApp(
+              home: SongDetailView(
+                ministryId: 'min_1',
+                songId: 'song_diag',
+                initialTitle: 'Em Teus Braços',
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        Future<void> expectPauseOnChordTap() async {
+          final play = find.byTooltip('Rolagem automática').last;
+          await tester.ensureVisible(play);
+          await tester.pumpAndSettle();
+          await tester.tap(play);
+          await tester.pump(const Duration(milliseconds: 400));
+          expect(find.byTooltip('Pausar rolagem'), findsOneWidget);
+
+          final target = find.text('C').hitTestable().first;
+          final position = Scrollable.of(tester.element(target)).position;
+          await tester.tap(target);
+          await tester.pumpAndSettle();
+          expect(find.byType(ChordPianoDiagramSheet), findsOneWidget);
+          final paused = position.pixels;
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(position.pixels, paused);
+
+          await tester.tap(find.byTooltip('Fechar diagrama'));
+          await tester.pumpAndSettle();
+          expect(find.byTooltip('Pausar rolagem'), findsNothing);
+        }
+
+        await expectPauseOnChordTap();
+
+        final fullscreenBtn = find.byKey(
+          const ValueKey('song_detail_fullscreen_button'),
+        );
+        await tester.ensureVisible(fullscreenBtn);
+        await tester.pumpAndSettle();
+        await tester.tap(fullscreenBtn);
+        await tester.pumpAndSettle();
+
+        await expectPauseOnChordTap();
         expect(tester.takeException(), isNull);
       },
     );

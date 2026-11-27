@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { ChordPianoDiagramPanel } from './ChordPianoDiagram';
+import { lineNeighbours } from './lineNeighbours';
+import type { HarmonyNeighbours } from '../../music/theory';
 import {
   CHORD_FONT_FAMILIES,
   getFontFamilyCss,
@@ -89,6 +91,7 @@ export function SmartChordReader({
   const [allowReducedMotionScroll, setAllowReducedMotionScroll] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [activePianoChord, setActivePianoChord] = useState<string | null>(null);
+  const [pianoNeighbours, setPianoNeighbours] = useState<HarmonyNeighbours>({});
   const pianoTriggerRef = useRef<HTMLElement | null>(null);
   const [pianoOnTap, setPianoOnTap] = useState<boolean>(false);
   const savedScrollPosRef = useRef<{ containerTop: number; windowY: number }>({ containerTop: 0, windowY: 0 });
@@ -893,7 +896,7 @@ export function SmartChordReader({
                         <button
                           key={tokenIdx}
                           type="button"
-                          className="smart-chord-inline-btn"
+                          className={pianoOnTap ? 'smart-chord-inline-btn chord-hit-target' : 'smart-chord-inline-btn'}
                           data-chord-cell-line={lineIdx}
                           data-chord-cell-bar={token.chordIndex}
                           aria-label={`${pianoOnTap ? 'Ver diagrama do acorde' : 'Editar acorde'} ${transposedChord}${targetAnnotations.length ? `; ${targetAnnotations.map(item => item.displayText).join(', ')}` : ''}`}
@@ -907,6 +910,12 @@ export function SmartChordReader({
                                 windowY: typeof window !== 'undefined' ? window.scrollY : 0,
                               };
                               setActivePianoChord(transposedChord);
+                              const barChords = tokens.filter(item => item.type === 'chord');
+                              setPianoNeighbours(lineNeighbours(
+                                barChords.map(item => item.value),
+                                barChords.indexOf(token),
+                                chordText => transposeNotationChord(chordText, semitones),
+                              ));
                               pianoTriggerRef.current = e.currentTarget;
                             } else if (token.chordIndex !== undefined) {
                               setEditingCell({ lineIdx, barChordIdx: token.chordIndex });
@@ -917,7 +926,7 @@ export function SmartChordReader({
                         >
                           {annotationsNodes}
                           <span
-                            className="has-chord"
+                            className="has-chord chord-hit-label"
                             data-chord-display
                             data-bar-chord-idx={token.chordIndex}
                             style={{
@@ -1168,6 +1177,11 @@ export function SmartChordReader({
                               windowY: typeof window !== 'undefined' ? window.scrollY : 0,
                             };
                             setActivePianoChord(transposedChord);
+                            setPianoNeighbours(lineNeighbours(
+                              visualChordIndexes.map(index => visual.chords[index]),
+                              visualChordIndexes.indexOf(charIdx),
+                              chordText => transposeNotationChord(chordText, semitones),
+                            ));
                             pianoTriggerRef.current = e.currentTarget;
                           }
                         } else {
@@ -1180,7 +1194,7 @@ export function SmartChordReader({
                       {hasChord && (
                         <span
                           aria-hidden="true"
-                          className="print-chord-span"
+                          className={pianoOnTap ? 'print-chord-span chord-hit-target' : 'print-chord-span'}
                           data-chord-display
                           style={{
                             position: 'absolute',
@@ -1194,7 +1208,7 @@ export function SmartChordReader({
                           }}
                         >
                           {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" data-annotation-target-token={item.target?.token} style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(printFontSize * item.fontScale)}px`, color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
-                          {transposedChord}
+                          <span className="chord-hit-label">{transposedChord}</span>
                         </span>
                       )}
                       {charNode}
@@ -1257,6 +1271,11 @@ export function SmartChordReader({
                               windowY: typeof window !== 'undefined' ? window.scrollY : 0,
                             };
                             setActivePianoChord(transposedExtra);
+                            setPianoNeighbours(lineNeighbours(
+                              visualChordIndexes.map(index => visual.chords[index]),
+                              extraChordOrdinal,
+                              chordText => transposeNotationChord(chordText, semitones),
+                            ));
                             pianoTriggerRef.current = e.currentTarget;
                           }
                         } else {
@@ -1269,7 +1288,7 @@ export function SmartChordReader({
                       {hasExtraChord && (
                         <span
                           aria-hidden="true"
-                          className="print-chord-span"
+                          className={pianoOnTap ? 'print-chord-span chord-hit-target' : 'print-chord-span'}
                           data-chord-display
                           style={{
                             position: 'absolute',
@@ -1283,7 +1302,7 @@ export function SmartChordReader({
                           }}
                         >
                           {extraTargetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" data-annotation-target-token={item.target?.token} style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: `${Math.round(printFontSize * item.fontScale)}px`, color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
-                          {transposeNotationChord(extraChord, semitones)}
+                          <span className="chord-hit-label">{transposeNotationChord(extraChord, semitones)}</span>
                         </span>
                       )}
                       {plusNode}
@@ -1299,6 +1318,7 @@ export function SmartChordReader({
 
       <ChordPianoDiagramPanel
         chordSymbol={activePianoChord}
+        neighbours={pianoNeighbours}
         onClose={() => {
           setActivePianoChord(null);
           if (sheetScrollRef.current) {

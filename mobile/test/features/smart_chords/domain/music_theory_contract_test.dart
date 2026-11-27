@@ -144,9 +144,17 @@ void main() {
             'suspended2': [0, 2, 7],
             'suspended4': [0, 5, 7],
           };
+          // An altered fifth, as in C(b5), moves the third tone of the triad.
+          var fifthShift = 0;
+          for (final value in (normalized['alterations'] as List? ?? const [])) {
+            if ((value as Map)['degree'] == 5) {
+              fifthShift = value['accidental'] as int;
+            }
+          }
+          final triad = triads[normalized['quality']]!;
           expect(
             intervals.take(3).map((value) => value['semitones']).toList(),
-            triads[normalized['quality']],
+            [triad[0], triad[1], triad[2] + fifthShift],
           );
           if (normalized['seventh'] != null) {
             const seventh = {'major': 11, 'minor': 10, 'diminished': 9};
@@ -174,9 +182,14 @@ void main() {
           if (normalized['bass'] != null) {
             final bass = normalized['bass'] as Map<String, dynamic>;
             _checkNote(bass);
-            final index = notes.indexWhere(
+            var index = notes.indexWhere(
               (note) => note['spelling'] == bass['spelling'],
             );
+            if (index < 0) {
+              index = notes.indexWhere(
+                (note) => note['pitchClass'] == bass['pitchClass'],
+              );
+            }
             expect(normalized['inversion'], index < 0 ? null : index);
             expect(
               normalized['bassRole'],

@@ -49,6 +49,8 @@ import {
 } from '../utils/smart_chord';
 import { SmartChordImportModal } from './SmartChordImportModal';
 import { ChordPianoDiagramPanel } from './smart-chords/ChordPianoDiagram';
+import { lineNeighbours } from './smart-chords/lineNeighbours';
+import type { HarmonyNeighbours } from '../music/theory';
 import { preferenceWriter } from '../utils/preferenceWriter';
 import { transposeNotationChord } from '../utils/smart_chord_notation';
 import { parseNotation } from '../utils/smart_chord_notation';
@@ -142,6 +144,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [workspacePianoChord, setWorkspacePianoChord] = useState<string | null>(null);
+  const [workspacePianoNeighbours, setWorkspacePianoNeighbours] = useState<HarmonyNeighbours>({});
   const workspacePianoTriggerRef = useRef<HTMLElement | null>(null);
   const workspacePianoAnchorRef = useRef<{ lineIdx: number; charIdx?: number; barChordIdx?: number } | null>(null);
 
@@ -1286,6 +1289,18 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     setEditingCell(null);
   };
 
+  const neighboursOnLine = (lineIdx: number, charIdx?: number, barChordIdx?: number): HarmonyNeighbours => {
+    const lineText = content.split(/\r\n|\n|\r/)[lineIdx] ?? '';
+    const display = (chordText: string) => transposeNotationChord(chordText, semitones) || chordText;
+    if (barChordIdx !== undefined) {
+      const bars = parseBarProgressionLine(lineText).filter(token => token.type === 'chord');
+      return lineNeighbours(bars.map(token => token.value), bars.findIndex(token => token.chordIndex === barChordIdx), display);
+    }
+    const visual = rawToVisual(lineText);
+    const indexes = Object.keys(visual.chords).map(Number);
+    return lineNeighbours(indexes.map(index => visual.chords[index]), indexes.indexOf(charIdx ?? -1), display);
+  };
+
   const renderInlineEditor = (lineIdx: number, charIdx?: number, barChordIdx?: number) => {
     const suggestions = getSuggestions(editingChordValue, originalKey);
 
@@ -1400,13 +1415,15 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
             const chordToView = currentChordVal ? (transposeNotationChord(currentChordVal, semitones) || currentChordVal) : '';
             setEditingCell(null);
             if (chordToView) {
+              setWorkspacePianoNeighbours(neighboursOnLine(lineIdx, charIdx, barChordIdx));
               setWorkspacePianoChord(chordToView);
             }
           }}
           style={{
             marginTop: '4px',
-            minHeight: '26px',
-            padding: '2px 8px',
+            minHeight: '44px',
+            minWidth: '44px',
+            padding: '4px 10px',
             fontSize: '11px',
             fontWeight: 600,
             backgroundColor: 'var(--action-primary-subtle, #F9ECE7)',
@@ -1998,6 +2015,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
 
       <ChordPianoDiagramPanel
         chordSymbol={workspacePianoChord}
+        neighbours={workspacePianoNeighbours}
         onClose={() => {
           setWorkspacePianoChord(null);
           const anchor = workspacePianoAnchorRef.current;

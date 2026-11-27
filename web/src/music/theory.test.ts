@@ -85,7 +85,8 @@ describe('T2 TypeScript music theory engine', () => {
     expect(parseChord('Dmaj9').diatonicSpellings).toEqual(['D', 'F#', 'A', 'C#', 'E']);
     expect(parseChord('A6').diatonicSpellings).toEqual(['A', 'C#', 'E', 'F#']);
     expect(parseChord('Gsus4add9').diatonicSpellings).toEqual(['G', 'C', 'D', 'A']);
-    expect(parsed(parseChord('C/B#'))).toMatchObject({ bassRole: 'nonChordTone', inversion: null });
+    // An enharmonic bass counts as the chord tone it sounds like.
+    expect(parsed(parseChord('C/B#'))).toMatchObject({ bassRole: 'chordTone', inversion: 0 });
     expect(parsed(transposeChord('C/E', { policy: 'chromaticSharps', semitones: 1 }))).toMatchObject({ canonicalSymbol: 'C#/E#', inversion: 1 });
     expect(parsed(transposeChord('C/F#', { policy: 'chromaticSharps', semitones: 1 }))).toMatchObject({ canonicalSymbol: 'C#/F##', bassRole: 'nonChordTone', inversion: null });
   });

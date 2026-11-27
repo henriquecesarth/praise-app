@@ -246,8 +246,11 @@ class GuitarVoicing {
     required this.lowestNote,
     required this.soundingNotes,
     required this.provenance,
+    this.omits = const [],
   });
 
+  /// Only ['5']: a perfect fifth left out of a chord with a seventh or extension.
+  final List<String> omits;
   final String id;
   final String chordSymbol;
   final String canonicalSymbol;
@@ -278,9 +281,11 @@ class GuitarVoicing {
         lowestNote: GuitarLowestNote.fromJson(json['lowestNote'] as Map<String, dynamic>),
         soundingNotes: List<String>.unmodifiable((json['soundingNotes'] as List).cast<String>()),
         provenance: GuitarVoicingProvenance.fromJson(json['provenance'] as Map<String, dynamic>),
+        omits: List<String>.unmodifiable((json['omits'] as List?)?.cast<String>() ?? const <String>[]),
       );
 
   Map<String, Object?> toJson() => {
+        if (omits.isNotEmpty) 'omits': omits,
         'id': id,
         'chordSymbol': chordSymbol,
         'canonicalSymbol': canonicalSymbol,
@@ -668,6 +673,12 @@ class _SoundingEntry {
   final int midi;
 }
 
+/// Index of the tone that may be left out, or -1. Altered fifths always sound.
+int omittableFifth(ChordNormalized chord) {
+  if (chord.seventh == null && chord.extensions.isEmpty) return -1;
+  return chord.intervals.indexWhere((i) => i.diatonicSteps == 4 && i.semitones == 7);
+}
+
 GuitarVoicingValidationResult validateGuitarVoicing(
   GuitarVoicing voicing, {
   GuitarTuning? tuning,
@@ -871,7 +882,8 @@ GuitarVoicingValidationResult validateGuitarVoicing(
     // 6. Chord-tone compatibility & unwanted/missing notes
     for (final entry in sounding) {
       final isLowest = entry.stringNumber == lowest.stringNumber;
-      if (isLowest && normalized.bassRole == 'nonChordTone' && normalized.bass != null) {
+      // The declared bass, external or spelled enharmonically.
+      if (isLowest && entry.spelling == normalized.bass?.spelling) {
         continue;
       }
       final matchesSpelling = parsedChord.notes.any(
@@ -886,16 +898,34 @@ GuitarVoicingValidationResult validateGuitarVoicing(
       }
     }
 
-    for (final chordNote in parsedChord.notes) {
+    final omittable = omittableFifth(normalized);
+    var omitted = false;
+    for (var index = 0; index < parsedChord.notes.length; index++) {
+      final chordNote = parsedChord.notes[index];
       final covered = sounding.any(
-        (s) => s.pitchClass == chordNote.pitchClass && s.spelling == chordNote.spelling,
+        // An enharmonic slash bass still sounds its chord tone.
+        (s) =>
+            s.pitchClass == chordNote.pitchClass &&
+            (s.spelling == chordNote.spelling ||
+                (s.stringNumber == lowest.stringNumber &&
+                    index == normalized.inversion)),
       );
+      if (!covered && index == omittable && voicing.omits.contains('5')) {
+        omitted = true;
+        continue;
+      }
       if (!covered) {
         addIssue(
           'missingChordTone',
           'Chord tone "${chordNote.spelling}" of "${voicing.chordSymbol}" is absent from sounding strings.',
         );
       }
+    }
+    if (voicing.omits.length > (omitted ? 1 : 0)) {
+      addIssue(
+        'invalidOmission',
+        'Declared omission [${voicing.omits.join(', ')}] is not an omitted perfect fifth of "${voicing.chordSymbol}".',
+      );
     }
   }
 

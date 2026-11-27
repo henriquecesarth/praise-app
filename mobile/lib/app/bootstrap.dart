@@ -1,7 +1,9 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/music/guitar_voicings_catalog_v2.g.dart';
 import '../core/storage/preferences_storage.dart';
 import '../firebase_options.dart';
 import 'environment/app_environment.dart';
@@ -15,6 +17,11 @@ import 'theme/app_theme.dart';
 /// before running the widget tree inside [ProviderScope].
 Future<void> bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
+  LicenseRegistry.addLicense(
+    () => Stream.value(
+      const LicenseEntryWithLineBreaks(['chords-db'], kGuitarCatalogNotice),
+    ),
+  );
 
   try {
     final environment = AppEnvironment.fromDartDefines();

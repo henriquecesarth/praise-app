@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_lyric_line.dart';
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_tap_target.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
 
 void main() {
@@ -27,8 +29,41 @@ void main() {
     });
   }
 
-  group('MusicalProgressionLine onChordTap and recognizer lifecycle', () {
-    testWidgets('attaches recognizer to chord spans and invokes onChordTap without altering single Text invariant', (tester) async {
+  testWidgets('reports the transposed neighbours of the tapped chord', (tester) async {
+    ChordNeighbours? progression;
+    ChordNeighbours? lyric;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: Column(children: [
+      MusicalProgressionLine(
+        line: '[ Bb | Bb/A | Gm ]',
+        semitones: 2,
+        onChordTap: (_) {},
+        onChordNeighbours: (value) => progression = value,
+      ),
+      ChordLyricLine(
+        line: '[Bb]Um [Bb/A]dois [Gm]tres',
+        semitones: 2,
+        fontSize: 14,
+        fontFamily: 'Arial',
+        fontFamilyFallback: const [],
+        monospace: false,
+        onChordTap: (_) {},
+        onChordNeighbours: (value) => lyric = value,
+      ),
+    ]))));
+
+    final targets = tester.widgetList<ChordTapTarget>(find.byType(ChordTapTarget)).toList();
+    expect(targets, hasLength(6));
+    targets[1].onActivate();
+    targets[3].onActivate();
+
+    expect(progression, (previous: 'C', next: 'Am'));
+    expect(lyric, (previous: null, next: 'C/B'));
+    targets[4].onActivate();
+    expect(lyric, (previous: 'C', next: 'Am'));
+  });
+
+  group('MusicalProgressionLine onChordTap', () {
+    testWidgets('keeps a single paragraph with one tappable widget per transposed chord', (tester) async {
       String? tappedChord;
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
@@ -40,26 +75,18 @@ void main() {
         ),
       ));
 
-      final textFinder = find.descendant(of: find.byType(MusicalProgressionLine), matching: find.byType(Text));
-      expect(textFinder, findsOneWidget);
+      final paragraph = tester.widget<Text>(find.byWidgetPredicate(
+          (w) => w is Text && w.textSpan != null));
+      // Each chord is a widget placeholder inside the same row.
+      expect(paragraph.textSpan!.toPlainText(), 'Intro:  ￼ | ￼ | ￼ ');
 
-      final text = tester.widget<Text>(textFinder);
-      expect(text.textSpan!.toPlainText(), 'Intro:  B | C#m | E ');
-
-      final spans = (text.textSpan! as TextSpan).children!.cast<TextSpan>();
-      final chordSpanB = spans.firstWhere((s) => s.text == 'B');
-      expect(chordSpanB.recognizer, isNotNull);
-
-      // Simulate tap on chord span recognizer
-      (chordSpanB.recognizer as dynamic).onTap();
+      await tester.tap(find.text('B'));
       expect(tappedChord, 'B');
-
-      final chordSpanCsm = spans.firstWhere((s) => s.text == 'C#m');
-      (chordSpanCsm.recognizer as dynamic).onTap();
+      await tester.tap(find.text('C#m'));
       expect(tappedChord, 'C#m');
     });
 
-    testWidgets('didUpdateWidget properly recreates recognizers and dispose cleans them up', (tester) async {
+    testWidgets('uses the new chord and callback after an update', (tester) async {
       final taps = <String>[];
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
@@ -71,9 +98,7 @@ void main() {
         ),
       ));
 
-      var text = tester.widget<Text>(find.descendant(of: find.byType(MusicalProgressionLine), matching: find.byType(Text)));
-      var spans = (text.textSpan! as TextSpan).children!.cast<TextSpan>();
-      (spans.firstWhere((s) => s.text == 'C').recognizer as dynamic).onTap();
+      await tester.tap(find.text('C'));
       expect(taps, ['old:C']);
 
       // Update widget with new semitones and callback
@@ -87,9 +112,7 @@ void main() {
         ),
       ));
 
-      text = tester.widget<Text>(find.descendant(of: find.byType(MusicalProgressionLine), matching: find.byType(Text)));
-      spans = (text.textSpan! as TextSpan).children!.cast<TextSpan>();
-      (spans.firstWhere((s) => s.text == 'D').recognizer as dynamic).onTap();
+      await tester.tap(find.text('D'));
       expect(taps, ['old:C', 'new:D']);
 
       // Unmount

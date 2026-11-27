@@ -604,6 +604,9 @@ describe('SongDetail (D2-B Delivery 2)', () => {
     // 1. Click on chord button in SongDetail (e.g. G(add9)/B)
     const chordBtn = screen.getByRole('button', { name: 'Ver diagrama do acorde G(add9)/B' });
     expect(chordBtn).toBeInTheDocument();
+    // 44px hit area comes from CSS; the label sits above neighbouring hit areas
+    expect(chordBtn).toHaveClass('chord-hit-target');
+    expect(chordBtn.querySelector('.chord-hit-label')).toHaveTextContent('G(add9)/B');
     chordBtn.focus();
     fireEvent.click(chordBtn);
 

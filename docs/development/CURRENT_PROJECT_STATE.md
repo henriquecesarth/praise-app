@@ -1,9 +1,15 @@
 # Estado atual
 
-Atualizado em 2026-11-26. Atualize ao fim de cada marco.
+Atualizado em 2026-11-27. Atualize ao fim de cada marco.
 
 ## Branch
 `fix/louvaio-audit-remediation-20261113`. Enviada ao remoto em 2026-11-26, incluindo as correções `be675ab` (WAV) e `d8417de` (MP3 incremental).
+
+## Em andamento: T3 do V3 Musical (acordes interativos acessíveis), 2026-11-27
+Implementada na Web e no Android sobre `5b92119`; commit e push junto com a T6 em 2026-11-27, **sem deploy**. A conferência humana no tablet (retrato, toque com o dedo e cifra sem deslocamento) não foi confirmada explicitamente. Evidências, limites e resíduos da revisão: seção "Fechamento da T3" em `docs/exec-plans/active/2026-11-16-v3-musical-phase-1-proposal.md`.
+
+## Em andamento: T6 do V3 Musical (violão e harmonia), 2026-11-27
+Motores e UI prontos na web e no Flutter, amostra aprovada, `feature-reviewer` sem bloqueios e teste no tablet aprovado pelo responsável; commit e push em 2026-11-27, **sem deploy**. As três pendências foram corrigidas depois da revisão; essas correções foram revisadas sem bloqueios e os achados corrigidos, exceto a notação nova no backend. Detalhes: `docs/exec-plans/active/2026-11-27-v3-t6-guitar-harmony.md`.
 
 ## Concluído: M22-S4.2 (reprodução MP3 incremental no Android)
 Concluído em `c65b283` (commits `08b45aa`, `2cd265d`, `49df80d` e `c65b283`). A reprodução incremental é **experimental e desligada por padrão**; o limite continua em 300 s. Detalhes, medidas e riscos: `docs/architecture/m22s42-android-mp3-incremental.md`.

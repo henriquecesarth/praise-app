@@ -366,39 +366,64 @@ final class _ChordFormula {
 
 // Suffix families are parsed independently of root spelling and corpus data.
 final _suffixPattern = RegExp(
-  r'^(min|m|dim|aug|\+|sus2|sus4)?(maj(?:7|9|11|13)|7M|6|7|9|11|13)?(add(?:9|11|13))?((?:[#b](?:9|11|13))*)$',
+  r'^(m(?!aj)|dim|aug|sus2|sus4)?(maj(?:7|9|11|13)|6|7|9|11|13)?((?:add(?:9|11|13))*)((?:[#b](?:5|9|11|13))*)$',
 );
 
-_ChordFormula? _formula(String sourceSuffix) {
-  var suffix = sourceSuffix;
+/// Brazilian forms: M7 = maj7, º/° = dim, 4 = sus4 (C4, C7/4, C7(4)),
+/// 7sus4 = sus47, and bare (9)/(11)/(13), which extend a seventh with 9 and add
+/// any other degree. [numeric] holds the slash tokens of C7/4/9.
+/// A major chord with only a 9 (C9, C(9), C/9) is sus2, or add9 when the bass is
+/// its major third (C9/E); the dominant ninth is written C7(9) or C7/9 and keeps
+/// the canonical suffix 7add9.
+_ChordFormula? _formula(
+  String sourceSuffix,
+  List<String> numeric, {
+  bool thirdInBass = false,
+}) {
   // Parentheses enclose one recognized token, never arbitrary/nested notation.
-  final parenthesis = RegExp(r'\((maj7|add(?:9|11|13)|[#b](?:5|9|11|13))\)');
-  suffix = suffix.replaceAllMapped(parenthesis, (m) => m.group(1)!);
+  var suffix = sourceSuffix
+      .replaceAll(RegExp(r'[º°]'), 'dim')
+      .replaceFirst(RegExp(r'M(?=7|9|11|13)'), 'maj')
+      .replaceAllMapped(
+        RegExp(r'\((maj7|add(?:9|11|13)|[#b](?:5|9|11|13))\)'),
+        (m) => m.group(1)!,
+      )
+      .replaceFirst('(7M)', 'maj7');
+  final tokens = [...numeric];
+  suffix = suffix.replaceAllMapped(RegExp(r'\((4|9|11|13)\)'), (m) {
+    tokens.add(m.group(1)!);
+    return '';
+  });
   if (suffix.contains('(') || suffix.contains(')')) return null;
   suffix = suffix
+      .replaceFirst(RegExp(r'^ø7$'), 'm7b5')
       .replaceFirst(RegExp(r'^min'), 'm')
-      .replaceFirst(RegExp(r'^\+'), 'aug');
-  final halfDiminished = suffix == 'm7b5' || suffix == 'ø7';
-  final numericNine = suffix.endsWith('/9');
-  if (numericNine) {
-    suffix = suffix.substring(0, suffix.length - 2);
-    final numericBase = RegExp(r'^(min|m|dim|aug|\+|sus2|sus4)?(6|7|maj7|7M)$');
-    if (!_matches(numericBase, suffix)) return null;
-    suffix = suffix.endsWith('6')
-        ? '${suffix}add9'
-        : suffix.endsWith('maj7')
-        ? '${suffix.substring(0, suffix.length - 4)}maj9'
-        : suffix.endsWith('7M')
-        ? '${suffix.substring(0, suffix.length - 2)}maj9'
-        : '${suffix.substring(0, suffix.length - 1)}9';
+      .replaceFirst(RegExp(r'^\+'), 'aug')
+      .replaceFirst('7M', 'maj7');
+  if (suffix == '4') {
+    suffix = '';
+    tokens.add('4');
   }
-  final match = _suffixPattern.firstMatch(halfDiminished ? 'dim7' : suffix);
-  if (match == null || match.end != (halfDiminished ? 'dim7' : suffix).length) {
-    return null;
+  suffix = suffix.replaceFirstMapped(
+    RegExp(r'^(maj(?:7|9|11|13)|7|9|11|13)(sus[24])'),
+    (m) => '${m.group(2)}${m.group(1)}',
+  );
+  if (tokens.contains('4')) {
+    if (tokens.where((t) => t == '4').length > 1 ||
+        RegExp(r'^(m(?!aj)|dim|aug|sus)').hasMatch(suffix)) {
+      return null;
+    }
+    suffix = 'sus4$suffix';
   }
-  var qualityToken = match.group(1) ?? '';
-  if (qualityToken == 'min') qualityToken = 'm';
-  if (qualityToken == '+') qualityToken = 'aug';
+  final degrees = [
+    for (final token in tokens)
+      if (token != '4') int.parse(token),
+  ]..sort();
+  final halfDiminished = suffix == 'm7b5' && degrees.isEmpty;
+  final subject = halfDiminished ? 'dim7' : suffix;
+  final match = _suffixPattern.firstMatch(subject);
+  if (match == null || match.end != subject.length) return null;
+  final qualityToken = match.group(1) ?? '';
   final quality = switch (qualityToken) {
     'm' => 'minor',
     'dim' => 'diminished',
@@ -408,14 +433,40 @@ _ChordFormula? _formula(String sourceSuffix) {
     _ => 'major',
   };
   var extensionToken = match.group(2) ?? '';
-  if (extensionToken == '7M') extensionToken = 'maj7';
+  final added = [
+    for (final item in RegExp(r'add(9|11|13)').allMatches(match.group(3)!))
+      int.parse(item.group(1)!),
+  ];
+  if (added.toSet().length != added.length) return null;
+  final alterationText = match.group(4)!;
+  int highestOf(String token) =>
+      int.tryParse(token.replaceFirst('maj', '')) ?? 0;
+  final onlyNine =
+      match.group(1) == null &&
+      match.group(3)!.isEmpty &&
+      alterationText.isEmpty &&
+      (extensionToken == '9'
+          ? degrees.isEmpty
+          : extensionToken.isEmpty && degrees.length == 1 && degrees.first == 9);
+  if (onlyNine) return _formula(thirdInBass ? 'add9' : 'sus2', const []);
+  for (final degree in degrees) {
+    // On a major chord the seventh stays explicit, since a lone 9 means sus2.
+    if (degree == 9 &&
+        added.isEmpty &&
+        (extensionToken == 'maj7' ||
+            (extensionToken == '7' && match.group(1) != null))) {
+      extensionToken = extensionToken.replaceFirst('7', '9');
+      continue;
+    }
+    final current = highestOf(extensionToken);
+    if (added.contains(degree) || alterationText.contains('$degree')) {
+      return null;
+    }
+    if (current < 9 || degree > current) added.add(degree);
+  }
+  added.sort();
   final majorSeventh = extensionToken.startsWith('maj');
-  final highest = extensionToken.isEmpty
-      ? 0
-      : int.parse(extensionToken.replaceFirst('maj', ''));
-  final added = match.group(3) == null
-      ? null
-      : int.parse(match.group(3)!.substring(3));
+  final highest = highestOf(extensionToken);
   final seventh = highest < 7
       ? null
       : majorSeventh
@@ -462,20 +513,25 @@ _ChordFormula? _formula(String sourceSuffix) {
     extensions.add(7);
   }
   for (final degree in [9, 11, 13]) {
-    if (highest >= degree || added == degree) {
+    if (highest >= degree || added.contains(degree)) {
       intervals.add(SignedInterval(degree - 1, _naturalHeight(degree - 1)));
       extensions.add(degree);
     }
   }
   final alterations = <ChordAlteration>[];
-  final alterationText = match.group(4)!;
   for (final alteration in RegExp(
-    r'([#b])(9|11|13)',
+    r'([#b])(5|9|11|13)',
   ).allMatches(alterationText)) {
     final degree = int.parse(alteration.group(2)!);
     final accidental = alteration.group(1) == '#' ? 1 : -1;
     if (alterations.any((a) => a.degree == degree)) return null;
     alterations.add(ChordAlteration(degree, accidental));
+    if (degree == 5) {
+      // A dim or aug quality already fixes the fifth.
+      if (quality == 'diminished' || quality == 'augmented') return null;
+      intervals[2] = SignedInterval(4, 7 + accidental);
+      continue;
+    }
     final changed = SignedInterval(
       degree - 1,
       _naturalHeight(degree - 1) + accidental,
@@ -490,11 +546,15 @@ _ChordFormula? _formula(String sourceSuffix) {
   }
   intervals.sort((a, b) => a.diatonicSteps.compareTo(b.diatonicSteps));
   extensions.sort();
+  alterations.sort((a, b) => a.degree.compareTo(b.degree));
+  final tail = [
+    for (final degree in added) 'add$degree',
+    for (final a in alterations) '${a.accidental < 0 ? 'b' : '#'}${a.degree}',
+  ].join();
+  final canonical = '$qualityToken$extensionToken$tail';
   final canonicalSuffix = halfDiminished
       ? 'm7b5'
-      : quality == 'minor' && seventh == 'major' && highest == 7
-      ? 'm(maj7)${added == null ? '' : 'add$added'}$alterationText'
-      : '$qualityToken${majorSeventh ? 'maj' : ''}${highest == 0 ? '' : highest}${added == null ? '' : 'add$added'}$alterationText';
+      : canonical.replaceFirst(RegExp(r'^mmaj7'), 'm(maj7)');
   return _ChordFormula(
     canonicalSuffix,
     quality,
@@ -522,16 +582,31 @@ TheoryResult<ChordNormalized> parseChord(
   final parts = text.split('/');
   var body = parts.first;
   SpelledNote? bass;
-  var numericExtension = false;
-  for (var i = 1; i < parts.length; i++) {
+  final numeric = <String>[];
+  var first = 1;
+  var misplacedNine = false;
+  while (first < parts.length &&
+      (parts[first] == '4' ||
+          parts[first].startsWith('9') ||
+          parts[first].startsWith('4(')) &&
+      !numeric.contains(parts[first][0])) {
+    final part = parts[first++];
+    final degree = part[0];
+    if (degree == '9' &&
+        !RegExp(
+          r'^[A-Ga-g][#b♯♭♮𝄪𝄫]*((m|min|dim|aug|\+|sus2|sus4)?(6|7M|M7|maj7|7)(\(4\))?)?$',
+          unicode: true,
+        ).hasMatch(body)) {
+      misplacedNine = true;
+    }
+    numeric.add(degree);
+    // Trailing groups such as the (9) of C7/4(9) stay in the suffix.
+    body += part.substring(1);
+  }
+  for (var i = first; i < parts.length; i++) {
     final part = parts[i];
     if (part.isEmpty) return Unsupported(text, 'invalidSyntax', 'missingBass');
     if (bass != null) return Unsupported(text, 'invalidSyntax', 'multipleBass');
-    if (part == '9' && !numericExtension) {
-      body += '/9';
-      numericExtension = true;
-      continue;
-    }
     final parsedBass = parseNote(part);
     if (parsedBass is Unsupported<NoteNormalized>) {
       return Unsupported(text, parsedBass.category, parsedBass.reason);
@@ -551,6 +626,9 @@ TheoryResult<ChordNormalized> parseChord(
     return Unsupported(text, parsedRoot.category, parsedRoot.reason);
   }
   final root = (parsedRoot as Parsed<NoteNormalized>).normalized.note;
+  if (misplacedNine) {
+    return Unsupported(text, 'invalidSyntax', 'unknownSuffix');
+  }
   final suffix = body.substring(rootMatch.end);
   if (suffix == 'alt') {
     return Unsupported(text, 'unsupportedFeature', 'unspecifiedAlteredToneSet');
@@ -558,7 +636,12 @@ TheoryResult<ChordNormalized> parseChord(
   if (suffix == '5') {
     return Unsupported(text, 'unsupportedFeature', 'powerChordOutsideV1');
   }
-  final formula = _formula(suffix);
+  final formula = _formula(
+    suffix,
+    numeric,
+    thirdInBass:
+        bass != null && bass.pitchClass == (root.pitchClass + 4) % 12,
+  );
   if (formula == null) {
     return Unsupported(text, 'invalidSyntax', 'unknownSuffix');
   }
@@ -609,9 +692,13 @@ TheoryResult<ChordNormalized> _chordResult(
     }
     notes.add(note);
   }
-  final bassIndex = bass == null
+  // Transposed charts spell basses enharmonically (D#/G for D#/F##).
+  var bassIndex = bass == null
       ? -1
       : notes.indexWhere((n) => n.spelling == bass.spelling);
+  if (bass != null && bassIndex < 0) {
+    bassIndex = notes.indexWhere((n) => n.pitchClass == bass.pitchClass);
+  }
   return Parsed(
     text,
     ChordNormalized(
@@ -1229,6 +1316,365 @@ BassAnalysis analyzeBass(ChordNormalized chord, List<SpelledNote> notes) {
   );
 }
 
+/*
+ * Harmony v2: every plausible reading of one chord in an explicit key, including
+ * secondary dominants, harmonic minor, common modal borrowing and a bass outside
+ * the chord. analyzeDegree keeps the v1 contract. Mirrors theory.ts.
+ */
+final class HarmonyReading {
+  const HarmonyReading({
+    required this.kind,
+    required this.label,
+    required this.interpretedAs,
+    required this.explanation,
+    this.target,
+    this.rank = 0,
+  });
+  final String kind;
+  final String label;
+  final String? target;
+  final String interpretedAs;
+  final String explanation;
+  final int rank;
+
+  HarmonyReading copyWith({
+    String? kind,
+    String? interpretedAs,
+    String? explanation,
+    int? rank,
+  }) => HarmonyReading(
+    kind: kind ?? this.kind,
+    label: label,
+    target: target,
+    interpretedAs: interpretedAs ?? this.interpretedAs,
+    explanation: explanation ?? this.explanation,
+    rank: rank ?? this.rank,
+  );
+
+  Map<String, Object?> toJson() => {
+    'kind': kind,
+    'label': label,
+    'target': target,
+    'interpretedAs': interpretedAs,
+    'explanation': explanation,
+    'rank': rank,
+  };
+}
+
+final class HarmonyReadings {
+  const HarmonyReadings({
+    required this.status,
+    required this.originalText,
+    this.key,
+    this.bass,
+    this.readings = const [],
+    this.reason,
+  });
+  final String status;
+  final String originalText;
+  final String? key;
+  final BassAnalysis? bass;
+  final List<HarmonyReading> readings;
+  final String? reason;
+
+  Map<String, Object?> toJson() => {
+    'status': status,
+    'originalText': originalText,
+    'key': key,
+    'bass': bass?.toJson(),
+    'readings': readings.map((r) => r.toJson()).toList(),
+    'reason': reason,
+  };
+}
+
+const _majorDegreeNames = ['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°'];
+const _minorDegreeNames = ['i', 'ii°', 'III', 'iv', 'v', 'VI', 'VII'];
+
+/// True when [value] sits that many letter steps and semitones above [base].
+bool _above(SpelledNote value, SpelledNote base, int steps, int semitones) =>
+    (_letters.indexOf(value.letter) - _letters.indexOf(base.letter)) % 7 ==
+        steps &&
+    (value.pitchClass - base.pitchClass) % 12 == semitones;
+
+List<HarmonyReading> _rootPositionReadings(String symbol, KeyContext key) {
+  final parsedChord = parseChord(symbol);
+  if (parsedChord is! Parsed<ChordNormalized>) return [];
+  final chord = parsedChord.normalized;
+  final readings = <HarmonyReading>[];
+  void add(String kind, String label, String explanation, [String? target]) {
+    if (readings.any((r) => r.label == label)) return;
+    readings.add(
+      HarmonyReading(
+        kind: kind,
+        label: label,
+        target: target,
+        interpretedAs: symbol,
+        explanation: explanation,
+      ),
+    );
+  }
+
+  final degree = analyzeDegree(symbol, key: key);
+  final diatonic = degree is HarmonyAnalyzed;
+  if (degree is HarmonyAnalyzed) {
+    add(
+      'diatonic',
+      degree.analysis.degree.replaceFirstMapped(
+        RegExp(r'sus([24])(\d+)'),
+        (m) => '${m.group(2)}sus${m.group(1)}',
+      ),
+      'Grau diatônico de ${key.canonicalKey}.',
+    );
+  }
+  final dominant =
+      chord.quality == 'major' &&
+      (chord.seventh == null || chord.seventh == 'minor');
+  final seventhMark = chord.seventh != null ? '7' : '';
+  if (key.mode == 'minor') {
+    if (dominant && _above(chord.root, key.tonic, 4, 7)) {
+      add(
+        'harmonicMinor',
+        'V$seventhMark',
+        'Dominante do modo menor (escala menor harmônica).',
+      );
+    }
+    if (chord.quality == 'diminished' &&
+        (chord.seventh == null || chord.seventh == 'diminished') &&
+        _above(chord.root, key.tonic, 6, 11)) {
+      add(
+        'harmonicMinor',
+        'vii°$seventhMark',
+        'Sensível diminuta do modo menor (escala menor harmônica).',
+      );
+    }
+  }
+  if (dominant && (!diatonic || chord.seventh == 'minor')) {
+    final names = key.mode == 'major' ? _majorDegreeNames : _minorDegreeNames;
+    for (final index
+        in key.mode == 'major' ? [1, 2, 3, 4, 5] : [2, 3, 4, 5, 6]) {
+      final target = key.scale[index];
+      if (_above(chord.root, target, 4, 7)) {
+        add(
+          'secondaryDominant',
+          'V$seventhMark/${names[index]}',
+          'Dominante secundária: prepara o grau ${names[index]} (${target.spelling}).',
+          names[index],
+        );
+      }
+    }
+  }
+  if (key.mode == 'major') {
+    final explanation = 'Empréstimo modal de ${key.tonic.spelling} menor.';
+    if (chord.quality == 'major' &&
+        chord.seventh != 'minor' &&
+        chord.seventh != 'diminished' &&
+        _above(chord.root, key.tonic, 5, 8)) {
+      add(
+        'modalBorrowing',
+        chord.seventh != null ? 'bVImaj7' : 'bVI',
+        explanation,
+      );
+    }
+    if (dominant && _above(chord.root, key.tonic, 6, 10)) {
+      add('modalBorrowing', 'bVII$seventhMark', explanation);
+    }
+    if (chord.quality == 'minor' &&
+        chord.seventh != 'major' &&
+        _above(chord.root, key.tonic, 3, 5)) {
+      add(
+        'modalBorrowing',
+        chord.seventh != null
+            ? 'iv7'
+            : chord.extensions.contains(6)
+            ? 'iv6'
+            : 'iv',
+        explanation,
+      );
+    }
+  }
+  return readings;
+}
+
+List<HarmonyReading> _externalBassReadings(
+  ChordNormalized chord,
+  List<SpelledNote> notes,
+  SpelledNote bass,
+  String upper,
+  KeyContext key,
+  String? previous,
+  String? next,
+) {
+  final readings = <HarmonyReading>[];
+  final upperReadings = _rootPositionReadings(upper, key);
+  final upperSpellings = notes.map((n) => n.spelling).toSet();
+  final slash = '$upper/${bass.spelling}';
+
+  // The upper chord plus the bass spells another chord (only its fifth may be missing).
+  for (final suffix in ['7', 'm7', 'maj7', 'm7b5', '9sus4']) {
+    final symbol = '${bass.spelling}$suffix';
+    final candidate = parseChord(symbol);
+    if (candidate is! Parsed<ChordNormalized>) continue;
+    final tones = candidate.notes.map((n) => n.spelling).toList();
+    final fifth = candidate.normalized.intervals.indexWhere(
+      (i) => i.diatonicSteps == 4 && i.semitones == 7,
+    );
+    if (!upperSpellings.every(tones.contains)) continue;
+    var covered = true;
+    for (var i = 0; i < tones.length; i++) {
+      if (i != fifth &&
+          tones[i] != bass.spelling &&
+          !upperSpellings.contains(tones[i])) {
+        covered = false;
+      }
+    }
+    if (!covered) continue;
+    for (final reading in _rootPositionReadings(symbol, key)) {
+      readings.add(
+        reading.copyWith(
+          kind: 'bassReinterpretation',
+          explanation: '$slash soa como $symbol. ${reading.explanation}',
+        ),
+      );
+    }
+    break;
+  }
+
+  // A triad over its own seventh: D/C is D7 in third inversion.
+  if (chord.seventh == null &&
+      chord.extensions.isEmpty &&
+      (chord.quality == 'major' || chord.quality == 'minor')) {
+    final minorSeventh = _above(bass, chord.root, 6, 10);
+    if (minorSeventh || _above(bass, chord.root, 6, 11)) {
+      final symbol =
+          '${chord.root.spelling}${chord.quality == 'minor' ? 'm' : ''}${minorSeventh ? '7' : 'maj7'}';
+      for (final reading in _rootPositionReadings(symbol, key)) {
+        readings.add(
+          reading.copyWith(
+            kind: 'bassSeventh',
+            interpretedAs: '$symbol/${bass.spelling}',
+            explanation:
+                'Baixo na sétima: 3ª inversão de $symbol. ${reading.explanation}',
+          ),
+        );
+      }
+    }
+  }
+
+  final name = upperReadings.isEmpty ? upper : upperReadings.first.label;
+  SpelledNote? bassOf(String? text) {
+    if (text == null || text.isEmpty) return null;
+    final result = parseChord(text);
+    if (result is! Parsed<ChordNormalized>) return null;
+    return result.normalized.bass ?? result.normalized.root;
+  }
+
+  final before = bassOf(previous);
+  final after = bassOf(next);
+  if (before != null && after != null) {
+    int step(SpelledNote from, SpelledNote to) =>
+        (to.pitchClass - from.pitchClass + 6) % 12 - 6;
+    final first = step(before, bass);
+    final second = step(bass, after);
+    if (first != 0 &&
+        first.abs() <= 2 &&
+        second.abs() <= 2 &&
+        first * second > 0) {
+      readings.add(
+        HarmonyReading(
+          kind: 'passingBass',
+          label: '$name com baixo de passagem',
+          interpretedAs: upper,
+          explanation:
+              'O baixo caminha ${before.spelling} → ${bass.spelling} → ${after.spelling}.',
+        ),
+      );
+    }
+  }
+  final pedal = _above(bass, key.tonic, 0, 0)
+      ? 'tônica'
+      : _above(bass, key.tonic, 4, 7)
+      ? 'dominante'
+      : null;
+  if (pedal != null && upperReadings.isNotEmpty) {
+    readings.add(
+      HarmonyReading(
+        kind: 'pedalBass',
+        label: '$name sobre pedal de $pedal',
+        interpretedAs: upper,
+        explanation:
+            'O baixo ${bass.spelling} sustenta a $pedal sob o acorde $upper.',
+      ),
+    );
+  }
+  if (readings.isEmpty && upperReadings.isNotEmpty) {
+    readings.add(
+      HarmonyReading(
+        kind: 'externalBass',
+        label: '$name com baixo fora do acorde',
+        interpretedAs: upper,
+        explanation: 'O baixo ${bass.spelling} não pertence ao acorde $upper.',
+      ),
+    );
+  }
+  return readings;
+}
+
+/// [previous] and [next] are the chords around this one on the same line; they
+/// are only used to detect a passing bass.
+HarmonyReadings analyzeHarmony(
+  String chordText, {
+  Object? key,
+  String? previous,
+  String? next,
+}) {
+  final parsedChord = parseChord(chordText);
+  if (parsedChord is! Parsed<ChordNormalized>) {
+    return HarmonyReadings(
+      status: 'unsupported',
+      originalText: chordText,
+      reason: (parsedChord as Unsupported<ChordNormalized>).reason,
+    );
+  }
+  final chord = parsedChord.normalized;
+  final bass = analyzeBass(chord, parsedChord.notes);
+  HarmonyReadings fail(String reason, String? canonicalKey) => HarmonyReadings(
+    status: 'indeterminate',
+    originalText: chordText,
+    key: canonicalKey,
+    bass: bass,
+    reason: reason,
+  );
+  if (key == null || (key is String && key.isEmpty)) {
+    return fail('missingKeyContext', null);
+  }
+  final keyResult = parseKeyContext(key);
+  if (keyResult is! Parsed<KeyContext>) return fail('invalidKeyContext', null);
+  final context = keyResult.normalized;
+  final upper = chord.canonicalSymbol.split('/').first;
+  final externalBass = chord.bassRole == 'nonChordTone' ? chord.bass : null;
+  final found = externalBass != null
+      ? _externalBassReadings(
+          chord,
+          parsedChord.notes,
+          externalBass,
+          upper,
+          context,
+          previous,
+          next,
+        )
+      : _rootPositionReadings(upper, context);
+  if (found.isEmpty) return fail('outsideCoverage', context.canonicalKey);
+  return HarmonyReadings(
+    status: 'analyzed',
+    originalText: chordText,
+    key: context.canonicalKey,
+    bass: bass,
+    readings: [
+      for (var i = 0; i < found.length; i++) found[i].copyWith(rank: i + 1),
+    ],
+  );
+}
+
 String _describeHarmonyQuality(String quality, String? seventh) {
   if (quality == 'diminished' && seventh == 'minor') {
     return 'Meio-diminuto';
@@ -1418,10 +1864,12 @@ HarmonyAnalysisResult analyzeDegree(
       (chord.quality == 'minor' || chord.quality == 'diminished')
       ? _romanLower[matchedDegree]
       : _romanUpper[matchedDegree];
+  // The dominant ninth keeps its roman label (V9).
   final chordSuffix = chord.canonicalSymbol
       .substring(chord.root.spelling.length)
       .split('/')
-      .first;
+      .first
+      .replaceFirst(RegExp(r'^7add9$'), '9');
 
   final String degree;
   if (chordSuffix.isEmpty || chordSuffix == 'm') {

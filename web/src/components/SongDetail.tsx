@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Song, SongVersion, SmartChord, Classification, GroupRole } from '../types';
 import { api } from '../api';
 import { ChordPianoDiagramPanel } from './smart-chords/ChordPianoDiagram';
+import { lineNeighbours } from './smart-chords/lineNeighbours';
+import type { HarmonyNeighbours } from '../music/theory';
 import {
   transposeChord,
   rawToVisual,
@@ -183,6 +185,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   const [lineSpacingPx, setLineSpacingPx] = useState(resolveEffectiveLineSpacing);
   const spacingUserSelectedRef = useRef(false);
   const [activePianoChord, setActivePianoChord] = useState<string | null>(null);
+  const [pianoNeighbours, setPianoNeighbours] = useState<HarmonyNeighbours>({});
   const pianoTriggerRef = useRef<HTMLElement | null>(null);
   const chordSheetContainerRef = useRef<HTMLDivElement | null>(null);
   const savedScrollPosRef = useRef<{ containerTop: number; windowY: number }>({ containerTop: 0, windowY: 0 });
@@ -2187,7 +2190,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                               <button
                                 type="button"
                                 key={tokenIdx}
-                                className="has-chord"
+                                className="has-chord chord-hit-target"
                                 data-chord-display
                                 data-chord={transposedChord}
                                 data-bar-chord-idx={token.chordIndex}
@@ -2198,6 +2201,12 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                     windowY: typeof window !== 'undefined' ? window.scrollY : 0,
                                   };
                                   setActivePianoChord(transposedChord);
+                                  const barChords = tokens.filter(item => item.type === 'chord');
+                                  setPianoNeighbours(lineNeighbours(
+                                    barChords.map(item => item.value),
+                                    barChords.indexOf(token),
+                                    chordText => transposeNotationChord(chordText, semitones),
+                                  ));
                                   pianoTriggerRef.current = e.currentTarget;
                                 }}
                                 style={{
@@ -2215,7 +2224,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                 }}
                               >
                                 {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: '0.8em', color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
-                                {transposedChord}
+                                <span className="chord-hit-label">{transposedChord}</span>
                               </button>
                             );
                           }
@@ -2324,7 +2333,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                             {hasChord && (
                               <button
                                 type="button"
-                                className="print-chord-span"
+                                className="print-chord-span chord-hit-target"
                                 data-chord={transposedChord}
                                 data-chord-display
                                 data-anchor-idx={charIdx}
@@ -2335,6 +2344,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                     windowY: typeof window !== 'undefined' ? window.scrollY : 0,
                                   };
                                   setActivePianoChord(transposedChord);
+                                  setPianoNeighbours(lineNeighbours(
+                                    visualChordIndexes.map(index => visual.chords[index]),
+                                    chordOrdinal,
+                                    chordText => transposeNotationChord(chordText, semitones),
+                                  ));
                                   pianoTriggerRef.current = e.currentTarget;
                                 }}
                                 style={{
@@ -2355,7 +2369,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                 }}
                               >
                                 {targetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: '0.8em', color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
-                                {transposedChord}
+                                <span className="chord-hit-label">{transposedChord}</span>
                               </button>
                             )}
                             <span
@@ -2394,7 +2408,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                           >
                             <button
                               type="button"
-                              className="print-chord-span"
+                              className="print-chord-span chord-hit-target"
                               data-chord-display
                               data-chord={transposedExtra}
                               data-anchor-idx={text.length}
@@ -2405,6 +2419,11 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                                   windowY: typeof window !== 'undefined' ? window.scrollY : 0,
                                 };
                                 setActivePianoChord(transposedExtra);
+                                setPianoNeighbours(lineNeighbours(
+                                  visualChordIndexes.map(index => visual.chords[index]),
+                                  extraChordOrdinal,
+                                  chordText => transposeNotationChord(chordText, semitones),
+                                ));
                                 pianoTriggerRef.current = e.currentTarget;
                               }}
                               style={{
@@ -2425,7 +2444,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                               }}
                             >
                               {extraTargetAnnotations.map((item, idx) => <span key={`anchor-${idx}`} data-notation-anchor data-notation-annotation data-annotation-placement="above-next-chord" style={{ position: 'absolute', bottom: '100%', left: 0, whiteSpace: 'nowrap', fontSize: '0.8em', color: 'var(--text-secondary)' }}>{item.displayText}</span>)}
-                              {transposedExtra}
+                              <span className="chord-hit-label">{transposedExtra}</span>
                             </button>
                             <span style={{ visibility: 'hidden', whiteSpace: 'pre' }}> </span>
                           </div>
@@ -2986,6 +3005,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
 
       <ChordPianoDiagramPanel
         chordSymbol={activePianoChord}
+        neighbours={pianoNeighbours}
         onClose={() => {
           setActivePianoChord(null);
           if (chordSheetContainerRef.current) {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:louvaio_mobile/core/music/theory.dart';
 import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/chord_piano_diagram_sheet.dart';
@@ -463,6 +464,29 @@ void main() {
       expect(find.byType(ChordPianoDiagramSheet), findsNothing);
     });
 
+    testWidgets('Escape closes the chord diagram sheet', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => Center(
+              child: ElevatedButton(
+                onPressed: () => showChordPianoDiagramSheet(ctx, 'C'),
+                child: const Text('Abrir'),
+              ),
+            ),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Abrir'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ChordPianoDiagramSheet), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(ChordPianoDiagramSheet), findsNothing);
+    });
+
     for (final width in [320.0, 360.0, 393.0, 840.0]) {
       for (final symbol in ['G/B', 'C7', 'C7M', 'Bdim7']) {
         testWidgets('fluid layout without RenderFlex overflow for $symbol on width $width at textScale 1.3', (tester) async {
@@ -545,7 +569,8 @@ void main() {
           ),
         ),
       ));
-      expect(find.text('Posição: Pestana na 1ª casa (forma de E)'), findsOneWidget);
+      expect(find.text('Posição: 1ª posição'), findsOneWidget);
+      expect(find.text('Forma curada'), findsOneWidget);
       expect(find.text('Pestana: 1ª casa (cordas 6 a 1, dedo 1)'), findsOneWidget);
       expect(find.text('Pestana • 1'), findsOneWidget);
       expect(find.text('Baixo efetivo: F2 (6ª corda)'), findsOneWidget);
@@ -560,7 +585,7 @@ void main() {
           ),
         ),
       ));
-      expect(find.text('Posição: Aberta com baixo em B (1ª inversão)'), findsOneWidget);
+      expect(find.text('Posição: Aberta (1ª posição)'), findsOneWidget);
       expect(find.text('Baixo efetivo: B2 (5ª corda)'), findsOneWidget);
       expect(find.textContaining('Baixo: B — nota do acorde • 1ª inversão'), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -587,16 +612,45 @@ void main() {
           ),
         ),
       ));
-      expect(find.text('Posição: 2ª casa (baixo na 6ª corda)'), findsOneWidget);
+      expect(find.text('Posição: 1ª posição'), findsOneWidget);
       expect(find.text('Baixo efetivo: F#2 (6ª corda)'), findsOneWidget);
       expect(find.text('X'), findsNWidgets(2));
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('displays Diagrama indisponível on Violão for uncatalogued chords C/F# and B13 while keeping metadata', (tester) async {
+    testWidgets('steps through every guitar position and resets when the chord changes', (tester) async {
+      Widget sheet(String chord) => MaterialApp(
+        home: Scaffold(
+          body: ChordPianoDiagramSheet(
+            chordSymbol: chord,
+            initialInstrument: ChordDiagramInstrument.guitar,
+          ),
+        ),
+      );
+      String count() => tester.widget<Text>(find.byKey(const Key('guitar_position_count'))).data!;
+
+      await tester.pumpWidget(sheet('D/F#'));
+      expect(count(), '1/6');
+      expect(find.text('Forma comum'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('guitar_position_prev')));
+      await tester.pumpAndSettle();
+      expect(count(), '6/6');
+
+      await tester.pumpWidget(sheet('C'));
+      await tester.pumpAndSettle();
+      expect(count(), '1/3');
+
+      await tester.pumpWidget(sheet('Bb13'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Omite a 5ª justa'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('displays Diagrama indisponível on Violão when no shape is playable', (tester) async {
       await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
-          body: ChordPianoDiagramSheet(chordSymbol: 'C/F#'),
+          body: ChordPianoDiagramSheet(chordSymbol: 'Dbmaj13'),
         ),
       ));
 
@@ -604,8 +658,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('chord_guitar_unavailable')), findsOneWidget);
-      expect(find.text('Diagrama indisponível para C/F# no violão'), findsOneWidget);
-      expect(find.textContaining('Baixo: F# — baixo externo / slash bass'), findsOneWidget);
+      expect(find.text('Diagrama indisponível para Dbmaj13 no violão'), findsOneWidget);
 
       // Switch back to Piano works smoothly
       await tester.tap(find.byKey(const Key('diagram_instrument_piano')));
@@ -636,15 +689,15 @@ void main() {
       expect(find.text('Baixo efetivo: D3 (4ª corda)'), findsOneWidget);
       expect(find.text('F#4'), findsOneWidget);
 
-      // Transpose to C# (not in curated catalog)
+      // Transpose to C# (outside the curated shapes)
       await tester.pumpWidget(const MaterialApp(
         home: Scaffold(
           body: ChordPianoDiagramSheet(chordSymbol: 'C#'),
         ),
       ));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('chord_guitar_unavailable')), findsOneWidget);
-      expect(find.text('Diagrama indisponível para C# no violão'), findsOneWidget);
+      expect(find.byType(GuitarFretboardView), findsOneWidget);
+      expect(find.textContaining('Baixo efetivo: C#'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -749,8 +802,9 @@ void main() {
         ),
       ));
       await tester.pumpAndSettle();
-      expect(find.text('Grau harmônico: Grau não determinado'), findsOneWidget);
-      expect(find.textContaining('menor harmônica ou melódica'), findsOneWidget);
+      expect(find.text('Grau harmônico: veja as leituras possíveis'), findsOneWidget);
+      expect(find.byKey(const Key('harmony_readings')), findsOneWidget);
+      expect(find.textContaining('V7'), findsWidgets);
 
       // Reset to no key
       await tester.ensureVisible(pickerBtn);

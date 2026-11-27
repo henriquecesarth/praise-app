@@ -395,7 +395,8 @@ describe('T4 Guitar Diagram integration in ChordPianoDiagramPanel', () => {
       <ChordPianoDiagramPanel chordSymbol="F" onClose={vi.fn()} initialInstrument="guitar" />,
     );
 
-    expect(screen.getByTestId('chord-guitar-position-name')).toHaveTextContent('Pestana na 1ª casa (forma de E)');
+    expect(screen.getByTestId('chord-guitar-position-name')).toHaveTextContent('1ª posição');
+    expect(screen.getByTestId('chord-guitar-origin')).toHaveTextContent('Forma curada');
     expect(screen.getByTestId('chord-guitar-barre-info')).toHaveTextContent(
       'Pestana: 1ª casa (cordas 6 a 1, dedo 1)',
     );
@@ -407,7 +408,7 @@ describe('T4 Guitar Diagram integration in ChordPianoDiagramPanel', () => {
 
     // G/B inversion
     rerender(<ChordPianoDiagramPanel chordSymbol="G/B" onClose={vi.fn()} initialInstrument="guitar" />);
-    expect(screen.getByTestId('chord-guitar-position-name')).toHaveTextContent('Aberta com baixo em B (1ª inversão)');
+    expect(screen.getByTestId('chord-guitar-position-name')).toHaveTextContent('Aberta (1ª posição)');
     expect(screen.getByTestId('chord-guitar-lowest-note')).toHaveTextContent('Baixo efetivo: B2 (5ª corda)');
     expect(screen.getByTestId('chord-guitar-svg').querySelector('[data-string-number="6"]')).toHaveAttribute(
       'data-string-status',
@@ -425,7 +426,7 @@ describe('T4 Guitar Diagram integration in ChordPianoDiagramPanel', () => {
 
     // F#m7(b5)
     rerender(<ChordPianoDiagramPanel chordSymbol="F#m7(b5)" onClose={vi.fn()} initialInstrument="guitar" />);
-    expect(screen.getByTestId('chord-guitar-position-name')).toHaveTextContent('2ª casa (baixo na 6ª corda)');
+    expect(screen.getByTestId('chord-guitar-position-name')).toHaveTextContent('1ª posição');
     expect(screen.getByTestId('chord-guitar-lowest-note')).toHaveTextContent('Baixo efetivo: F#2 (6ª corda)');
     expect(screen.getByTestId('chord-guitar-svg').querySelector('[data-string-number="5"]')).toHaveAttribute(
       'data-string-status',
@@ -437,17 +438,40 @@ describe('T4 Guitar Diagram integration in ChordPianoDiagramPanel', () => {
     );
   });
 
-  it('shows "Diagrama indisponível" on Violão for uncatalogued chords (C/F#, B13) without breaking Piano or metadata', () => {
-    render(<ChordPianoDiagramPanel chordSymbol="C/F#" onClose={vi.fn()} />);
+  it('steps through every guitar position and resets when the chord changes', () => {
+    const { rerender } = render(
+      <ChordPianoDiagramPanel chordSymbol="D/F#" onClose={vi.fn()} initialInstrument="guitar" />,
+    );
+    const count = screen.getByTestId('guitar-position-count');
+    expect(count).toHaveTextContent('1/6');
+    expect(screen.getByTestId('chord-guitar-origin')).toHaveTextContent('Forma comum');
+
+    fireEvent.click(screen.getByTestId('guitar-position-prev'));
+    expect(count).toHaveTextContent('6/6');
+    fireEvent.click(screen.getByTestId('guitar-position-next'));
+    fireEvent.click(screen.getByTestId('guitar-position-next'));
+    expect(count).toHaveTextContent('2/6');
+
+    rerender(<ChordPianoDiagramPanel chordSymbol="C" onClose={vi.fn()} initialInstrument="guitar" />);
+    expect(screen.getByTestId('guitar-position-count')).toHaveTextContent('1/3');
+  });
+
+  it('announces an omitted fifth and the origin of the shape', () => {
+    render(<ChordPianoDiagramPanel chordSymbol="Bb13" onClose={vi.fn()} initialInstrument="guitar" />);
+    expect(screen.getByTestId('chord-guitar-origin')).toHaveTextContent('Omite a 5ª justa');
+    expect(screen.getByTestId('chord-piano-live-region')).toHaveTextContent('Omite a 5ª justa.');
+  });
+
+  it('shows "Diagrama indisponível" on Violão when no shape is playable, without breaking Piano or metadata', () => {
+    render(<ChordPianoDiagramPanel chordSymbol="Dbmaj13" onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByTestId('diagram-instrument-guitar'));
     expect(screen.getByTestId('chord-guitar-unavailable')).toHaveTextContent(
-      'Diagrama indisponível para C/F# no violão',
+      'Diagrama indisponível para Dbmaj13 no violão',
     );
     expect(screen.getByTestId('chord-piano-live-region')).toHaveTextContent(
-      'Diagrama indisponível para C/F# no violão',
+      'Diagrama indisponível para Dbmaj13 no violão',
     );
-    expect(screen.getByTestId('chord-bass-pill')).toHaveTextContent('Baixo: F# — baixo externo / slash bass');
 
     // Return to Piano smoothly
     fireEvent.click(screen.getByTestId('diagram-instrument-piano'));
@@ -469,11 +493,9 @@ describe('T4 Guitar Diagram integration in ChordPianoDiagramPanel', () => {
       'F#4',
     );
 
-    // Transpose to C# (not in curated catalog)
+    // Transpose to C# (outside the curated shapes)
     rerender(<ChordPianoDiagramPanel chordSymbol="C#" onClose={vi.fn()} />);
-    expect(screen.getByTestId('chord-guitar-unavailable')).toHaveTextContent(
-      'Diagrama indisponível para C# no violão',
-    );
+    expect(screen.getByTestId('chord-guitar-lowest-note')).toHaveTextContent('C#');
   });
 
   it('preserves aria-live, Tab focus trap, Escape dismissal, and focus restoration while in Violão mode', async () => {
@@ -564,8 +586,9 @@ describe('T5 Contextual Harmonic Analysis in ChordPianoDiagramPanel', () => {
 
     // Transposition while keeping in-memory key C -> D (out of C major)
     rerender(<ChordPianoDiagramPanel chordSymbol="D" onClose={vi.fn()} />);
-    expect(screen.getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: Grau não determinado');
-    expect(screen.getByTestId('harmony-explanation')).toHaveTextContent('fora da escala diatônica de C');
+    expect(screen.getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: veja as leituras possíveis');
+    expect(screen.getByTestId('harmony-readings')).toHaveTextContent('V/V');
+    expect(screen.getByTestId('chord-piano-live-region')).toHaveTextContent('Leituras harmônicas: V/V');
 
     // Switch in-memory key to Am and verify natural minor vs harmonic minor chord E7
     rerender(<ChordPianoDiagramPanel chordSymbol="Am" onClose={vi.fn()} />);
@@ -575,8 +598,8 @@ describe('T5 Contextual Harmonic Analysis in ChordPianoDiagramPanel', () => {
     expect(screen.getByTestId('harmony-explanation')).toHaveTextContent('escala menor natural');
 
     rerender(<ChordPianoDiagramPanel chordSymbol="E7" onClose={vi.fn()} />);
-    expect(screen.getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: Grau não determinado');
-    expect(screen.getByTestId('harmony-explanation')).toHaveTextContent('menor harmônica ou melódica');
+    expect(screen.getByTestId('harmony-degree-value')).toHaveTextContent('Grau harmônico: veja as leituras possíveis');
+    expect(screen.getByTestId('harmony-readings')).toHaveTextContent('V7');
 
     // Clear key back to none
     fireEvent.click(screen.getByTestId('harmony-key-picker-btn'));

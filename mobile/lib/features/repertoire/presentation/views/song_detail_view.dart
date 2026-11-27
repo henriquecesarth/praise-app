@@ -14,6 +14,7 @@ import '../../../smart_chords/domain/smart_chord_parser.dart';
 import '../../../smart_chords/presentation/views/smart_chord_reader_screen.dart';
 import '../../../smart_chords/presentation/views/smart_chord_form_screen.dart';
 import '../../../smart_chords/presentation/widgets/chord_lyric_line.dart';
+import '../../../smart_chords/presentation/widgets/chord_tap_target.dart';
 import '../../../smart_chords/presentation/widgets/chord_piano_diagram_sheet.dart';
 import '../../../smart_chords/presentation/widgets/musical_progression_line.dart';
 import '../../../smart_chords/presentation/widgets/smart_chord_picker_modal.dart';
@@ -860,6 +861,20 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
     _scrollController.dispose();
     super.dispose();
   }
+
+  ChordNeighbours? _tappedNeighbours;
+
+  void _openChordDiagram(String chord) {
+    _stopAutoScroll();
+    showChordPianoDiagramSheet(
+      context,
+      chord,
+      previousChord: _tappedNeighbours?.previous,
+      nextChord: _tappedNeighbours?.next,
+    );
+  }
+
+  void _rememberNeighbours(ChordNeighbours value) => _tappedNeighbours = value;
 
   void _stopAutoScroll({bool updateState = true}) {
     _autoScrollTimer?.cancel();
@@ -2708,7 +2723,7 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                     if (effectiveMode == 'cifra') ...[
                       const SizedBox(height: 10),
                       if (activeChord != null)
-                        Container(
+                        ChordHitSlopScope(child: Container(
                           key: const ValueKey('song_detail_inline_chord_sheet'),
                           padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
@@ -2744,11 +2759,8 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                                               fontFamily: fontConfig.fontFamily,
                                               fontFamilyFallback:
                                                   fontConfig.fallback,
-                                              onChordTap: (chord) =>
-                                                  showChordPianoDiagramSheet(
-                                                    context,
-                                                    chord,
-                                                  ),
+                                              onChordNeighbours: _rememberNeighbours,
+                                              onChordTap: _openChordDiagram,
                                             )
                                           : ChordLyricLine(
                                               line: inlineLines[i],
@@ -2765,18 +2777,15 @@ class _SongDetailContentState extends ConsumerState<_SongDetailContent> {
                                                         inlineLines[i - 1],
                                                       ) !=
                                                       null,
-                                              onChordTap: (chord) =>
-                                                  showChordPianoDiagramSheet(
-                                                    context,
-                                                    chord,
-                                                  ),
+                                              onChordNeighbours: _rememberNeighbours,
+                                              onChordTap: _openChordDiagram,
                                             ),
                                     ),
                                 ],
                               );
                             },
                           ),
-                        )
+                        ))
                       else if (isLoadingChords)
                         buildContentLoadingCard(),
                     ],
@@ -3045,6 +3054,20 @@ class _SongFullscreenStandScreenState
     super.dispose();
   }
 
+  ChordNeighbours? _tappedNeighbours;
+
+  void _openChordDiagram(String chord) {
+    _stopAutoScroll();
+    showChordPianoDiagramSheet(
+      context,
+      chord,
+      previousChord: _tappedNeighbours?.previous,
+      nextChord: _tappedNeighbours?.next,
+    );
+  }
+
+  void _rememberNeighbours(ChordNeighbours value) => _tappedNeighbours = value;
+
   void _stopAutoScroll({bool updateState = true}) {
     _autoScrollTimer?.cancel();
     _autoScrollTimer = null;
@@ -3157,13 +3180,14 @@ class _SongFullscreenStandScreenState
                     child: SingleChildScrollView(
                       key: const ValueKey('song_fullscreen_scroll_container'),
                       controller: _scrollController,
-                      padding: EdgeInsets.fromLTRB(
-                        horizontalPadding,
-                        14,
-                        horizontalPadding,
-                        bottomPadding,
-                      ),
-                      child: Column(
+                      child: ChordHitSlopScope(child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          14,
+                          horizontalPadding,
+                          bottomPadding,
+                        ),
+                        child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Text(
@@ -3246,11 +3270,8 @@ class _SongFullscreenStandScreenState
                                       fontSize: _fontSize,
                                       fontFamily: fontConfig.fontFamily,
                                       fontFamilyFallback: fontConfig.fallback,
-                                      onChordTap: (chord) =>
-                                          showChordPianoDiagramSheet(
-                                            context,
-                                            chord,
-                                          ),
+                                      onChordNeighbours: _rememberNeighbours,
+                                      onChordTap: _openChordDiagram,
                                     )
                                   : ChordLyricLine(
                                       line: lines[i],
@@ -3265,11 +3286,8 @@ class _SongFullscreenStandScreenState
                                                 lines[i - 1],
                                               ) !=
                                               null,
-                                      onChordTap: (chord) =>
-                                          showChordPianoDiagramSheet(
-                                            context,
-                                            chord,
-                                          ),
+                                      onChordNeighbours: _rememberNeighbours,
+                                      onChordTap: _openChordDiagram,
                                     ),
                               SizedBox(height: lineSpacingPx),
                             ],
@@ -3293,6 +3311,7 @@ class _SongFullscreenStandScreenState
                           ],
                         ],
                       ),
+                      )),
                     ),
                   ),
                 ),

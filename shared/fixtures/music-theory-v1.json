@@ -2272,41 +2272,30 @@
         "originalText": "C9",
         "normalized": {
           "kind": "chord",
-          "canonicalSymbol": "C9",
+          "canonicalSymbol": "Csus2",
           "root": {
             "letter": "C",
             "accidental": 0,
             "spelling": "C",
             "pitchClass": 0
           },
-          "quality": "major",
-          "seventh": "minor",
+          "quality": "suspended2",
+          "seventh": null,
           "intervals": [
             {
               "diatonicSteps": 0,
               "semitones": 0
             },
             {
-              "diatonicSteps": 2,
-              "semitones": 4
+              "diatonicSteps": 1,
+              "semitones": 2
             },
             {
               "diatonicSteps": 4,
               "semitones": 7
-            },
-            {
-              "diatonicSteps": 6,
-              "semitones": 10
-            },
-            {
-              "diatonicSteps": 8,
-              "semitones": 14
             }
           ],
-          "extensions": [
-            7,
-            9
-          ],
+          "extensions": [],
           "omissions": [],
           "alterations": [],
           "bass": null,
@@ -2321,43 +2310,27 @@
             "pitchClass": 0
           },
           {
-            "letter": "E",
+            "letter": "D",
             "accidental": 0,
-            "spelling": "E",
-            "pitchClass": 4
+            "spelling": "D",
+            "pitchClass": 2
           },
           {
             "letter": "G",
             "accidental": 0,
             "spelling": "G",
             "pitchClass": 7
-          },
-          {
-            "letter": "B",
-            "accidental": -1,
-            "spelling": "Bb",
-            "pitchClass": 10
-          },
-          {
-            "letter": "D",
-            "accidental": 0,
-            "spelling": "D",
-            "pitchClass": 2
           }
         ],
         "diatonicSpellings": [
           "C",
-          "E",
-          "G",
-          "Bb",
-          "D"
+          "D",
+          "G"
         ],
         "pitchClasses": [
           0,
-          4,
-          7,
-          10,
-          2
+          2,
+          7
         ]
       }
     },
@@ -5347,6 +5320,3134 @@
         "pitchClasses": [],
         "category": "accidentalRange",
         "reason": "targetRequiresTripleAccidental"
+      }
+    },
+    {
+      "id": "br-sus4-bare",
+      "operation": "parseChord",
+      "input": {
+        "text": "C4",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C4",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus4",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended4",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 3,
+              "semitones": 5
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            }
+          ],
+          "extensions": [],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "F",
+            "accidental": 0,
+            "spelling": "F",
+            "pitchClass": 5
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "F",
+          "G"
+        ],
+        "pitchClasses": [
+          0,
+          5,
+          7
+        ]
+      }
+    },
+    {
+      "id": "br-sus4-slash",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7/4",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7/4",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus47",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended4",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 3,
+              "semitones": 5
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            }
+          ],
+          "extensions": [
+            7
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "F",
+            "accidental": 0,
+            "spelling": "F",
+            "pitchClass": 5
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "F",
+          "G",
+          "Bb"
+        ],
+        "pitchClasses": [
+          0,
+          5,
+          7,
+          10
+        ]
+      }
+    },
+    {
+      "id": "br-sus4-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7(4)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7(4)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus47",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended4",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 3,
+              "semitones": 5
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            }
+          ],
+          "extensions": [
+            7
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "F",
+            "accidental": 0,
+            "spelling": "F",
+            "pitchClass": 5
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "F",
+          "G",
+          "Bb"
+        ],
+        "pitchClasses": [
+          0,
+          5,
+          7,
+          10
+        ]
+      }
+    },
+    {
+      "id": "br-sus4-ninth",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7(4)(9)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7(4)(9)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus49",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended4",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 3,
+              "semitones": 5
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            7,
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "F",
+            "accidental": 0,
+            "spelling": "F",
+            "pitchClass": 5
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "F",
+          "G",
+          "Bb",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          5,
+          7,
+          10,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-sus4-slash-ninth",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7/4/9",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7/4/9",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus49",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended4",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 3,
+              "semitones": 5
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            7,
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "F",
+            "accidental": 0,
+            "spelling": "F",
+            "pitchClass": 5
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "F",
+          "G",
+          "Bb",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          5,
+          7,
+          10,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-sus4-slash-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7/4(9)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7/4(9)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus49",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended4",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 3,
+              "semitones": 5
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            7,
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "F",
+            "accidental": 0,
+            "spelling": "F",
+            "pitchClass": 5
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "F",
+          "G",
+          "Bb",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          5,
+          7,
+          10,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-sus4-suffix",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7sus4",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7sus4",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus47",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended4",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 3,
+              "semitones": 5
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            }
+          ],
+          "extensions": [
+            7
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "F",
+            "accidental": 0,
+            "spelling": "F",
+            "pitchClass": 5
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "F",
+          "G",
+          "Bb"
+        ],
+        "pitchClasses": [
+          0,
+          5,
+          7,
+          10
+        ]
+      }
+    },
+    {
+      "id": "br-sus4-bass",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7(4)/G",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7(4)/G",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus47/G",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended4",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 3,
+              "semitones": 5
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            }
+          ],
+          "extensions": [
+            7
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          "bassRole": "chordTone",
+          "inversion": 2
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "F",
+            "accidental": 0,
+            "spelling": "F",
+            "pitchClass": 5
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "F",
+          "G",
+          "Bb"
+        ],
+        "pitchClasses": [
+          0,
+          5,
+          7,
+          10
+        ]
+      }
+    },
+    {
+      "id": "br-add9-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "C(9)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C(9)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus2",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended2",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 1,
+              "semitones": 2
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            }
+          ],
+          "extensions": [],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "D",
+          "G"
+        ],
+        "pitchClasses": [
+          0,
+          2,
+          7
+        ]
+      }
+    },
+    {
+      "id": "br-madd9-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "Cm(9)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "Cm(9)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cmadd9",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "minor",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 3
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": -1,
+            "spelling": "Eb",
+            "pitchClass": 3
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "Eb",
+          "G",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          3,
+          7,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-add9-bass",
+      "operation": "parseChord",
+      "input": {
+        "text": "C(9)/E",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C(9)/E",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cadd9/E",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          "bassRole": "chordTone",
+          "inversion": 1
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-ninth-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7(9)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7(9)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "C7add9",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            7,
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "Bb",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          10,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-major-ninth-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7M(9)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7M(9)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cmaj9",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": "major",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 11
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            7,
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": 0,
+            "spelling": "B",
+            "pitchClass": 11
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "B",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          11,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-six-nine-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "C6(9)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C6(9)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "C6add9",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 5,
+              "semitones": 9
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            6,
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "A",
+            "accidental": 0,
+            "spelling": "A",
+            "pitchClass": 9
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "A",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          9,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-minor-eleventh-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "Cm7(11)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "Cm7(11)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cm7add11",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "minor",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 3
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            },
+            {
+              "diatonicSteps": 10,
+              "semitones": 17
+            }
+          ],
+          "extensions": [
+            7,
+            11
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": -1,
+            "spelling": "Eb",
+            "pitchClass": 3
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          },
+          {
+            "letter": "F",
+            "accidental": 0,
+            "spelling": "F",
+            "pitchClass": 5
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "Eb",
+          "G",
+          "Bb",
+          "F"
+        ],
+        "pitchClasses": [
+          0,
+          3,
+          7,
+          10,
+          5
+        ]
+      }
+    },
+    {
+      "id": "br-thirteenth-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7(13)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7(13)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "C7add13",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            },
+            {
+              "diatonicSteps": 12,
+              "semitones": 21
+            }
+          ],
+          "extensions": [
+            7,
+            13
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          },
+          {
+            "letter": "A",
+            "accidental": 0,
+            "spelling": "A",
+            "pitchClass": 9
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "Bb",
+          "A"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          10,
+          9
+        ]
+      }
+    },
+    {
+      "id": "br-ninth-thirteenth",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7(9)(13)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7(9)(13)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "C7add9add13",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            },
+            {
+              "diatonicSteps": 12,
+              "semitones": 21
+            }
+          ],
+          "extensions": [
+            7,
+            9,
+            13
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          },
+          {
+            "letter": "A",
+            "accidental": 0,
+            "spelling": "A",
+            "pitchClass": 9
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "Bb",
+          "D",
+          "A"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          10,
+          2,
+          9
+        ]
+      }
+    },
+    {
+      "id": "br-alterations-order",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7(#11)(b9)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7(#11)(b9)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "C7b9#11",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 13
+            },
+            {
+              "diatonicSteps": 10,
+              "semitones": 18
+            }
+          ],
+          "extensions": [
+            7,
+            9,
+            11
+          ],
+          "omissions": [],
+          "alterations": [
+            {
+              "degree": 9,
+              "accidental": -1
+            },
+            {
+              "degree": 11,
+              "accidental": 1
+            }
+          ],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          },
+          {
+            "letter": "D",
+            "accidental": -1,
+            "spelling": "Db",
+            "pitchClass": 1
+          },
+          {
+            "letter": "F",
+            "accidental": 1,
+            "spelling": "F#",
+            "pitchClass": 6
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "Bb",
+          "Db",
+          "F#"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          10,
+          1,
+          6
+        ]
+      }
+    },
+    {
+      "id": "br-flat-five-triad",
+      "operation": "parseChord",
+      "input": {
+        "text": "C(b5)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C(b5)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cb5",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 6
+            }
+          ],
+          "extensions": [],
+          "omissions": [],
+          "alterations": [
+            {
+              "degree": 5,
+              "accidental": -1
+            }
+          ],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": -1,
+            "spelling": "Gb",
+            "pitchClass": 6
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "Gb"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          6
+        ]
+      }
+    },
+    {
+      "id": "br-flat-five-seventh",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7(b5)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7(b5)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "C7b5",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 6
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            }
+          ],
+          "extensions": [
+            7
+          ],
+          "omissions": [],
+          "alterations": [
+            {
+              "degree": 5,
+              "accidental": -1
+            }
+          ],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": -1,
+            "spelling": "Gb",
+            "pitchClass": 6
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "Gb",
+          "Bb"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          6,
+          10
+        ]
+      }
+    },
+    {
+      "id": "br-sharp-five-seventh",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7(#5)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7(#5)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "C7#5",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 8
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            }
+          ],
+          "extensions": [
+            7
+          ],
+          "omissions": [],
+          "alterations": [
+            {
+              "degree": 5,
+              "accidental": 1
+            }
+          ],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 1,
+            "spelling": "G#",
+            "pitchClass": 8
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G#",
+          "Bb"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          8,
+          10
+        ]
+      }
+    },
+    {
+      "id": "br-half-diminished-ninth",
+      "operation": "parseChord",
+      "input": {
+        "text": "Cm7(b5)(9)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "Cm7(b5)(9)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cm9b5",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "minor",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 3
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 6
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            7,
+            9
+          ],
+          "omissions": [],
+          "alterations": [
+            {
+              "degree": 5,
+              "accidental": -1
+            }
+          ],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": -1,
+            "spelling": "Eb",
+            "pitchClass": 3
+          },
+          {
+            "letter": "G",
+            "accidental": -1,
+            "spelling": "Gb",
+            "pitchClass": 6
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "Eb",
+          "Gb",
+          "Bb",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          3,
+          6,
+          10,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-capital-m7",
+      "operation": "parseChord",
+      "input": {
+        "text": "CM7",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "CM7",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cmaj7",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": "major",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 11
+            }
+          ],
+          "extensions": [
+            7
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": 0,
+            "spelling": "B",
+            "pitchClass": 11
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "B"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          11
+        ]
+      }
+    },
+    {
+      "id": "br-degree-symbol",
+      "operation": "parseChord",
+      "input": {
+        "text": "Cº",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "Cº",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cdim",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "diminished",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 3
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 6
+            }
+          ],
+          "extensions": [],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": -1,
+            "spelling": "Eb",
+            "pitchClass": 3
+          },
+          {
+            "letter": "G",
+            "accidental": -1,
+            "spelling": "Gb",
+            "pitchClass": 6
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "Eb",
+          "Gb"
+        ],
+        "pitchClasses": [
+          0,
+          3,
+          6
+        ]
+      }
+    },
+    {
+      "id": "br-degree-symbol-seventh",
+      "operation": "parseChord",
+      "input": {
+        "text": "C°7",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C°7",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cdim7",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "diminished",
+          "seventh": "diminished",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 3
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 6
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 9
+            }
+          ],
+          "extensions": [
+            7
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": -1,
+            "spelling": "Eb",
+            "pitchClass": 3
+          },
+          {
+            "letter": "G",
+            "accidental": -1,
+            "spelling": "Gb",
+            "pitchClass": 6
+          },
+          {
+            "letter": "B",
+            "accidental": -2,
+            "spelling": "Bbb",
+            "pitchClass": 9
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "Eb",
+          "Gb",
+          "Bbb"
+        ],
+        "pitchClasses": [
+          0,
+          3,
+          6,
+          9
+        ]
+      }
+    },
+    {
+      "id": "br-minor-major-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "Cm(7M)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "Cm(7M)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cm(maj7)",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "minor",
+          "seventh": "major",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 3
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 11
+            }
+          ],
+          "extensions": [
+            7
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": -1,
+            "spelling": "Eb",
+            "pitchClass": 3
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": 0,
+            "spelling": "B",
+            "pitchClass": 11
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "Eb",
+          "G",
+          "B"
+        ],
+        "pitchClasses": [
+          0,
+          3,
+          7,
+          11
+        ]
+      }
+    },
+    {
+      "id": "br-invalid-minor-four",
+      "operation": "parseChord",
+      "input": {
+        "text": "Cm4",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "unsupported",
+        "originalText": "Cm4",
+        "preservedText": "Cm4",
+        "normalized": null,
+        "notes": [],
+        "diatonicSpellings": [],
+        "pitchClasses": [],
+        "category": "invalidSyntax",
+        "reason": "unknownSuffix"
+      }
+    },
+    {
+      "id": "br-invalid-dim-flat-five",
+      "operation": "parseChord",
+      "input": {
+        "text": "Cdim(b5)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "unsupported",
+        "originalText": "Cdim(b5)",
+        "preservedText": "Cdim(b5)",
+        "normalized": null,
+        "notes": [],
+        "diatonicSpellings": [],
+        "pitchClasses": [],
+        "category": "invalidSyntax",
+        "reason": "unknownSuffix"
+      }
+    },
+    {
+      "id": "br-invalid-double-ninth",
+      "operation": "parseChord",
+      "input": {
+        "text": "C(9)(b9)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "unsupported",
+        "originalText": "C(9)(b9)",
+        "preservedText": "C(9)(b9)",
+        "normalized": null,
+        "notes": [],
+        "diatonicSpellings": [],
+        "pitchClasses": [],
+        "category": "invalidSyntax",
+        "reason": "unknownSuffix"
+      }
+    },
+    {
+      "id": "br-invalid-empty-group",
+      "operation": "parseChord",
+      "input": {
+        "text": "C()",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "unsupported",
+        "originalText": "C()",
+        "preservedText": "C()",
+        "normalized": null,
+        "notes": [],
+        "diatonicSpellings": [],
+        "pitchClasses": [],
+        "category": "invalidSyntax",
+        "reason": "unknownSuffix"
+      }
+    },
+    {
+      "id": "br-invalid-triad-slash-nine",
+      "operation": "parseChord",
+      "input": {
+        "text": "C/9",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C/9",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus2",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended2",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 1,
+              "semitones": 2
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            }
+          ],
+          "extensions": [],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "D",
+          "G"
+        ],
+        "pitchClasses": [
+          0,
+          2,
+          7
+        ]
+      }
+    },
+    {
+      "id": "br-invalid-root-slash-nine",
+      "operation": "parseChord",
+      "input": {
+        "text": "H7/9",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "unsupported",
+        "originalText": "H7/9",
+        "preservedText": "H7/9",
+        "normalized": null,
+        "notes": [],
+        "diatonicSpellings": [],
+        "pitchClasses": [],
+        "category": "invalidSyntax",
+        "reason": "unknownLetter"
+      }
+    },
+    {
+      "id": "br-dominant-ninth-slash",
+      "operation": "parseChord",
+      "input": {
+        "text": "C7/9",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C7/9",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "C7add9",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": "minor",
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 6,
+              "semitones": 10
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            7,
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "B",
+            "accidental": -1,
+            "spelling": "Bb",
+            "pitchClass": 10
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "Bb",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          10,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-lone-nine-bass",
+      "operation": "parseChord",
+      "input": {
+        "text": "C9/E",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C9/E",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cadd9/E",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          "bassRole": "chordTone",
+          "inversion": 1
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          2
+        ]
+      }
+    },
+    {
+      "id": "br-lone-four-paren",
+      "operation": "parseChord",
+      "input": {
+        "text": "C(4)",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C(4)",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus4",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended4",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 3,
+              "semitones": 5
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            }
+          ],
+          "extensions": [],
+          "omissions": [],
+          "alterations": [],
+          "bass": null,
+          "bassRole": "unspecified",
+          "inversion": null
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "F",
+            "accidental": 0,
+            "spelling": "F",
+            "pitchClass": 5
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "F",
+          "G"
+        ],
+        "pitchClasses": [
+          0,
+          5,
+          7
+        ]
+      }
+    },
+    {
+      "id": "br-lone-nine-other-bass",
+      "operation": "parseChord",
+      "input": {
+        "text": "C9/G",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C9/G",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Csus2/G",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "suspended2",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 1,
+              "semitones": 2
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            }
+          ],
+          "extensions": [],
+          "omissions": [],
+          "alterations": [],
+          "bass": {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          "bassRole": "chordTone",
+          "inversion": 2
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "D",
+          "G"
+        ],
+        "pitchClasses": [
+          0,
+          2,
+          7
+        ]
+      }
+    },
+    {
+      "id": "br-enharmonic-bass",
+      "operation": "parseChord",
+      "input": {
+        "text": "D#/G",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "D#/G",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "D#/G",
+          "root": {
+            "letter": "D",
+            "accidental": 1,
+            "spelling": "D#",
+            "pitchClass": 3
+          },
+          "quality": "major",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            }
+          ],
+          "extensions": [],
+          "omissions": [],
+          "alterations": [],
+          "bass": {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          "bassRole": "chordTone",
+          "inversion": 1
+        },
+        "notes": [
+          {
+            "letter": "D",
+            "accidental": 1,
+            "spelling": "D#",
+            "pitchClass": 3
+          },
+          {
+            "letter": "F",
+            "accidental": 2,
+            "spelling": "F##",
+            "pitchClass": 7
+          },
+          {
+            "letter": "A",
+            "accidental": 1,
+            "spelling": "A#",
+            "pitchClass": 10
+          }
+        ],
+        "diatonicSpellings": [
+          "D#",
+          "F##",
+          "A#"
+        ],
+        "pitchClasses": [
+          3,
+          7,
+          10
+        ]
+      }
+    },
+    {
+      "id": "br-slash-nine-third-bass",
+      "operation": "parseChord",
+      "input": {
+        "text": "C/9/E",
+        "context": "chordSymbol"
+      },
+      "expected": {
+        "status": "parsed",
+        "originalText": "C/9/E",
+        "normalized": {
+          "kind": "chord",
+          "canonicalSymbol": "Cadd9/E",
+          "root": {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          "quality": "major",
+          "seventh": null,
+          "intervals": [
+            {
+              "diatonicSteps": 0,
+              "semitones": 0
+            },
+            {
+              "diatonicSteps": 2,
+              "semitones": 4
+            },
+            {
+              "diatonicSteps": 4,
+              "semitones": 7
+            },
+            {
+              "diatonicSteps": 8,
+              "semitones": 14
+            }
+          ],
+          "extensions": [
+            9
+          ],
+          "omissions": [],
+          "alterations": [],
+          "bass": {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          "bassRole": "chordTone",
+          "inversion": 1
+        },
+        "notes": [
+          {
+            "letter": "C",
+            "accidental": 0,
+            "spelling": "C",
+            "pitchClass": 0
+          },
+          {
+            "letter": "E",
+            "accidental": 0,
+            "spelling": "E",
+            "pitchClass": 4
+          },
+          {
+            "letter": "G",
+            "accidental": 0,
+            "spelling": "G",
+            "pitchClass": 7
+          },
+          {
+            "letter": "D",
+            "accidental": 0,
+            "spelling": "D",
+            "pitchClass": 2
+          }
+        ],
+        "diatonicSpellings": [
+          "C",
+          "E",
+          "G",
+          "D"
+        ],
+        "pitchClasses": [
+          0,
+          4,
+          7,
+          2
+        ]
       }
     }
   ],

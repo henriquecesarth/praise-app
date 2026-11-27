@@ -1,15 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   analyzeDegree,
+  analyzeHarmony,
   chordTones,
   HarmonyAnalysisResult,
+  HarmonyNeighbours,
   KeyContext,
   Result,
   ChordNormalized,
   Interval,
   Parsed,
 } from '../../music/theory';
-import { lookupGuitarVoicing } from '../../music/guitarVoicings';
+import { findGuitarVoicings } from '../../music/guitarCatalog';
 import {
   ChordGuitarDiagram,
   describeGuitarAriaSummary,
@@ -470,6 +472,8 @@ export interface ChordPianoDiagramPanelProps {
   triggerRef?: React.RefObject<HTMLElement | null>;
   initialInstrument?: DiagramInstrument;
   keyContext?: string | KeyContext | null;
+  /** Chords around this one on the same line, used to read passing basses. */
+  neighbours?: HarmonyNeighbours;
 }
 
 export function ChordPianoDiagramPanel({
@@ -478,7 +482,9 @@ export function ChordPianoDiagramPanel({
   triggerRef,
   initialInstrument = 'piano',
   keyContext,
+  neighbours,
 }: ChordPianoDiagramPanelProps) {
+  const [position, setPosition] = useState<{ chord: string | null; index: number }>({ chord: null, index: 0 });
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const [instrument, setInstrument] = useState<DiagramInstrument>(initialInstrument);
@@ -494,6 +500,7 @@ export function ChordPianoDiagramPanel({
       setInstrument(initialInstrument);
       setSelectedKey(keyContext ?? null);
       setIsKeyPickerOpen(false);
+      setPosition({ chord: null, index: 0 });
     }
   }, [chordSymbol, initialInstrument, keyContext]);
 
@@ -519,12 +526,25 @@ export function ChordPianoDiagramPanel({
   }
 
   const result: Result<ChordNormalized> = chordTones(chordSymbol.trim());
-  const guitarLookup = result.status === 'parsed'
-    ? lookupGuitarVoicing(result.originalText)
+  const foundVoicings = result.status === 'parsed'
+    ? findGuitarVoicings(result.originalText)
     : null;
+  const positionCount = foundVoicings?.status === 'available' ? foundVoicings.voicings.length : 0;
+  const positionIndex = position.chord === chordSymbol && position.index < positionCount ? position.index : 0;
+  const guitarLookup = foundVoicings?.status === 'available'
+    ? { ...foundVoicings, primaryVoicing: foundVoicings.voicings[positionIndex] }
+    : foundVoicings;
+  const stepPosition = (step: number) =>
+    setPosition({ chord: chordSymbol, index: (positionIndex + step + positionCount) % positionCount });
   const harmonyResult: HarmonyAnalysisResult | null = result.status === 'parsed'
     ? analyzeDegree(result.originalText, selectedKey)
     : null;
+  const harmonyReadings = result.status === 'parsed'
+    ? analyzeHarmony(result.originalText, selectedKey, neighbours)
+    : null;
+  const readings = harmonyReadings?.status === 'analyzed' ? harmonyReadings.readings : [];
+  // A single diatonic reading is already what the degree badge says.
+  const showReadings = readings.length > 1 || (readings.length === 1 && readings[0].kind !== 'diatonic');
 
   const baseLiveSummary = result.status === 'unsupported'
     ? `Diagrama indisponível para ${result.preservedText || chordSymbol}. ${translateUnsupportedReason(result.reason, result.preservedText || chordSymbol)}`
@@ -532,9 +552,13 @@ export function ChordPianoDiagramPanel({
       ? describeGuitarAriaSummary(result.originalText, guitarLookup)
       : `Acorde ${result.originalText}. Qualidade: ${translateQuality(result.normalized.quality, result.normalized.seventh)}.${result.normalized.bass ? ` Baixo: ${result.normalized.bass.spelling}.` : ''} Notas: ${result.notes.map(n => n.spelling).join(', ')}.`;
 
-  const liveSummary = harmonyResult?.status === 'analysis'
-    ? `${baseLiveSummary} Grau harmônico: ${harmonyResult.analysis.degree} em ${harmonyResult.key.canonicalKey}.`
-    : baseLiveSummary;
+  const degreeSummary = harmonyResult?.status === 'analysis'
+    ? ` Grau harmônico: ${harmonyResult.analysis.degree} em ${harmonyResult.key.canonicalKey}.`
+    : '';
+  const readingsSummary = showReadings
+    ? ` Leituras harmônicas: ${readings.map(reading => reading.label).join('; ')}.`
+    : '';
+  const liveSummary = `${baseLiveSummary}${degreeSummary}${readingsSummary}`;
 
   const handleClose = () => {
     onClose();
@@ -690,11 +714,43 @@ export function ChordPianoDiagramPanel({
             {instrument === 'piano' ? (
               <ChordPianoDiagram parsed={result} />
             ) : (
-              <ChordGuitarDiagram
-                chordSymbol={result.originalText}
-                parsed={result}
-                lookup={guitarLookup ?? undefined}
-              />
+              <>
+                {positionCount > 1 && (
+                  <div
+                    role="group"
+                    aria-label="Posições no violão"
+                    data-testid="guitar-position-selector"
+                    style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px' }}
+                  >
+                    <button
+                      type="button"
+                      className="chord-piano-ctrl-btn"
+                      data-testid="guitar-position-prev"
+                      aria-label="Posição anterior"
+                      onClick={() => stepPosition(-1)}
+                    >
+                      ‹
+                    </button>
+                    <span data-testid="guitar-position-count" aria-live="polite">
+                      {positionIndex + 1}/{positionCount}
+                    </span>
+                    <button
+                      type="button"
+                      className="chord-piano-ctrl-btn"
+                      data-testid="guitar-position-next"
+                      aria-label="Próxima posição"
+                      onClick={() => stepPosition(1)}
+                    >
+                      ›
+                    </button>
+                  </div>
+                )}
+                <ChordGuitarDiagram
+                  chordSymbol={result.originalText}
+                  parsed={result}
+                  lookup={guitarLookup ?? undefined}
+                />
+              </>
             )}
 
             <div className="chord-piano-metadata" data-testid="chord-piano-metadata">
@@ -819,7 +875,9 @@ export function ChordPianoDiagramPanel({
                     >
                       {harmonyResult.status === 'analysis'
                         ? `Grau harmônico: ${harmonyResult.analysis.degree} (${harmonyResult.analysis.degreeNumber}º grau em ${harmonyResult.key.canonicalKey})`
-                        : 'Grau harmônico: Grau não determinado'}
+                        : showReadings
+                          ? 'Grau harmônico: veja as leituras possíveis'
+                          : 'Grau harmônico: Grau não determinado'}
                     </span>
                     <span
                       className="chord-piano-pill"
@@ -837,11 +895,23 @@ export function ChordPianoDiagramPanel({
                     </span>
                   </div>
 
-                  <p className="chord-harmony-explanation" data-testid="harmony-explanation">
-                    {harmonyResult.status === 'analysis'
-                      ? harmonyResult.analysis.explanation
-                      : harmonyResult.explanation}
-                  </p>
+                  {(harmonyResult.status === 'analysis' || !showReadings) && (
+                    <p className="chord-harmony-explanation" data-testid="harmony-explanation">
+                      {harmonyResult.status === 'analysis'
+                        ? harmonyResult.analysis.explanation
+                        : harmonyResult.explanation}
+                    </p>
+                  )}
+
+                  {showReadings && (
+                    <ul className="chord-harmony-explanation" data-testid="harmony-readings" aria-label="Leituras possíveis">
+                      {readings.map(reading => (
+                        <li key={`${reading.kind}-${reading.label}`}>
+                          <strong>{reading.label}</strong> — {reading.explanation}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </section>
               )}
             </div>
