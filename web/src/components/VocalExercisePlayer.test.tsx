@@ -1,9 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { buildExerciseTimeline, buildProgressionTimeline, VocalExercisePlayer } from './VocalExercisePlayer';
 import { VOCAL_EXERCISES } from '../vocal-exercises';
 const pianoMock = vi.hoisted(() => ({ load: vi.fn(async (): Promise<void> => undefined) }));
+
+// The page has about 1000 elements: a document-wide getByRole takes hundreds of milliseconds, and repeated inside
+// waitFor it ran past the 5 s test limit on a busy machine. Transport buttons are looked up in their own bar.
+const transportButton = (name: string) =>
+  within(document.querySelector<HTMLElement>('.vocal-transport-bar')!).getByRole('button', { name });
+
+// A test that fails must not leave its AudioContext stub for the next one.
+afterEach(() => { vi.unstubAllGlobals(); });
 
 // Lifecycle/transport checks only. Real sampled PCM is verified in headed Chromium.
 vi.mock('../audio/sampled-piano', () => ({
@@ -30,16 +38,15 @@ describe('vocal exercise timeline', () => {
     vi.stubGlobal('AudioContext', AudioContextStub);
     const view = render(<MemoryRouter><VocalExercisePlayer /></MemoryRouter>);
     fireEvent.click(screen.getByRole('checkbox', { name: 'Ativar metrônomo' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Tocar progressão' }));
+    fireEvent.click(transportButton('Tocar progressão'));
     await waitFor(() => expect(pianoMock.load).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: 'Parar' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Tocar progressão' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Pausar' })).toBeEnabled());
+    fireEvent.click(transportButton('Parar'));
+    fireEvent.click(transportButton('Tocar progressão'));
+    await waitFor(() => expect(transportButton('Pausar')).toBeEnabled());
     await act(async () => { rejectOld(new Error('old offline load failed')); });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Pausar' })).toBeEnabled();
+    expect(transportButton('Pausar')).toBeEnabled();
     view.unmount();
-    vi.unstubAllGlobals();
   });
   it('does not schedule notes when unmounted while the audio context is resuming', async () => {
     let resolveResume: () => void = () => undefined;
@@ -53,12 +60,11 @@ describe('vocal exercise timeline', () => {
     }
     vi.stubGlobal('AudioContext', PendingAudioContext);
     const view = render(<MemoryRouter><VocalExercisePlayer /></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: 'Tocar progressão' }));
+    fireEvent.click(transportButton('Tocar progressão'));
     view.unmount();
     await act(async () => { resolveResume(); });
     expect(createOscillator).not.toHaveBeenCalled();
     await waitFor(() => expect(close).toHaveBeenCalledOnce());
-    vi.unstubAllGlobals();
   });
   it('converts quarter-note durations to absolute event times at the selected BPM', () => {
     expect(buildExerciseTimeline([60, 62, 64], [1, 0.5, 2], 120, 2, 10)).toEqual([
@@ -111,16 +117,15 @@ describe('vocal exercise timeline', () => {
     }
     vi.stubGlobal('AudioContext', FakeAudioContext);
     render(<MemoryRouter><VocalExercisePlayer /></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: 'Tocar progressão' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Parar' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Pausar' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retomar' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Parar' }));
+    fireEvent.click(transportButton('Tocar progressão'));
+    await waitFor(() => expect(transportButton('Parar')).toBeEnabled());
+    fireEvent.click(transportButton('Pausar'));
+    await waitFor(() => expect(transportButton('Retomar')).toBeEnabled());
+    fireEvent.click(transportButton('Parar'));
     expect(oscillators.length).toBeGreaterThan(0);
     expect(oscillators.every((oscillator) => oscillator.stop.mock.calls.length >= 2)).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Tocar progressão' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Pausar' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Parar' }));
-    vi.unstubAllGlobals();
+    fireEvent.click(transportButton('Tocar progressão'));
+    await waitFor(() => expect(transportButton('Pausar')).toBeEnabled());
+    fireEvent.click(transportButton('Parar'));
   });
 });

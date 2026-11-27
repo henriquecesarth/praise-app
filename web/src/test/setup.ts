@@ -1,6 +1,10 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
+
+// The 1 s default of waitFor/findBy is too tight for a busy machine or CI runner and caused intermittent failures.
+// Kept below the 5 s test timeout so a real failure still reports what was missing.
+configure({ asyncUtilTimeout: 4000 });
 
 afterEach(() => {
   cleanup();

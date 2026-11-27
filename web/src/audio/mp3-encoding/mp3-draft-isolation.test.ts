@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createSeparationDraft } from '../local-separation-draft';
 import { polyfillBlobArrayBuffer } from '../local-separation-fixtures';
 import { createResumeStore, compressSeparationDraft } from './mp3-draft-compression';
@@ -6,6 +6,8 @@ import { createInProcessEncoder, createLookupDecoder, tonesResult } from './mp3-
 
 // M22-S2.1: results of an old run must never leak into a newer draft, and resumption is bound to the same source/profile.
 
+// Real LAME encodes up to six stems several times per test: more than the 5 s default on a busy machine.
+vi.setConfig({ testTimeout: 40_000 });
 beforeAll(polyfillBlobArrayBuffer);
 
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>((r) => { resolve = r; }); return { promise, resolve }; };
@@ -21,11 +23,12 @@ describe('resume store isolation', () => {
     const vocals = draftA.files().vocals!;
     const original = vocals.arrayBuffer.bind(vocals);
     let reads = 0;
+    const secondRead = deferred();
     const lateRead = deferred();
-    Object.defineProperty(vocals, 'arrayBuffer', { value: async () => { reads++; if (reads === 2) await lateRead.promise; return original(); } });
+    Object.defineProperty(vocals, 'arrayBuffer', { value: async () => { reads++; if (reads === 2) { secondRead.resolve(); await lateRead.promise; } return original(); } });
     const run = compressSeparationDraft({ draft: draftA, encoder: encoderA, decoder: createLookupDecoder(encoderA), signal: abort.signal, resume: store }).catch((e) => e);
     gate.resolve();
-    for (let i = 0; i < 200 && reads < 2; i++) await new Promise((r) => setTimeout(r, 25)); // encoded + decoded; now waiting for the second WAV read
+    await secondRead.promise; // encoded + decoded; now waiting for the second WAV read
     expect(reads).toBe(2);
     // discard: abort, close the store, then release the late read
     abort.abort();
@@ -75,9 +78,10 @@ describe('resume store isolation', () => {
     const draft = await createSeparationDraft(await tonesResult(20_000));
     const store = createResumeStore(draft);
     const gate = deferred();
-    const slow = createInProcessEncoder({ beforeEncode: async (call) => { if (call === 1) await gate.promise; } });
+    const encoding = deferred();
+    const slow = createInProcessEncoder({ beforeEncode: async (call) => { if (call === 1) { encoding.resolve(); await gate.promise; } } });
     const first = compressSeparationDraft({ draft, encoder: slow, decoder: createLookupDecoder(slow), resume: store }).catch((e) => e);
-    await new Promise((r) => setTimeout(r, 50));
+    await encoding.promise; // the first run is certainly active now
     const e2 = createInProcessEncoder();
     await expect(compressSeparationDraft({ draft, encoder: e2, decoder: createLookupDecoder(e2), resume: store })).rejects.toMatchObject({ code: 'FAILED' });
     expect(e2.calls).toBe(0);

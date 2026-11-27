@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createSeparationDraft } from '../local-separation-draft';
 import { polyfillBlobArrayBuffer } from '../local-separation-fixtures';
 import { parseStrictWavDescriptor } from '../separation/demucs-onnx-separator';
@@ -8,6 +8,8 @@ import { createInProcessEncoder, createLookupDecoder, mp3StemShape, tonesResult 
 // M22-S2: compression of a separation draft with the REAL LAME build and a perfect decoder (the real browser decoder is
 // exercised by the browser benchmark, not by jsdom).
 
+// Real LAME encodes up to six stems several times per test: more than the 5 s default on a busy machine.
+vi.setConfig({ testTimeout: 40_000 });
 beforeAll(polyfillBlobArrayBuffer);
 
 async function setup(frames = 20_000) {

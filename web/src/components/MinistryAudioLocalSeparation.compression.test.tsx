@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MinistryAudioLocalSeparation } from './MinistryAudioLocalSeparation';
 import { polyfillBlobArrayBuffer } from '../audio/local-separation-fixtures';
@@ -54,6 +54,8 @@ const findDone = () => screen.findByText(/Economia de/, {}, { timeout: 20_000 })
 const compressButton = () => screen.queryByRole('button', { name: 'Comprimir para publicar' });
 
 vi.setConfig({ testTimeout: 40_000 });
+// Every async step here does real work (hashing, LAME), which takes more than the 1 s default on a busy machine.
+configure({ asyncUtilTimeout: 20_000 });
 
 describe('Separação local: compressão experimental para MP3', () => {
   beforeAll(polyfillBlobArrayBuffer);
