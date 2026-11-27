@@ -70,6 +70,18 @@ describe('Compliance Routing & App Integration (/privacidade & /exclusao-conta)'
     expect(screen.queryByText('Painel')).not.toBeInTheDocument();
   });
 
+  it('renders /licencas publicly with the chords-db notice', () => {
+    render(
+      <MemoryRouter initialEntries={['/licencas']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Licenças de terceiros')).toBeInTheDocument();
+    expect(screen.getByText(/Copyright \(c\) 2016 David Rubert/)).toBeInTheDocument();
+    expect(screen.queryByText('Acesse sua conta')).not.toBeInTheDocument();
+  });
+
   it('renders /exclusao-conta publicly without authentication', async () => {
     render(
       <MemoryRouter initialEntries={['/exclusao-conta']}>

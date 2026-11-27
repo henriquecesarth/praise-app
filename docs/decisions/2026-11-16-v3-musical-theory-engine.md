@@ -25,7 +25,7 @@ Interfaces conceituais: `parseChord(text) -> Parsed | Unsupported`; `transpose(c
 
 Diagramas consomem o modelo: piano com teclas/oitavas/baixo e texto acessível; violão em afinação padrão E2 A2 D3 G3 B3 E4, cordas abertas/abafadas, trastes, pestana e digitação opcional. Começar por conjunto pequeno curado, próprio ou com licença documentada; gerar voicings arbitrários fica depois. Exibir “sem diagrama disponível” em vez de inventar posição. Validar cada nota/traste contra o acorde; testes de ergonomia humana separados da correção matemática.
 
-Atualização de 2026-11-27 (T6): o gerador determinístico de posições e a importação do chords-db (MIT) passam a complementar o catálogo curado. Toda forma passa pelo validador, a única omissão aceita é a 5ª justa declarada, e a ligação na UI depende da revisão humana de uma amostra de 40 acordes. A análise harmônica ganha `analyzeHarmony`, que lista as leituras em vez de escolher uma; `analyzeDegree` não muda. Tonal.js não foi usado nem adicionado.
+Atualização de 2026-11-27 (VH, violão e harmonia): o gerador determinístico de posições e a importação do chords-db (MIT) passam a complementar o catálogo curado. Toda forma passa pelo validador, a única omissão aceita é a 5ª justa declarada, e a ligação na UI depende da revisão humana de uma amostra de 40 acordes. A análise harmônica ganha `analyzeHarmony`, que lista as leituras em vez de escolher uma; `analyzeDegree` não muda. Tonal.js não foi usado nem adicionado.
 
 Interação no leitor por toque/teclado abre painel sem modificar a cifra; foco, Escape, alvos de toque e leitura por leitor de tela. Manter legenda textual e uso offline. Não colocar inferências novas em exportação/PDF sem gate específico.
 

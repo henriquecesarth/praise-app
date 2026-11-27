@@ -711,6 +711,17 @@ class _ProfileView extends ConsumerWidget {
             trailing: const Icon(Icons.open_in_new, size: 20),
             onTap: () => _showAccountDeletionDialog(context),
           ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.description_outlined),
+            title: const Text('Licenças de terceiros'),
+            subtitle: const Text('Avisos de copyright do software usado no app'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => showLicensePage(
+              context: context,
+              applicationName: 'LouvAIO',
+            ),
+          ),
           const Divider(),
           const SizedBox(height: 8),
 

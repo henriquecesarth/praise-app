@@ -132,20 +132,23 @@ export function AdminAvailabilityView({ ministryId, onBack, showToast: _showToas
         setLoadingMore(true);
       }
 
+      // Taken before validating, so a rejected range also drops pending answers.
+      const reqId = ++requestIdRef.current;
+
       // Validação do intervalo
       const inclusiveDays = calculateInclusiveDays(fromDate, toDate);
       if (inclusiveDays < 0) {
         setLoading(false);
+        setLoadingMore(false);
         setError('A data final não pode ser anterior à data inicial.');
         return;
       }
       if (inclusiveDays > 90) {
         setLoading(false);
+        setLoadingMore(false);
         setError(`O período de consulta não pode exceder 90 dias civis (selecionado: ${inclusiveDays} dias).`);
         return;
       }
-
-      const reqId = ++requestIdRef.current;
 
       try {
         const response = await api.getConsolidatedAvailability(ministryId, {

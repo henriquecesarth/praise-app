@@ -11,17 +11,22 @@ import 'app.dart';
 import 'providers.dart';
 import 'theme/app_theme.dart';
 
+/// Notices shown by `showLicensePage` beside those of the pub packages.
+void registerThirdPartyLicenses() {
+  LicenseRegistry.addLicense(
+    () => Stream.value(
+      const LicenseEntryWithLineBreaks(['chords-db'], kGuitarCatalogNotice),
+    ),
+  );
+}
+
 /// Centralized application bootstrap routine.
 ///
 /// Ensures Flutter bindings, Firebase, and persistent preferences are initialized
 /// before running the widget tree inside [ProviderScope].
 Future<void> bootstrap() async {
   WidgetsFlutterBinding.ensureInitialized();
-  LicenseRegistry.addLicense(
-    () => Stream.value(
-      const LicenseEntryWithLineBreaks(['chords-db'], kGuitarCatalogNotice),
-    ),
-  );
+  registerThirdPartyLicenses();
 
   try {
     final environment = AppEnvironment.fromDartDefines();

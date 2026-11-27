@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'app/bootstrap.dart';
 import 'app/providers.dart';
 import 'app/theme/app_theme.dart';
 import 'features/auth/data/auth_repository.dart';
@@ -529,6 +530,7 @@ class PreviewMinistryContextNotifier extends MinistryContextNotifier {
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  registerThirdPartyLicenses();
 
   final initialSong = buildInitialMockSong();
   final authRepo = PreviewAuthRepository(initialUser: mockUser);

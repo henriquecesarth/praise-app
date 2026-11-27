@@ -13,6 +13,7 @@ export interface AppRouteState {
   isWhatsAppCallback?: boolean;
   isPrivacy?: boolean;
   isAccountDeletion?: boolean;
+  isLicenses?: boolean;
   isRehearsalPackages?: boolean;
   isKnown: boolean;
 }
@@ -61,6 +62,7 @@ export function parseAppRoute(pathname: string, search: string = ''): AppRouteSt
   if (normalized === '/pacotes-ensaio') return { module: 'dashboard', isRehearsalPackages: true, isKnown: true };
   if (normalized === '/privacidade') return { module: 'dashboard', isPrivacy: true, isKnown: true };
   if (normalized === '/exclusao-conta') return { module: 'dashboard', isAccountDeletion: true, isKnown: true };
+  if (normalized === '/licencas') return { module: 'dashboard', isLicenses: true, isKnown: true };
   if (normalized === '/whatsapp/callback') {
     return { module: 'ministry', ministrySection: 'whatsapp', isWhatsAppCallback: true, isKnown: true };
   }

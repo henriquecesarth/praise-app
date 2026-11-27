@@ -269,6 +269,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           <a href="/exclusao-conta" style={{ color: 'var(--text-tertiary)', textDecoration: 'underline' }}>
             Exclusão de Conta
           </a>
+          <span>•</span>
+          <a href="/licencas" style={{ color: 'var(--text-tertiary)', textDecoration: 'underline' }}>
+            Licenças
+          </a>
         </div>
       </footer>
     </div>

@@ -41,7 +41,7 @@ const sample = SAMPLE.map(chord => {
 });
 
 mkdirSync(resolve('../docs/exec-plans/evidence'), { recursive: true });
-writeFileSync(resolve('../docs/exec-plans/evidence/t6-guitar-sample.json'), JSON.stringify(sample, null, 1) + '\n');
+writeFileSync(resolve('../docs/exec-plans/evidence/violao-harmonia-sample.json'), JSON.stringify(sample, null, 1) + '\n');
 
 const escape = text => String(text).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const originLabel = origin => (origin.startsWith('chords-db') ? 'chords-db' : origin.startsWith('Gerador') ? 'gerada' : origin.startsWith('Forma comum') ? 'comum' : 'curada');

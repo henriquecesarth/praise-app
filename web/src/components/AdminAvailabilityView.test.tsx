@@ -1,6 +1,6 @@
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminAvailabilityView } from './AdminAvailabilityView';
 import { ConsolidatedAvailabilityItem } from '../types';
 
@@ -51,7 +51,14 @@ describe('AdminAvailabilityView Component', () => {
   const onBack = vi.fn();
   const showToast = vi.fn();
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
+    // The default period starts today, so the clock is pinned near the fixtures.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 8, 5, 12));
     vi.clearAllMocks();
     getMinistryMembers.mockResolvedValue([
       { id: 'mem-1', name: 'Juliana Vocal' },
@@ -205,6 +212,10 @@ describe('AdminAvailabilityView Component', () => {
     const fromInput = screen.getByLabelText('Data Inicial');
     const toInput = screen.getByLabelText('Data Final');
 
+    // The query for the valid start date stays pending until after the inversion.
+    let answerPending: (value: unknown) => void = () => {};
+    getConsolidatedAvailability.mockReturnValueOnce(new Promise((resolve) => { answerPending = resolve; }));
+
     fireEvent.change(fromInput, { target: { value: '2026-09-20' } });
     fireEvent.change(toInput, { target: { value: '2026-09-10' } });
 
@@ -212,7 +223,16 @@ describe('AdminAvailabilityView Component', () => {
       expect(screen.getByText('A data final não pode ser anterior à data inicial.')).toBeInTheDocument();
     });
 
+    // Only the valid start date queried; the inverted range never reached the API.
     expect(getConsolidatedAvailability).toHaveBeenCalledTimes(2);
+    expect(getConsolidatedAvailability.mock.calls[1][1]).toMatchObject({ from: '2026-09-20', to: '2026-10-04' });
+
+    // A late answer for the previous range must not erase the warning.
+    await act(async () => {
+      answerPending({ window: { from: '2026-09-20', to: '2026-10-04' }, data: [mockAllDayItem], nextCursor: null });
+    });
+    expect(screen.getByText('A data final não pode ser anterior à data inicial.')).toBeInTheDocument();
+    expect(screen.queryByTestId('availability-list')).not.toBeInTheDocument();
   });
 
   it('9. valida intervalo customizado e bloqueia período superior a 90 dias', async () => {

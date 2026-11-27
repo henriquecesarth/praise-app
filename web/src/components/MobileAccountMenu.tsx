@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Building2, ChevronDown, KeyRound, LogOut, Plus, UserPlus } from 'lucide-react';
+import { Building2, ChevronDown, KeyRound, LogOut, Plus, Scale, UserPlus } from 'lucide-react';
 import type { Group, GroupRole } from '../types';
 
 interface MobileAccountMenuProps {
@@ -12,6 +12,7 @@ interface MobileAccountMenuProps {
   onJoinGroup: () => void;
   onGenerateInvite: () => void;
   onLogout: () => void;
+  onShowLicenses: () => void;
 }
 
 export function MobileAccountMenu({
@@ -24,6 +25,7 @@ export function MobileAccountMenu({
   onJoinGroup,
   onGenerateInvite,
   onLogout,
+  onShowLicenses,
 }: MobileAccountMenuProps) {
   const [open, setOpen] = useState(false);
   const menuId = useId();
@@ -107,6 +109,9 @@ export function MobileAccountMenu({
                 <UserPlus size={18} aria-hidden="true" /> Gerar convite
               </button>
             )}
+            <button type="button" role="menuitem" onClick={() => runAndClose(onShowLicenses)}>
+              <Scale size={18} aria-hidden="true" /> Licenças de terceiros
+            </button>
             <button type="button" role="menuitem" className="danger" onClick={() => runAndClose(onLogout)}>
               <LogOut size={18} aria-hidden="true" /> Sair da conta
             </button>

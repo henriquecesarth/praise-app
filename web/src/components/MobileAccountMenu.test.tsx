@@ -17,6 +17,7 @@ describe('MobileAccountMenu', () => {
   it('exposes named profile, ministry and logout controls to keyboard users', async () => {
     const user = userEvent.setup();
     const onLogout = vi.fn();
+    const onShowLicenses = vi.fn();
     render(
       <MobileAccountMenu
         user={{ name: 'Maria', email: 'maria@example.test' }}
@@ -28,9 +29,13 @@ describe('MobileAccountMenu', () => {
         onJoinGroup={vi.fn()}
         onGenerateInvite={vi.fn()}
         onLogout={onLogout}
+        onShowLicenses={onShowLicenses}
       />,
     );
 
+    await user.click(screen.getByRole('button', { name: 'Abrir menu de perfil e ministério' }));
+    await user.click(screen.getByRole('menuitem', { name: /Licenças de terceiros/i }));
+    expect(onShowLicenses).toHaveBeenCalledOnce();
     await user.click(screen.getByRole('button', { name: 'Abrir menu de perfil e ministério' }));
     expect(screen.getByRole('combobox', { name: /Ministério ativo/i })).toBeVisible();
     expect(screen.getByRole('menuitem', { name: /Criar ministério/i })).toBeVisible();

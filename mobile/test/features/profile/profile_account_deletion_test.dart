@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:louvaio_mobile/app/bootstrap.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -198,6 +200,36 @@ void main() {
         ),
       );
     }
+
+    testWidgets('Profile opens the license page with the chords-db notice',
+        (tester) async {
+      registerThirdPartyLicenses();
+      await tester.pumpWidget(createTestApp());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Perfil'));
+      await tester.pumpAndSettle();
+
+      final tile = find.text('Licenças de terceiros');
+      await tester.scrollUntilVisible(
+        tile,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.ensureVisible(tile);
+      await tester.pumpAndSettle();
+      await tester.tap(tile);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LicensePage), findsOneWidget);
+      final notice = await tester.runAsync(
+        () => LicenseRegistry.licenses
+            .firstWhere((entry) => entry.packages.contains('chords-db')),
+      );
+      expect(
+        notice!.paragraphs.map((p) => p.text).join(' '),
+        contains('Copyright (c) 2016 David Rubert'),
+      );
+    });
 
     testWidgets('Profile displays Excluir minha conta action', (tester) async {
       await tester.pumpWidget(createTestApp());

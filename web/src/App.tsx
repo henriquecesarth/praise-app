@@ -36,6 +36,7 @@ import {
 } from './audio/song-version-audio-binding';
 import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
 import { PrivacyPolicyView } from './components/PrivacyPolicyView';
+import { LicensesView } from './components/LicensesView';
 import { AccountDeletionView } from './components/AccountDeletionView';
 import { RestrictedBanner } from './components/RestrictedBanner';
 import { BottomNav } from './components/BottomNav';
@@ -1054,6 +1055,15 @@ export default function App() {
     );
   }
 
+  if (routeState.isLicenses) {
+    return (
+      <>
+        <LicensesView onNavigateHome={() => navigate('/')} />
+        {toastContainer}
+      </>
+    );
+  }
+
   if (!authReady) {
     return (
       <div className="auth-loading-screen" role="status" aria-live="polite">
@@ -1231,6 +1241,18 @@ export default function App() {
               <LogOut size={14} />
               Sair da Conta
             </button>
+            <a
+              href="/licencas"
+              onClick={(event) => {
+                // Modified clicks keep opening a new tab or window.
+                if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+                event.preventDefault();
+                navigate('/licencas');
+              }}
+              style={{ display: 'inline-flex', alignItems: 'center', minHeight: '44px', fontSize: '0.75rem', color: 'var(--text-secondary)', textDecoration: 'underline' }}
+            >
+              Licenças de terceiros
+            </a>
           </div>
         )}
 
@@ -1488,6 +1510,7 @@ export default function App() {
                   onJoinGroup={() => setShowJoinModal(true)}
                   onGenerateInvite={() => setShowInviteModal(true)}
                   onLogout={handleLogout}
+                  onShowLicenses={() => navigate('/licencas')}
                 />
               </>
             }

@@ -71,14 +71,14 @@ Fonte única: [harmony-analysis-v1.json](harmony-analysis-v1.json). `format = lo
 - Três estados em `analyzeDegree`: `analysis` (interpretação diatônica sustentada pelo `KeyContext` explícito), `indeterminate` (`missingKeyContext`, `invalidKeyContext`, `externalSlashBass`, `enharmonicMismatch`, `nonDiatonicToNaturalMinor`, `nonDiatonicChord`) e `unsupported` (entrada fora da gramática/contexto v1).
 - Corpus inicial com 61 vetores verificados entre tonalidades maiores (17), menores naturais (16), inversões/baixos externos (10), casos indeterminados (14) e não suportados (4). Empréstimos modais, dominantes secundárias e menor harmônica/melódica permanecem fora das regras de grau natural na v1 (`indeterminate`).
 
-## Violão v2 e gerador (T6)
+## Violão v2 e gerador (VH)
 
 - [guitar-voicings-v2.json](guitar-voicings-v2.json): catálogo compacto (formas v1 curadas, formas comuns próprias `pop` e formas do chords-db, ver [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Gerado por `web/scripts/import-chords-db.mjs`, que também grava o relatório de importação e a cópia Dart; não editar à mão.
 - [guitar-generator-v1.json](guitar-generator-v1.json): saída esperada do gerador determinístico e da busca, comparada em TypeScript e Dart.
 - Omissão permitida: somente a 5ª justa, em acorde com sétima ou extensão, declarada em `omits: ["5"]`.
 - A UI usa o catálogo v2 (`findGuitarVoicings`); a amostra foi aprovada em 2026-11-27.
 
-## Harmony analysis v2 — leituras múltiplas (T6)
+## Harmony analysis v2 — leituras múltiplas (VH)
 
 [harmony-analysis-v2.json](harmony-analysis-v2.json): `analyzeHarmony(chord, key, vizinhos)` devolve todas as leituras plausíveis (diatônica, menor harmônico, dominante secundária, empréstimo modal e baixo fora do acorde). `analyzeDegree` e o corpus v1 não mudam.
 
