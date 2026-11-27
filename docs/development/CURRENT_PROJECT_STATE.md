@@ -11,8 +11,8 @@ Implementada na Web e no Android sobre `5b92119`; commit e push junto com a VH e
 ## Em andamento: VH do V3 Musical (violão e harmonia, antes chamada de T6), 2026-11-27
 Motores e UI prontos na web e no Flutter, amostra aprovada, `feature-reviewer` sem bloqueios e teste no tablet aprovado pelo responsável; commit e push em 2026-11-27, **sem deploy**. As três pendências foram corrigidas depois da revisão; essas correções foram revisadas sem bloqueios e os achados corrigidos, exceto a notação nova no backend. Fechamento (licença do chords-db visível na web e no Flutter, teste do `AdminAvailabilityView`) no commit `945e119`, enviado em 2026-11-27, CI de staging PASS (run 46058824164), **sem deploy**. Detalhes: `docs/exec-plans/active/2026-11-27-v3-violao-harmonia.md`.
 
-## Em andamento: CI da web e do backend, 2026-11-27
-Workflows novos `web-ci.yml` e `backend-ci.yml`; causas dos testes instáveis da web corrigidas (suíte 3 vezes verde local). Commit local, **sem push**; CI no GitHub: NOT_EXECUTED. Detalhes: `docs/exec-plans/active/2026-11-27-ci-web-backend.md`.
+## Concluído: CI da web e do backend, 2026-11-27
+Workflows novos `web-ci.yml` e `backend-ci.yml`; causas dos testes instáveis da web corrigidas (suíte 3 vezes verde local). Commit `38944cf` enviado; CI no GitHub PASS (web run 46068478302, 1767 testes; backend run 46068478229, 2944 testes), **sem deploy**. Detalhes: `docs/exec-plans/completed/2026-11-27-ci-web-backend.md`.
 
 ## Concluído: M22-S4.2 (reprodução MP3 incremental no Android)
 Concluído em `c65b283` (commits `08b45aa`, `2cd265d`, `49df80d` e `c65b283`). A reprodução incremental é **experimental e desligada por padrão**; o limite continua em 300 s. Detalhes, medidas e riscos: `docs/architecture/m22s42-android-mp3-incremental.md`.

@@ -22,4 +22,7 @@ Nenhuma asserção foi retirada ou afrouxada.
 - `feature-reviewer` (leitura estática): 0 BLOCKER, HIGH ou MEDIUM, 7 LOW. Corrigido o disparo por tags. Abertos: pausa fixa de 20 ms no teste de saída durante a compressão; espera por evento que, em regressão, só falha no limite de 40 s; ações fixadas por tag.
 - Backend: build PASS; testes (em UTC) 2942 de 2944. As 2 falhas (`m22c5d-r2-mp3-e2e-core`) conferem permissão `0600`, que o Windows não aplica; backend não alterado.
 - Uma rodada em segundo plano foi encerrada por falta de memória; refeita em primeiro plano.
-- CI no GitHub: NOT_EXECUTED.
+- CI no GitHub (commit `38944cf`): PASS. Web run 46068478302 (1767 de 1767); backend run 46068478229 (2944 de 2944, incluindo os dois testes de permissão que falham no Windows).
+
+## Resultado final
+Concluído em 2026-11-27, sem deploy. Permanecem fora do CI os testes E2E da web e os de integração do backend; no Windows, os 2 testes de permissão continuam falhando.
