@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from './api';
 import { bootstrapAuth } from './auth-bootstrap';
-import { MODULE_PATHS, parseAppRoute, pathForFolder, pathForSchedule, pathForSong, type MainModuleType } from './routing';
+import { MODULE_PATHS, parseAppRoute, pathForFolder, pathForSchedule, pathForSong, shouldBootstrapSession, type MainModuleType } from './routing';
 import { Song, Artist, Folder, Classification, RepertoireCounts, SongFilters, Group, GroupRole, MinistrySubscriptionSummary } from './types';
 import { SongCard } from './components/SongCard';
 import { FolderCard } from './components/FolderCard';
@@ -23,6 +23,7 @@ import { ScheduleDetailView } from './components/ScheduleDetailView';
 import { CreateScheduleModal, ScheduleItem } from './components/CreateScheduleModal';
 import { MinistryView } from './components/MinistryView';
 import { LiturgiesView } from './components/LiturgiesView';
+import { VocalExercisePlayer } from './components/VocalExercisePlayer';
 import { WhatsAppCallbackPage } from './components/WhatsAppCallbackPage';
 import { PrivacyPolicyView } from './components/PrivacyPolicyView';
 import { AccountDeletionView } from './components/AccountDeletionView';
@@ -179,8 +180,13 @@ export default function App() {
 
   // Check initial user authentication session
   useEffect(() => {
-    checkCurrentUser();
-  }, []);
+    // The public exercise player is self-contained and must not invalidate an
+    // authenticated session merely because its offline visit cannot reach API.
+    if (!shouldBootstrapSession(mainModule, authReady)) return;
+    let active = true;
+    void checkCurrentUser(() => active);
+    return () => { active = false; };
+  }, [mainModule, authReady]);
 
   // Carregar dados específicos de módulo/aba sob demanda ao navegar
   useEffect(() => {
@@ -271,9 +277,10 @@ export default function App() {
     };
   }, [search, filters]);
 
-  const checkCurrentUser = async () => {
+  const checkCurrentUser = async (isActive: () => boolean = () => true) => {
     const token = localStorage.getItem('praise_auth_token');
     const result = await bootstrapAuth(token, api);
+    if (!isActive()) return;
 
     if (!result.tokenValid) {
       if (token) localStorage.removeItem('praise_auth_token');
@@ -723,6 +730,9 @@ export default function App() {
     );
   }
 
+  // The exercise player has no account or ministry data and is available offline.
+  if (routeState.module === 'vocal') return <VocalExercisePlayer />;
+
   if (!authReady) {
     return (
       <div className="auth-loading-screen" role="status" aria-live="polite">
@@ -1037,6 +1047,21 @@ export default function App() {
           >
             <BookOpen size={20} />
             {sidebarOpen && <span>Liturgias</span>}
+          </button>
+
+          <button
+            onClick={() => setMainModule('vocal')}
+            title={sidebarOpen ? undefined : 'Exercícios vocais'}
+            aria-current={mainModule === 'vocal' ? 'page' : undefined}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: sidebarOpen ? 'flex-start' : 'center',
+              gap: '12px', padding: sidebarOpen ? '10px 14px' : '10px 0', borderRadius: '8px', border: 'none',
+              backgroundColor: mainModule === 'vocal' ? 'var(--primary-color)' : 'transparent',
+              color: mainModule === 'vocal' ? '#FFFFFF' : 'var(--surface-sidebar-text)', cursor: 'pointer', fontWeight: 600, textAlign: 'left',
+            }}
+          >
+            <Music size={20} />
+            {sidebarOpen && <span>Exercícios vocais</span>}
           </button>
 
           <button
@@ -1457,6 +1482,8 @@ export default function App() {
                   showToast={showToast}
                 />
               )}
+
+              {mainModule === 'vocal' && <VocalExercisePlayer />}
 
               {mainModule === 'schedules' && (
                 selectedSchedule ? (

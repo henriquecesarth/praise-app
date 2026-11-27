@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "source": "FreePats Upright Piano KW small SFZ, 2019-07-03",
+  "license": "CC0-1.0",
+  "supportedMidi": [
+    48,
+    88
+  ],
+  "releaseSeconds": 0.6,
+  "regions": [
+    {
+      "low": 45,
+      "high": 48,
+      "root": 47,
+      "file": "/audio/upright-kw/midi-047.wav",
+      "loopStartSeconds": 5.418140589569161,
+      "loopEndSeconds": 7.7391836734693875
+    },
+    {
+      "low": 49,
+      "high": 52,
+      "root": 51,
+      "file": "/audio/upright-kw/midi-051.wav",
+      "loopStartSeconds": 3.695827664399093,
+      "loopEndSeconds": 5.449319727891156
+    },
+    {
+      "low": 53,
+      "high": 55,
+      "root": 54,
+      "file": "/audio/upright-kw/midi-054.wav",
+      "loopStartSeconds": 4.40687074829932,
+      "loopEndSeconds": 6.023469387755102
+    },
+    {
+      "low": 56,
+      "high": 58,
+      "root": 57,
+      "file": "/audio/upright-kw/midi-057.wav",
+      "loopStartSeconds": 2.736485260770975,
+      "loopEndSeconds": 4.235873015873016
+    },
+    {
+      "low": 59,
+      "high": 61,
+      "root": 60,
+      "file": "/audio/upright-kw/midi-060.wav",
+      "loopStartSeconds": 3.309002267573696,
+      "loopEndSeconds": 4.838548752834467
+    },
+    {
+      "low": 62,
+      "high": 64,
+      "root": 63,
+      "file": "/audio/upright-kw/midi-063.wav",
+      "loopStartSeconds": 3.444353741496599,
+      "loopEndSeconds": 4.934195011337868
+    },
+    {
+      "low": 65,
+      "high": 67,
+      "root": 66,
+      "file": "/audio/upright-kw/midi-066.wav",
+      "loopStartSeconds": 3.141201814058957,
+      "loopEndSeconds": 4.202517006802721
+    },
+    {
+      "low": 68,
+      "high": 70,
+      "root": 69,
+      "file": "/audio/upright-kw/midi-069.wav"
+    },
+    {
+      "low": 71,
+      "high": 73,
+      "root": 72,
+      "file": "/audio/upright-kw/midi-072.wav"
+    },
+    {
+      "low": 74,
+      "high": 76,
+      "root": 75,
+      "file": "/audio/upright-kw/midi-075.wav"
+    },
+    {
+      "low": 77,
+      "high": 79,
+      "root": 78,
+      "file": "/audio/upright-kw/midi-078.wav"
+    },
+    {
+      "low": 80,
+      "high": 82,
+      "root": 81,
+      "file": "/audio/upright-kw/midi-081.wav"
+    },
+    {
+      "low": 83,
+      "high": 85,
+      "root": 84,
+      "file": "/audio/upright-kw/midi-084.wav"
+    },
+    {
+      "low": 86,
+      "high": 88,
+      "root": 87,
+      "file": "/audio/upright-kw/midi-087.wav"
+    }
+  ]
+}

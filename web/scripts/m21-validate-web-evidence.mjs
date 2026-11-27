@@ -1,0 +1,11 @@
+﻿import assert from 'node:assert/strict';import fs from 'node:fs';
+const root=new URL('../../docs/exec-plans/evidence/m21-2/',import.meta.url);const read=n=>JSON.parse(fs.readFileSync(new URL(n,root),'utf8'));
+const real=read('web-real-audio.json'), analysis=read('web-signal-analysis.json'), gates=read('web-gates.json'), offline=read('web-offline.json'), progression=read('web-progression-analysis.json'), native=read('web-native-context.json'),metro=read('web-metronome-analysis.json');
+assert.equal(real.results.length,12);assert.deepEqual(real.errors,[]);assert.ok(real.results.every(r=>r.frames>0&&r.peak>0&&r.peak<1&&r.captureGapFrames<=256));
+assert.equal(analysis.results.length,12);for(const r of analysis.results){assert.equal(r.onsetsSeconds.length,3);assert.equal(r.centsErrors.length,3);assert.ok(r.centsErrors.every(c=>Math.abs(c)<1));assert.ok(r.intervalErrorMs.every(ms=>Math.abs(ms)<=15));assert.equal(r.clippedSamples,0);}
+assert.ok(progression.every(r=>r.noteCount===14&&r.maxAbsCents<1&&r.relativeTimingErrorsMs.every(ms=>Math.abs(ms)<15)));
+assert.equal(gates.pauseClockDelta,0);assert.ok(gates.resumeClockDelta>.2);assert.ok(gates.stopped.frames>0);assert.equal(gates.stopped.peak,0);assert.equal(gates.invalidDisabled,true);assert.deepEqual(gates.errors,[]);
+assert.equal(offline.probe,'NETWORK_REQUEST_FAILED');assert.equal(offline.controller,true);assert.ok(offline.frames>0&&offline.peak>0);assert.deepEqual(offline.errors,[]);
+assert.equal(native.before,0);assert.ok(native.events.some(e=>e.data.context.contextState==='running'));assert.match(native.currentNote,/MIDI 48/);
+assert.ok(metro[0].accentBandFraction>metro[1].accentBandFraction*10);
+const result={status:'PASS_TECHNICAL_WEB_EVIDENCE',cases:12,firstNotesMeasured:36,fullProgressionsMeasured:2,captureGapFramesMaximum:256,captureGapUncertaintyMs:256/48,limitations:['Captured PCM is before speaker/DAC, not acoustic output','5ms onset resolution plus up to5.33ms omitted capture frames','First3notes per BPM case; only2full arpeggio progressions','Browser network emulation: navigator.onLine remained true, uncached fetch failed','No human timbre approval; no Android runtime evidence']};fs.writeFileSync(new URL('web-evidence-validation.json',root),JSON.stringify(result,null,2));console.log(JSON.stringify(result));

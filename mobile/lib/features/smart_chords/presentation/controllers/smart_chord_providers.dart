@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
 import '../../data/smart_chord_repository.dart';
 import '../../data/smart_chord_repertoire_link_repository.dart';
+import '../../services/share_intent_service.dart';
+import 'share_intent_router.dart';
 import 'smart_chord_detail_controller.dart';
 import 'smart_chord_form_controller.dart';
 import 'smart_chord_import_controller.dart';
@@ -55,11 +57,32 @@ final smartChordFormNotifierProvider =
 });
 
 final smartChordImportNotifierProvider =
-    StateNotifierProvider<SmartChordImportNotifier, SmartChordImportState>((ref) {
+    StateNotifierProvider.autoDispose<SmartChordImportNotifier, SmartChordImportState>((ref) {
   final repository = ref.watch(smartChordRepositoryProvider);
   final linkRepository = ref.watch(smartChordRepertoireLinkRepositoryProvider);
   return SmartChordImportNotifier(
     repository: repository,
     linkRepository: linkRepository,
   );
+});
+
+final shareIntentServiceProvider = Provider<ShareIntentService>((ref) {
+  final service = PlatformShareIntentService();
+  ref.onDispose(() {
+    service.dispose();
+  });
+  return service;
+});
+
+final shareIntentRouterProvider = Provider<ShareIntentRouter>((ref) {
+  final router = ShareIntentRouter(
+    ref: ref,
+    navigatorKey: ref.watch(rootNavigatorKeyProvider),
+    service: ref.watch(shareIntentServiceProvider),
+    logger: ref.watch(appLoggerProvider),
+  );
+  ref.onDispose(() {
+    router.dispose();
+  });
+  return router;
 });

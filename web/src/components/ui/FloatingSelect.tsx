@@ -1,18 +1,21 @@
 import React, { useId } from 'react';
+import { ChevronDown } from 'lucide-react';
 
 interface FloatingSelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   label: string;
+  options?: { value: string; label: string }[];
   error?: string;
 }
 
 export const FloatingSelect: React.FC<FloatingSelectProps> = ({
   label,
+  options,
+  children,
   id,
   error,
   className = '',
   style,
   value,
-  children,
   ...props
 }) => {
   const generatedId = useId();
@@ -21,38 +24,47 @@ export const FloatingSelect: React.FC<FloatingSelectProps> = ({
 
   return (
     <div className="relative w-full">
-      <select
-        id={inputId}
-        value={value}
-        aria-invalid={Boolean(error)}
-        aria-describedby={error ? errorId : props['aria-describedby']}
-        style={{
-          paddingLeft: '20px',
-          paddingRight: '40px',
-          paddingTop: '16px',
-          paddingBottom: '10px',
-          boxSizing: 'border-box',
-          ...style,
-        }}
-        className={`w-full min-h-[54px] text-sm md:text-base leading-normal text-[var(--text-primary)] bg-[var(--surface-variant)] border border-[var(--border-color)] rounded-xl outline-none transition-all duration-200 focus:border-[var(--primary-light)] focus:bg-[var(--surface-color)] appearance-none cursor-pointer ${
-          error ? 'border-red-500' : ''
-        } ${className}`}
-        {...props}
-      >
-        {children}
-      </select>
+      <div className="relative">
+        <select
+          id={inputId}
+          value={value}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? errorId : props['aria-describedby']}
+          style={{
+            paddingLeft: '16px',
+            paddingRight: '40px',
+            paddingTop: '16px',
+            paddingBottom: '10px',
+            boxSizing: 'border-box',
+            ...style,
+          }}
+          className={`w-full min-h-[50px] text-sm md:text-base leading-normal text-[var(--text-primary)] bg-[var(--bg-surface)] border border-[var(--border-strong)] rounded-lg outline-none transition-colors duration-150 focus:border-[var(--focus-ring)] focus:ring-2 focus:ring-[var(--focus-ring)]/20 appearance-none cursor-pointer ${
+            error ? 'border-[var(--status-danger-text)]' : ''
+          } ${className}`}
+          {...props}
+        >
+          {options
+            ? options.map((opt) => (
+                <option key={opt.value} value={opt.value} className="bg-[var(--bg-surface)] text-[var(--text-primary)]">
+                  {opt.label}
+                </option>
+              ))
+            : children}
+        </select>
+
+        <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-secondary)]">
+          <ChevronDown size={18} />
+        </div>
+      </div>
+
       <label
         htmlFor={inputId}
-        className="absolute pointer-events-none transition-all duration-200 ease-in-out z-10 px-1.5 rounded top-0 -translate-y-1/2 left-3.5 text-xs font-semibold text-[var(--primary-light)] bg-[var(--surface-color)]"
+        className="absolute pointer-events-none transition-all duration-150 ease-in-out z-10 px-1.5 rounded top-0 -translate-y-1/2 left-3 text-xs font-semibold text-[var(--text-secondary)] bg-[var(--bg-surface)]"
       >
         {label}
       </label>
-      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-secondary)] opacity-70">
-        <svg width="12" height="8" viewBox="0 0 12 8" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </div>
-      {error && <span id={errorId} className="text-xs text-red-500 mt-1 block px-1">{error}</span>}
+
+      {error && <span id={errorId} className="text-xs text-[var(--status-danger-text)] mt-1 block px-1">{error}</span>}
     </div>
   );
 };

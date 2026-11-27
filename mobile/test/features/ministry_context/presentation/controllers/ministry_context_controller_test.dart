@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'dart:async';
 import 'package:mocktail/mocktail.dart';
 import 'package:louvaio_mobile/core/errors/app_failure.dart';
 import 'package:louvaio_mobile/core/storage/preferences_storage.dart';
@@ -8,7 +9,8 @@ import 'package:louvaio_mobile/features/ministry_context/presentation/controller
 
 class MockMinistryRepository extends Mock implements MinistryRepository {}
 
-class MockPreferencesStorage extends Mock implements PreferencesStorage {}
+class MockPreferencesStorage extends Mock
+    implements PreferencesStorage, UserMinistrySelectionStorage {}
 
 void main() {
   group('MinistryContextNotifier', () {
@@ -39,6 +41,21 @@ void main() {
         repository: repository,
         preferencesStorage: preferencesStorage,
       );
+    });
+
+    test('late selection write cannot restore ministry after logout', () async {
+      when(() => repository.getMyMinistries()).thenAnswer((_) async => [ministry1, ministry2]);
+      when(() => preferencesStorage.getSelectedMinistryId()).thenReturn(null);
+      when(() => preferencesStorage.setSelectedMinistryId(null)).thenAnswer((_) async {});
+      await notifier.bootstrap();
+      final write = Completer<void>();
+      when(() => preferencesStorage.setSelectedMinistryId(ministry2.id)).thenAnswer((_) => write.future);
+      final selection = notifier.selectMinistry(ministry2);
+      await notifier.reset();
+      write.complete();
+      await selection;
+      expect(notifier.state.isInitializing, isTrue);
+      expect(notifier.state.selectedMinistry, isNull);
     });
 
     test('initial state is initializing', () {
@@ -153,6 +170,83 @@ void main() {
       await notifier.bootstrap();
       expect(notifier.state.isReady, isTrue);
       expect(notifier.state.selectedMinistry, ministry3);
+    });
+
+    test(
+        'same-user restart preserves preference and restores validated membership',
+        () async {
+      when(() => repository.getMyMinistries())
+          .thenAnswer((_) async => [ministry1, ministry2]);
+      when(() => preferencesStorage.getSelectedMinistryIdForUser('user-a'))
+          .thenReturn(ministry2.id);
+      when(() =>
+              preferencesStorage.setSelectedMinistryIdForUser('user-a', any()))
+          .thenAnswer((_) async {});
+
+      await notifier.reset(preserveSavedSelection: true);
+      await notifier.bootstrap(userId: 'user-a');
+
+      expect(notifier.state.selectedMinistry, ministry2);
+      verifyNever(() => preferencesStorage.setSelectedMinistryId(null));
+    });
+
+    test('reset completion cannot overwrite a newer bootstrap', () async {
+      final resetWrite = Completer<void>();
+      when(() => preferencesStorage.setSelectedMinistryId(null))
+          .thenAnswer((_) => resetWrite.future);
+      when(() => repository.getMyMinistries())
+          .thenAnswer((_) async => [ministry1]);
+      when(() => preferencesStorage.setSelectedMinistryId(ministry1.id))
+          .thenAnswer((_) async {});
+
+      final reset = notifier.reset();
+      final bootstrap = notifier.bootstrap();
+      resetWrite.complete();
+      await Future.wait([reset, bootstrap]);
+
+      expect(notifier.state.selectedMinistry, ministry1);
+      expect(notifier.state.isReady, isTrue);
+    });
+
+    test('shared ministry selection does not cross account boundary', () async {
+      when(() => repository.getMyMinistries())
+          .thenAnswer((_) async => [ministry1, ministry2]);
+      when(() => preferencesStorage.getSelectedMinistryIdForUser('user-a'))
+          .thenReturn(ministry1.id);
+      when(() => preferencesStorage.getSelectedMinistryIdForUser('user-b'))
+          .thenReturn(null);
+      when(() => preferencesStorage.setSelectedMinistryIdForUser(any(), any()))
+          .thenAnswer((_) async {});
+
+      await notifier.bootstrap(userId: 'user-a');
+      expect(notifier.state.selectedMinistry, ministry1);
+
+      await notifier.reset(preserveSavedSelection: false);
+      await notifier.bootstrap(userId: 'user-b');
+
+      expect(notifier.state.needsSelection, isTrue);
+      expect(notifier.state.selectedMinistry, isNull);
+      verify(() =>
+              preferencesStorage.setSelectedMinistryIdForUser('user-a', null))
+          .called(1);
+    });
+
+    test('logout clears saved selection and fences a slow bootstrap response',
+        () async {
+      final response = Completer<List<Ministry>>();
+      when(() => repository.getMyMinistries())
+          .thenAnswer((_) => response.future);
+      when(() => preferencesStorage.setSelectedMinistryId(null))
+          .thenAnswer((_) async {});
+      final pending = notifier.bootstrap();
+
+      await notifier.reset();
+      response.complete([ministry1]);
+      await pending;
+
+      expect(notifier.state.isInitializing, isTrue);
+      expect(notifier.state.selectedMinistry, isNull);
+      verify(() => preferencesStorage.setSelectedMinistryId(null)).called(1);
     });
 
     test(

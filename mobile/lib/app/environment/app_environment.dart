@@ -49,6 +49,53 @@ class AppEnvironment {
     final env = AppEnv.fromString(rawEnv);
 
     final rawApiBaseUrl = const String.fromEnvironment('API_BASE_URL').trim();
+    if (env == AppEnv.staging) {
+      if (rawApiBaseUrl.isEmpty || !rawApiBaseUrl.startsWith('https://')) {
+        throw ArgumentError(
+          'Staging requires an explicit HTTPS Preview API_BASE_URL.',
+        );
+      }
+      final uri = Uri.tryParse(rawApiBaseUrl);
+      final host = uri?.host ?? '';
+      final isAuthorizedHost =
+          host == 'louvaio-m20-c14-api-staging.vercel.app' ||
+          host.endsWith('-henriquecesarths-projects.vercel.app');
+      if (uri == null ||
+          !isAuthorizedHost ||
+          uri.userInfo.isNotEmpty ||
+          uri.hasPort ||
+          uri.hasQuery ||
+          uri.hasFragment ||
+          uri.path != '/api/v1') {
+        throw ArgumentError(
+          'Staging API must be an authorized HTTPS Staging /api/v1 URL.',
+        );
+      }
+    }
+
+    if (env == AppEnv.production) {
+      if (rawApiBaseUrl.isEmpty || !rawApiBaseUrl.startsWith('https://')) {
+        throw ArgumentError(
+          'Production API_BASE_URL must use HTTPS protocol.',
+        );
+      }
+      final uri = Uri.tryParse(rawApiBaseUrl);
+      final host = uri?.host ?? '';
+      if (host.contains('staging') ||
+          host.contains('preview') ||
+          host.contains('localhost') ||
+          host == '10.0.2.2' ||
+          uri == null ||
+          uri.userInfo.isNotEmpty ||
+          uri.hasPort ||
+          uri.hasQuery ||
+          uri.hasFragment ||
+          uri.path != '/api/v1') {
+        throw ArgumentError(
+          'Production API cannot use staging, preview or local hosts.',
+        );
+      }
+    }
 
     final String apiBaseUrl;
     if (rawApiBaseUrl.isNotEmpty) {
@@ -60,12 +107,6 @@ class AppEnvironment {
         );
       }
       apiBaseUrl = defaultDevApiBaseUrl;
-    }
-
-    if (env == AppEnv.production && !apiBaseUrl.startsWith('https://')) {
-      throw ArgumentError(
-        'Production API_BASE_URL must use HTTPS protocol.',
-      );
     }
 
     return AppEnvironment(

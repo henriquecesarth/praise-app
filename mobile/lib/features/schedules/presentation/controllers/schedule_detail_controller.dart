@@ -19,6 +19,10 @@ class ScheduleDetailState {
   final bool isConfirming;
   final String? confirmationError;
 
+  /// True when the delete request is in-flight.
+  final bool isDeleting;
+  final String? deleteError;
+
   const ScheduleDetailState({
     this.ministryId,
     this.scheduleId,
@@ -27,6 +31,8 @@ class ScheduleDetailState {
     this.error,
     this.isConfirming = false,
     this.confirmationError,
+    this.isDeleting = false,
+    this.deleteError,
   });
 
   ScheduleDetailState copyWith({
@@ -39,6 +45,9 @@ class ScheduleDetailState {
     bool? isConfirming,
     String? confirmationError,
     bool clearConfirmationError = false,
+    bool? isDeleting,
+    String? deleteError,
+    bool clearDeleteError = false,
   }) {
     return ScheduleDetailState(
       ministryId: ministryId ?? this.ministryId,
@@ -50,6 +59,8 @@ class ScheduleDetailState {
       confirmationError: clearConfirmationError
           ? null
           : (confirmationError ?? this.confirmationError),
+      isDeleting: isDeleting ?? this.isDeleting,
+      deleteError: clearDeleteError ? null : (deleteError ?? this.deleteError),
     );
   }
 
@@ -64,7 +75,9 @@ class ScheduleDetailState {
           schedule == other.schedule &&
           error == other.error &&
           isConfirming == other.isConfirming &&
-          confirmationError == other.confirmationError;
+          confirmationError == other.confirmationError &&
+          isDeleting == other.isDeleting &&
+          deleteError == other.deleteError;
 
   @override
   int get hashCode =>
@@ -74,7 +87,9 @@ class ScheduleDetailState {
       schedule.hashCode ^
       error.hashCode ^
       isConfirming.hashCode ^
-      confirmationError.hashCode;
+      confirmationError.hashCode ^
+      isDeleting.hashCode ^
+      deleteError.hashCode;
 }
 
 // ─── Schedule Detail Notifier ─────────────────────────────────────────────────
@@ -164,6 +179,41 @@ class ScheduleDetailNotifier extends StateNotifier<ScheduleDetailState> {
         isConfirming: false,
         confirmationError: 'Não foi possível confirmar a presença.',
       );
+    }
+  }
+
+  /// Deletes the schedule (DELETE /ministries/:ministryId/schedules/:scheduleId).
+  /// Requires admin role.
+  Future<bool> deleteSchedule(String ministryId, String scheduleId) async {
+    if (state.isDeleting) return false;
+    final seq = ++_loadSequence;
+    state = state.copyWith(
+      isDeleting: true,
+      clearDeleteError: true,
+    );
+
+    try {
+      await _repository.deleteSchedule(ministryId, scheduleId);
+      if (seq != _loadSequence) return false;
+      state = state.copyWith(
+        isDeleting: false,
+        clearDeleteError: true,
+      );
+      return true;
+    } on AppFailure catch (e) {
+      if (seq != _loadSequence) return false;
+      state = state.copyWith(
+        isDeleting: false,
+        deleteError: e.message,
+      );
+      return false;
+    } catch (e) {
+      if (seq != _loadSequence) return false;
+      state = state.copyWith(
+        isDeleting: false,
+        deleteError: 'Não foi possível excluir a escala.',
+      );
+      return false;
     }
   }
 
@@ -291,20 +341,20 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
 
     try {
       final list = await _repository.getComments(ministryId, scheduleId);
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         comments: list,
         isLoading: false,
         clearError: true,
       );
     } on AppFailure catch (e) {
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         error: e.message,
         isLoading: false,
       );
     } catch (e) {
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) return;
       state = state.copyWith(
         error: 'Não foi possível carregar os comentários.',
         isLoading: false,
@@ -335,7 +385,7 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
     try {
       final comment =
           await _repository.postComment(ministryId, scheduleId, trimmed);
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
         return false;
       }
 
@@ -348,7 +398,7 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
       );
       return true; // Signal caller to clear composer
     } on AppFailure catch (e) {
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
         return false;
       }
 
@@ -363,7 +413,7 @@ class CommentsNotifier extends StateNotifier<CommentsState> {
       );
       return false;
     } catch (e) {
-      if (seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
+      if (!mounted || seq != _loadSequence || !_isActive(ministryId, scheduleId)) {
         return false;
       }
       state = state.copyWith(

@@ -854,10 +854,12 @@ void main() {
       expect(songs.first['key'], equals('E'));
 
       final timeline = payload['timeline'] as List;
-      expect(timeline.length, equals(1));
-      expect(timeline.first['id'], equals('tl_1'));
-      expect(timeline.first['title'], equals('Momento de Louvor'));
-      expect(timeline.first['type'], equals('worship'));
+      expect(timeline.length, equals(2));
+      expect(timeline.first['title'], equals('Graça'));
+      expect(timeline.first['type'], equals('Música'));
+      expect(timeline.last['id'], equals('tl_1'));
+      expect(timeline.last['title'], equals('Momento de Louvor'));
+      expect(timeline.last['type'], equals('worship'));
 
       final clothing = payload['clothingPieces'] as List;
       expect(clothing.length, equals(1));

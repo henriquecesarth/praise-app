@@ -50,9 +50,17 @@ define: { 'globalThis.__LOUVAIO_VERIFIED_API__': JSON.stringify(['preview','prod
       workbox: {
         cacheId: 'louvaio-app-shell-v1',
         cleanupOutdatedCaches: true,
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg}', 'audio/upright-kw/*.wav'],
         navigateFallback: null,
         runtimeCaching: [
+          {
+            urlPattern: ({ request, url }) => request.mode === 'navigate' && url.pathname === '/exercicios-vocais',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'louvaio-vocal-player-navigation-v1',
+              precacheFallback: { fallbackURL: '/index.html' },
+            },
+          },
           {
             urlPattern: ({ request }) => request.mode === 'navigate',
             handler: 'NetworkOnly',

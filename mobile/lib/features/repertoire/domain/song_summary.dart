@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'classification.dart';
+import 'song_detail.dart';
 
 /// Lightweight summary model representing a song in the repertoire list.
 /// Matches the backend DTO SongSummary.
@@ -11,13 +12,14 @@ class SongSummary {
   final String? artistName;
   final SongClassificationRef? classification;
   final String? originalKey;
-  final int? bpm;
+  final dynamic bpm;
   final String? duration;
   final bool hasYoutube;
   final String? youtubeUrl;
   final String? audioUrl;
   final String? updatedAt;
   final String? createdAt;
+  final List<SongVersion> versions;
 
   const SongSummary({
     required this.id,
@@ -33,6 +35,7 @@ class SongSummary {
     this.audioUrl,
     this.updatedAt,
     this.createdAt,
+    this.versions = const [],
   });
 
   factory SongSummary.fromJson(Map<String, dynamic> json) {
@@ -44,6 +47,7 @@ class SongSummary {
     } else if (rawArtist is String && rawArtist.isNotEmpty) {
       resolvedArtist = rawArtist;
     }
+    resolvedArtist ??= json['artist_name']?.toString();
 
     // Classification handling: object { id, name, color } or null
     SongClassificationRef? resolvedClassification;
@@ -56,6 +60,33 @@ class SongSummary {
       );
     }
 
+    final parsedVersions = <SongVersion>[];
+    final rawVersions = json['versions'];
+    if (rawVersions is List && rawVersions.isNotEmpty) {
+      int idx = 0;
+      for (final item in rawVersions) {
+        if (item is Map) {
+          parsedVersions.add(
+            SongVersion.fromJson(Map<String, dynamic>.from(item), index: idx),
+          );
+          idx++;
+        }
+      }
+    }
+
+    final primary = parsedVersions.isNotEmpty ? parsedVersions.first : null;
+    final rawKey = json['original_key']?.toString();
+    final effectiveKey =
+        (rawKey != null && rawKey.trim().isNotEmpty) ? rawKey.trim() : primary?.key;
+
+    final dynamic effectiveBpm = parseBpmValue(json['bpm']) ?? primary?.bpm;
+
+    final rawDuration = json['duration']?.toString();
+    final effectiveDuration =
+        (rawDuration != null && rawDuration.trim().isNotEmpty)
+            ? rawDuration.trim()
+            : primary?.duration;
+
     final youtubeUrl = json['youtube_url']?.toString();
     final hasYoutube = json['has_youtube'] == true ||
         (youtubeUrl != null && youtubeUrl.trim().isNotEmpty);
@@ -66,14 +97,15 @@ class SongSummary {
       title: json['title']?.toString() ?? '',
       artistName: resolvedArtist,
       classification: resolvedClassification,
-      originalKey: json['original_key']?.toString(),
-      bpm: json['bpm'] != null ? (json['bpm'] as num).toInt() : null,
-      duration: json['duration']?.toString(),
+      originalKey: effectiveKey,
+      bpm: effectiveBpm,
+      duration: effectiveDuration,
       hasYoutube: hasYoutube,
       youtubeUrl: youtubeUrl,
       audioUrl: json['audio_url']?.toString(),
       updatedAt: json['updated_at']?.toString(),
       createdAt: json['created_at']?.toString(),
+      versions: parsedVersions,
     );
   }
 

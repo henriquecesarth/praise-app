@@ -1,0 +1,716 @@
+import 'dart:math' as math;
+import 'package:flutter/material.dart';
+import '../../domain/classification.dart';
+import '../../domain/song_detail.dart';
+import '../widgets/musical_key_selector.dart';
+
+/// Result returned when a version is edited or created via [VersionEditorSheet].
+class SongVersionEditorResult {
+  final SongVersion version;
+  final String bpmDraft;
+  final bool bpmEdited;
+
+  const SongVersionEditorResult({
+    required this.version,
+    required this.bpmDraft,
+    required this.bpmEdited,
+  });
+}
+
+/// Dedicated modal sheet for creating or editing a specific song version.
+///
+/// Contains all version-scoped fields: name, compact musical key selector, BPM,
+/// duration, classification chips, version notes, and reference links.
+class VersionEditorSheet extends StatefulWidget {
+  final SongVersion initialVersion;
+  final String initialBpmDraft;
+  final bool isNew;
+  final List<String> musicalKeys;
+  final List<Classification> classifications;
+
+  const VersionEditorSheet({
+    super.key,
+    required this.initialVersion,
+    required this.initialBpmDraft,
+    required this.isNew,
+    this.musicalKeys = kSupportedMusicalKeys,
+    required this.classifications,
+  });
+
+  @override
+  State<VersionEditorSheet> createState() => _VersionEditorSheetState();
+}
+
+class _CustomLinkDraft {
+  final String? id;
+  final TextEditingController labelController;
+  final TextEditingController urlController;
+
+  _CustomLinkDraft({
+    this.id,
+    String label = '',
+    String url = '',
+  })  : labelController = TextEditingController(text: label),
+        urlController = TextEditingController(text: url);
+
+  void dispose() {
+    labelController.dispose();
+    urlController.dispose();
+  }
+}
+
+class _VersionEditorSheetState extends State<VersionEditorSheet> {
+  final _formKey = GlobalKey<FormState>();
+
+  late final TextEditingController _nameController;
+  late final TextEditingController _bpmController;
+  late final TextEditingController _durationController;
+  late final TextEditingController _notesController;
+  late final TextEditingController _youtubeUrlController;
+  late final TextEditingController _audioUrlController;
+  late final TextEditingController _chordSheetUrlController;
+  late final TextEditingController _lyricsUrlController;
+
+  String? _selectedKey;
+  late List<String> _selectedClassificationIds;
+  bool _classificationsTouched = false;
+  late List<_CustomLinkDraft> _customLinkDrafts;
+
+  @override
+  void initState() {
+    super.initState();
+    final v = widget.initialVersion;
+    _nameController = TextEditingController(text: v.name);
+    _bpmController = TextEditingController(text: widget.initialBpmDraft);
+    _durationController = TextEditingController(text: v.duration ?? '');
+    _notesController = TextEditingController(text: v.notes ?? '');
+
+    _youtubeUrlController = TextEditingController(
+      text: _findStandardLink(v.links, const ['vídeo', 'video', 'youtube']),
+    );
+    _audioUrlController = TextEditingController(
+      text: _findStandardLink(v.links, const ['áudio', 'audio']),
+    );
+    _chordSheetUrlController = TextEditingController(
+      text: _findStandardLink(v.links, const ['cifra']),
+    );
+    _lyricsUrlController = TextEditingController(
+      text: _findStandardLink(v.links, const ['letra', 'letras']),
+    );
+
+    final customLinks = v.links.where((l) {
+      if (l.isCustom) return true;
+      final lower = l.label.trim().toLowerCase();
+      return !const [
+        'vídeo',
+        'video',
+        'youtube',
+        'áudio',
+        'audio',
+        'cifra',
+        'letra',
+        'letras',
+      ].contains(lower);
+    }).toList();
+    _customLinkDrafts = customLinks
+        .map(
+          (l) => _CustomLinkDraft(
+            id: l.id,
+            label: l.label,
+            url: l.url,
+          ),
+        )
+        .toList();
+
+    _selectedKey = v.key;
+    _selectedClassificationIds = List<String>.from(v.classificationIds);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _bpmController.dispose();
+    _durationController.dispose();
+    _notesController.dispose();
+    _youtubeUrlController.dispose();
+    _audioUrlController.dispose();
+    _chordSheetUrlController.dispose();
+    _lyricsUrlController.dispose();
+    for (final draft in _customLinkDrafts) {
+      draft.dispose();
+    }
+    super.dispose();
+  }
+
+  static String _findStandardLink(List<SongLink> links, List<String> labels) {
+    for (final link in links) {
+      if (!link.isCustom &&
+          labels.contains(link.label.trim().toLowerCase()) &&
+          link.url.trim().isNotEmpty) {
+        return link.url.trim();
+      }
+    }
+    return '';
+  }
+
+  String? _validateUrl(String? val) {
+    if (val == null || val.trim().isEmpty) return null;
+    final uri = Uri.tryParse(val.trim());
+    if (uri == null ||
+        !uri.hasScheme ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      return 'Insira uma URL válida (http:// ou https://)';
+    }
+    return null;
+  }
+
+  String? _validateBpm(String? val) {
+    if (val == null || val.trim().isEmpty) return null;
+    final parsed = parseBpmValue(val, trimString: true);
+    if (parsed == null) {
+      return '1 a 999 ou texto de até 10 caracteres';
+    }
+    return null;
+  }
+
+  void _save() {
+    if (!_formKey.currentState!.validate()) return;
+
+    final nameText = _nameController.text.trim();
+    final rawBpm = _bpmController.text.trim();
+    final bool bpmEdited = rawBpm != widget.initialBpmDraft.trim();
+    final Object? resolvedBpm;
+    if (!bpmEdited) {
+      resolvedBpm = widget.initialVersion.bpm;
+    } else if (rawBpm.isEmpty) {
+      resolvedBpm = null;
+    } else {
+      resolvedBpm = parseBpmValue(rawBpm, trimString: true);
+    }
+
+    final durText = _durationController.text.trim();
+    final notesText = _notesController.text.trim();
+
+    final links = <SongLink>[];
+    final chordUrl = _chordSheetUrlController.text.trim();
+    if (chordUrl.isNotEmpty) {
+      links.add(SongLink(label: 'Cifra', url: chordUrl));
+    }
+    final ytUrl = _youtubeUrlController.text.trim();
+    if (ytUrl.isNotEmpty) {
+      links.add(SongLink(label: 'Vídeo', url: ytUrl));
+    }
+    final audUrl = _audioUrlController.text.trim();
+    if (audUrl.isNotEmpty) {
+      links.add(SongLink(label: 'Áudio', url: audUrl));
+    }
+    final lyricsUrl = _lyricsUrlController.text.trim();
+    if (lyricsUrl.isNotEmpty) {
+      links.add(SongLink(label: 'Letra', url: lyricsUrl));
+    }
+    for (int i = 0; i < _customLinkDrafts.length; i++) {
+      final draft = _customLinkDrafts[i];
+      final label = draft.labelController.text.trim();
+      final url = draft.urlController.text.trim();
+      if (label.isNotEmpty && url.isNotEmpty) {
+        links.add(
+          SongLink(
+            id: draft.id ?? 'custom_${i + 1}',
+            label: label,
+            url: url,
+            isCustom: true,
+          ),
+        );
+      }
+    }
+
+    final Object resolvedClassificationIds = (!widget.isNew &&
+            !widget.initialVersion.hasClassificationIds &&
+            !_classificationsTouched &&
+            _selectedClassificationIds.isEmpty)
+        ? songFieldOmitted
+        : _selectedClassificationIds;
+
+    final updatedVersion = SongVersion(
+      id: widget.initialVersion.id,
+      name: nameText.isNotEmpty ? nameText : 'Original',
+      classificationIds: resolvedClassificationIds,
+      notes: notesText.isNotEmpty ? notesText : null,
+      key: _selectedKey,
+      bpm: resolvedBpm,
+      duration: durText.isNotEmpty ? durText : null,
+      links: links,
+    );
+
+    Navigator.of(context).pop(
+      SongVersionEditorResult(
+        version: updatedVersion,
+        bpmDraft: _bpmController.text,
+        bpmEdited: bpmEdited,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mediaQuery = MediaQuery.of(context);
+    final keyboardInset = mediaQuery.viewInsets.bottom;
+    final bottomSafeInset = keyboardInset > 0
+        ? 0.0
+        : math.max(mediaQuery.padding.bottom, mediaQuery.viewPadding.bottom);
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: keyboardInset),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: mediaQuery.size.height * 0.88,
+          maxWidth: 760,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Handle bar
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: 8, bottom: 4),
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+              child: Row(
+                children: [
+                  Icon(
+                    widget.isNew
+                        ? Icons.add_circle_outline
+                        : Icons.tune_outlined,
+                    color: theme.colorScheme.primary,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      widget.isNew ? 'Nova Versão' : 'Editar Versão',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Fechar',
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // Scrollable fields
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 16,
+                ),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Version Name
+                      TextFormField(
+                        key: const ValueKey('song_version_name_input'),
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nome da Versão *',
+                          hintText: 'ex: Original, Acústico, Ao Vivo',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.layers_outlined),
+                        ),
+                        validator: (val) {
+                          if (val == null || val.trim().isEmpty) {
+                            return 'O nome da versão é obrigatório';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Compact Musical Key Selector
+                      MusicalKeySelectorField(
+                        selectedKey: _selectedKey,
+                        onKeyChanged: (newKey) {
+                          setState(() => _selectedKey = newKey);
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // BPM & Duration Row
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              key: const ValueKey('song_bpm_input'),
+                              controller: _bpmController,
+                              keyboardType: TextInputType.text,
+                              decoration: const InputDecoration(
+                                labelText: 'BPM',
+                                hintText: '72 ou Rubato',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                                prefixIcon: Icon(Icons.speed, size: 20),
+                                prefixIconConstraints: BoxConstraints(
+                                  minWidth: 36,
+                                  minHeight: 36,
+                                ),
+                              ),
+                              validator: _validateBpm,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
+                              key: const ValueKey('song_duration_input'),
+                              controller: _durationController,
+                              decoration: const InputDecoration(
+                                labelText: 'Duração',
+                                hintText: '04:30',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                                prefixIcon: Icon(Icons.timer_outlined, size: 20),
+                                prefixIconConstraints: BoxConstraints(
+                                  minWidth: 36,
+                                  minHeight: 36,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Classifications
+                      Text(
+                        'Classificação',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (widget.classifications.isEmpty &&
+                          _selectedClassificationIds.isEmpty)
+                        Text(
+                          'Nenhuma classificação cadastrada no ministério.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: Colors.grey,
+                          ),
+                        )
+                      else
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            ChoiceChip(
+                              label: const Text('Nenhuma'),
+                              selected: _selectedClassificationIds.isEmpty,
+                              onSelected: (selected) {
+                                if (selected) {
+                                  setState(() {
+                                    _classificationsTouched = true;
+                                    _selectedClassificationIds = [];
+                                  });
+                                }
+                              },
+                            ),
+                            ...widget.classifications.map((c) {
+                              final isSelected =
+                                  _selectedClassificationIds.contains(c.id);
+                              Color? chipColor;
+                              if (c.color != null &&
+                                  c.color!.startsWith('#') &&
+                                  c.color!.length == 7) {
+                                try {
+                                  chipColor = Color(int.parse(
+                                          c.color!.substring(1),
+                                          radix: 16) +
+                                      0xFF000000);
+                                } catch (_) {}
+                              }
+
+                              return FilterChip(
+                                key: ValueKey('class_chip_${c.id}'),
+                                label: Text(c.name),
+                                selected: isSelected,
+                                avatar: chipColor != null
+                                    ? CircleAvatar(
+                                        backgroundColor: chipColor,
+                                        radius: 6,
+                                      )
+                                    : null,
+                                onSelected: (selected) {
+                                  setState(() {
+                                    _classificationsTouched = true;
+                                    if (selected) {
+                                      if (!_selectedClassificationIds
+                                          .contains(c.id)) {
+                                        _selectedClassificationIds.add(c.id);
+                                      }
+                                    } else {
+                                      _selectedClassificationIds
+                                          .remove(c.id);
+                                    }
+                                  });
+                                },
+                              );
+                            }),
+                            ..._selectedClassificationIds
+                                .where(
+                                  (id) => !widget.classifications
+                                      .any((c) => c.id == id),
+                                )
+                                .map(
+                                  (orphanId) => FilterChip(
+                                    key: ValueKey('class_chip_$orphanId'),
+                                    label: Text('ID: $orphanId'),
+                                    selected: true,
+                                    onSelected: (selected) {
+                                      if (!selected) {
+                                        setState(() {
+                                          _classificationsTouched = true;
+                                          _selectedClassificationIds
+                                              .remove(orphanId);
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ),
+                          ],
+                        ),
+                      const SizedBox(height: 20),
+
+                      // Version Notes
+                      TextFormField(
+                        key: const ValueKey('song_version_notes_input'),
+                        controller: _notesController,
+                        minLines: 2,
+                        maxLines: 4,
+                        decoration: const InputDecoration(
+                          labelText: 'Observações da Versão',
+                          hintText:
+                              'ex: Intro no violão, modulação no refrão final',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.sticky_note_2_outlined),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Links Section
+                      Text(
+                        'Links da Versão',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        key: const ValueKey('song_youtube_input'),
+                        controller: _youtubeUrlController,
+                        keyboardType: TextInputType.url,
+                        decoration: const InputDecoration(
+                          labelText: 'Link do YouTube',
+                          hintText: 'https://youtube.com/watch?v=...',
+                          prefixIcon: Icon(Icons.play_circle_outline),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: _validateUrl,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        key: const ValueKey('song_audio_input'),
+                        controller: _audioUrlController,
+                        keyboardType: TextInputType.url,
+                        decoration: const InputDecoration(
+                          labelText: 'Link do Áudio / Spotify / Drive',
+                          hintText: 'https://...',
+                          prefixIcon: Icon(Icons.audiotrack_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: _validateUrl,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        key: const ValueKey('song_chord_sheet_input'),
+                        controller: _chordSheetUrlController,
+                        keyboardType: TextInputType.url,
+                        decoration: const InputDecoration(
+                          labelText: 'Link da Cifra Externa',
+                          hintText: 'https://...',
+                          prefixIcon: Icon(Icons.description_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: _validateUrl,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        key: const ValueKey('song_lyrics_url_input'),
+                        controller: _lyricsUrlController,
+                        keyboardType: TextInputType.url,
+                        decoration: const InputDecoration(
+                          labelText: 'Link da Letra Externa',
+                          hintText: 'https://...',
+                          prefixIcon: Icon(Icons.article_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: _validateUrl,
+                      ),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            'Links Personalizados',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          TextButton.icon(
+                            key: const ValueKey('add_custom_link_button'),
+                            onPressed: () {
+                              setState(() {
+                                _customLinkDrafts.add(
+                                  _CustomLinkDraft(
+                                    id: 'custom_${DateTime.now().microsecondsSinceEpoch}',
+                                  ),
+                                );
+                              });
+                            },
+                            icon: const Icon(Icons.add_link, size: 18),
+                            label: const Text('Adicionar Link'),
+                          ),
+                        ],
+                      ),
+                      if (_customLinkDrafts.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        ...List.generate(_customLinkDrafts.length, (idx) {
+                          final draft = _customLinkDrafts[idx];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: TextFormField(
+                                    key: ValueKey('custom_link_label_$idx'),
+                                    controller: draft.labelController,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Rótulo',
+                                      hintText: 'Ex: VS, Playback',
+                                      border: OutlineInputBorder(),
+                                      isDense: true,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  flex: 3,
+                                  child: TextFormField(
+                                    key: ValueKey('custom_link_url_$idx'),
+                                    controller: draft.urlController,
+                                    keyboardType: TextInputType.url,
+                                    decoration: const InputDecoration(
+                                      labelText: 'URL',
+                                      hintText: 'https://...',
+                                      border: OutlineInputBorder(),
+                                      isDense: true,
+                                    ),
+                                    validator: (val) {
+                                      final hasLabel = draft.labelController.text
+                                          .trim()
+                                          .isNotEmpty;
+                                      if (hasLabel &&
+                                          (val == null || val.trim().isEmpty)) {
+                                        return 'Informe a URL';
+                                      }
+                                      return _validateUrl(val);
+                                    },
+                                  ),
+                                ),
+                                IconButton(
+                                  key: ValueKey('remove_custom_link_$idx'),
+                                  icon: const Icon(Icons.delete_outline),
+                                  tooltip: 'Remover link',
+                                  onPressed: () {
+                                    setState(() {
+                                      final removed =
+                                          _customLinkDrafts.removeAt(idx);
+                                      removed.dispose();
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            // Footer actions protected from Android navigation bar & keyboard
+            Padding(
+              key: const ValueKey('version_editor_footer'),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                12,
+                16,
+                12 + bottomSafeInset,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      key: const ValueKey('cancel_version_sheet_button'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 44),
+                      ),
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancelar'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      key: const ValueKey('save_version_sheet_button'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 44),
+                      ),
+                      onPressed: _save,
+                      child: Text(widget.isNew ? 'Adicionar' : 'Concluir'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

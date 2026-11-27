@@ -12,14 +12,68 @@ class ApiClient {
   final Dio dio;
   final AppLogger logger;
 
+  SessionContextProvider? _sessionContextProvider;
+  TokenProvider? _tokenProvider;
+  AuthFailureCallback? _onAuthenticationFailed;
+
+  SessionContextProvider? get sessionContextProvider => _sessionContextProvider;
+
+  set sessionContextProvider(SessionContextProvider? provider) {
+    _sessionContextProvider = provider;
+    for (final interceptor in dio.interceptors) {
+      if (interceptor is AuthInterceptor) {
+        interceptor.sessionContextProvider = provider;
+      }
+    }
+  }
+
+  TokenProvider? get tokenProvider => _tokenProvider;
+
+  set tokenProvider(TokenProvider? provider) {
+    _tokenProvider = provider;
+    var found = false;
+    for (final interceptor in dio.interceptors) {
+      if (interceptor is AuthInterceptor) {
+        interceptor.tokenProvider = provider;
+        found = true;
+      }
+    }
+    if (!found && provider != null) {
+      dio.interceptors.insert(
+        0,
+        AuthInterceptor(
+          tokenProvider: provider,
+          onAuthenticationFailed: _onAuthenticationFailed,
+          dio: dio,
+          sessionContextProvider: _sessionContextProvider,
+        ),
+      );
+    }
+  }
+
+  AuthFailureCallback? get onAuthenticationFailed => _onAuthenticationFailed;
+
+  set onAuthenticationFailed(AuthFailureCallback? callback) {
+    _onAuthenticationFailed = callback;
+    for (final interceptor in dio.interceptors) {
+      if (interceptor is AuthInterceptor) {
+        interceptor.onAuthenticationFailed = callback;
+      }
+    }
+  }
+
   ApiClient({
     required AppEnvironment environment,
     required this.logger,
     Dio? customDio,
     Interceptor? authInterceptor,
     TokenProvider? tokenProvider,
+    SessionContextProvider? sessionContextProvider,
     AuthFailureCallback? onAuthenticationFailed,
-  }) : dio = customDio ??
+  })  : _sessionContextProvider = sessionContextProvider,
+        _tokenProvider = tokenProvider,
+        _onAuthenticationFailed = onAuthenticationFailed,
+        dio = customDio ??
             Dio(
               BaseOptions(
                 baseUrl: environment.apiBaseUrl,
@@ -33,13 +87,25 @@ class ApiClient {
               ),
             ) {
     if (authInterceptor != null) {
+      if (authInterceptor is AuthInterceptor) {
+        if (sessionContextProvider != null) {
+          authInterceptor.sessionContextProvider = sessionContextProvider;
+        }
+        if (tokenProvider != null) {
+          authInterceptor.tokenProvider = tokenProvider;
+        }
+        if (onAuthenticationFailed != null) {
+          authInterceptor.onAuthenticationFailed = onAuthenticationFailed;
+        }
+      }
       dio.interceptors.add(authInterceptor);
     } else if (tokenProvider != null) {
       dio.interceptors.add(
         AuthInterceptor(
           tokenProvider: tokenProvider,
-          onAuthenticationFailed: onAuthenticationFailed ?? () async {},
+          onAuthenticationFailed: onAuthenticationFailed,
           dio: dio,
+          sessionContextProvider: sessionContextProvider,
         ),
       );
     }
@@ -78,6 +144,10 @@ class ApiClient {
 
   /// Maps [DioException] to standard LouvAIO [AppFailure].
   AppFailure mapDioException(DioException error) {
+    if (error.error is AppFailure) {
+      return error.error as AppFailure;
+    }
+
     if (error.response?.data is Map<String, dynamic>) {
       return AppFailure.fromBackendJson(
         error.response!.data as Map<String, dynamic>,
@@ -85,6 +155,18 @@ class ApiClient {
       );
     }
 
+    final status = error.response?.statusCode;
+    if (status != null) {
+      return AppFailure(
+        message: status == 404
+            ? 'O servidor configurado não oferece esta operação (HTTP 404).'
+            : status == 401 || status == 403
+                ? 'Acesso recusado pelo servidor (HTTP $status). Verifique a sessão ou a proteção do ambiente.'
+                : 'Resposta inesperada do servidor (HTTP $status).',
+        statusCode: status,
+        code: 'HTTP_ERROR',
+      );
+    }
     return AppFailure.network(
       message: error.message ?? 'Falha de comunicação com o servidor.',
       statusCode: error.response?.statusCode,

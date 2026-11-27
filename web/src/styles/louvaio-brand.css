@@ -1,54 +1,178 @@
-/* LouvAIO — Brand tokens
-   Source: approved LouvAIO visual identity. */
+/* LouvAIO — Design System v1.0 Brand & Semantic Tokens
+   Source: approved LouvAIO visual identity (Linear + Planning Center direction). */
 :root {
-  /* Cores Oficiais LouvAIO */
+  /* Cores Oficiais da Marca LouvAIO */
+  --brand-green: #0F2A1F;
+  --brand-terracotta: #B85A3C;
+  --brand-cream: #F5EFE6;
+
   --louvaio-green: #0F2A1F;
   --louvaio-green-dark: #0A1E16;
   --louvaio-green-light: #163B2C;
   --louvaio-green-surface: #E8EFEA;
 
   --louvaio-terracotta: #B85A3C;
-  --louvaio-terracotta-hover: #A04C31;
-  --louvaio-terracotta-light: #C96F52;
+  --louvaio-terracotta-hover: #964328;
+  --louvaio-terracotta-light: #AE5235;
   --louvaio-terracotta-surface: #F9ECE7;
 
   --louvaio-cream: #F5EFE6;
   --louvaio-cream-light: #FCF9F5;
   --louvaio-cream-surface: #FFFFFF;
-  --louvaio-cream-muted: #EAE2D5;
+  --louvaio-cream-muted: #EFE8DC;
 
-  --louvaio-black: #121212;
-  --louvaio-text-muted: #576059;
-  --louvaio-text-subtle: #7D8881;
+  --louvaio-black: #18221D;
+  --louvaio-text-muted: #46544E;
+  --louvaio-text-subtle: #5C6862;
 
-  --brand-primary: var(--louvaio-green);
-  --brand-accent: var(--louvaio-terracotta);
-  --brand-surface: var(--louvaio-cream);
-  --brand-ink: var(--louvaio-black);
+  /* Superfícies Semânticas — Modo Claro */
+  --bg-app: #F5EFE6;
+  --bg-surface: #FFFFFF;
+  --bg-surface-subtle: #EFE8DC;
+  --bg-surface-elevated: #FFFFFF;
+  --bg-sidebar: #EAE2D6;
+  --bg-overlay: rgba(15, 42, 31, 0.55);
 
-  --brand-on-primary: #F5EFE6;
-  --brand-on-accent: #FFFFFF;
-  --brand-border: #E2D7C7;
-  --brand-shadow: 0 12px 32px rgba(18, 18, 18, 0.08);
+  /* Tipografia e Ícones — Modo Claro (WCAG AA verificado) */
+  --text-primary: #18221D;
+  --text-secondary: #46544E;
+  --text-muted: #5C6862;
+  --text-on-brand: #F5EFE6;
+  --text-on-accent: #FFFFFF;
 
-  --brand-radius-sm: 8px;
-  --brand-radius-md: 12px;
-  --brand-radius-lg: 16px;
-  --brand-radius-pill: 999px;
+  /* Ações e Destaques Musicais — Modo Claro */
+  --action-primary-bg: #AE5235;
+  --action-primary-hover: #964328;
+  --action-primary-subtle: #F9ECE7;
+  --chord-text: #9E4427;
+  --chord-badge-bg: #F6E6E0;
+  --chord-badge-border: #E2BFB3;
+  --structural-accent: #0F2A1F;
+  --structural-subtle: #E4ECE8;
 
-  --brand-content-max: 1200px;
+  /* Bordas e Foco — Modo Claro */
+  --border-subtle: #DCD3C6;
+  --border-strong: #B8AEA0;
+  --focus-ring: #0F2A1F;
+
+  /* Estados Semânticos — Modo Claro */
+  --status-success-bg: #E6F4ED;
+  --status-success-text: #156545;
+  --status-success-border: #A8DABD;
+  --status-warning-bg: #FEF3E2;
+  --status-warning-text: #944D10;
+  --status-warning-border: #F3C88B;
+  --status-danger-bg: #FDECEB;
+  --status-danger-text: #A82525;
+  --status-danger-border: #F1B2B2;
+  --status-info-bg: #E6F0F5;
+  --status-info-text: #1C5368;
+  --status-info-border: #A9CFE0;
+
+  /* Escala Tipográfica */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', Courier, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 0.9375rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+
+  /* Escala de Espaçamento (Base 4px) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* Raios e Sombras */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --shadow-subtle: 0 1px 3px rgba(15, 42, 31, 0.06);
+  --shadow-elevated: 0 8px 24px rgba(15, 42, 31, 0.12);
+
+  /* Aliases de Compatibilidade */
+  --brand-primary: var(--brand-green);
+  --brand-accent: var(--action-primary-bg);
+  --brand-surface: var(--bg-app);
+  --brand-ink: var(--text-primary);
+  --brand-on-primary: var(--text-on-brand);
+  --brand-on-accent: var(--text-on-accent);
+  --brand-border: var(--border-subtle);
+  --brand-shadow: var(--shadow-subtle);
+
+  --brand-radius-sm: var(--radius-sm);
+  --brand-radius-md: var(--radius-md);
+  --brand-radius-lg: var(--radius-lg);
+  --brand-radius-pill: var(--radius-pill);
+
+  --brand-content-max: 1280px;
   --brand-page-gutter: clamp(16px, 4vw, 40px);
 
   color-scheme: light;
 }
 
 .dark {
+  /* Superfícies Semânticas — Modo Escuro */
+  --bg-app: #0B1913;
+  --bg-surface: #11231B;
+  --bg-surface-subtle: #162C22;
+  --bg-surface-elevated: #1B362A;
+  --bg-sidebar: #08140F;
+  --bg-overlay: rgba(0, 0, 0, 0.72);
+
+  /* Tipografia e Ícones — Modo Escuro (WCAG AA verificado) */
+  --text-primary: #F5EFE6;
+  --text-secondary: #C7C0B8;
+  --text-muted: #8E9B94;
+  --text-on-brand: #F5EFE6;
+  --text-on-accent: #FFFFFF;
+
+  /* Ações e Destaques Musicais — Modo Escuro */
+  --action-primary-bg: #B85A3C;
+  --action-primary-hover: #9E472B;
+  --action-primary-subtle: #2B1B16;
+  --chord-text: #E69176;
+  --chord-badge-bg: #2B1B16;
+  --chord-badge-border: #593326;
+  --structural-accent: #7CC4A4;
+  --structural-subtle: #153326;
+
+  /* Bordas e Foco — Modo Escuro */
+  --border-subtle: #1E3D2F;
+  --border-strong: #2D5945;
+  --focus-ring: #7CC4A4;
+
+  /* Estados Semânticos — Modo Escuro */
+  --status-success-bg: #113023;
+  --status-success-text: #6EE7B7;
+  --status-success-border: #1E563F;
+  --status-warning-bg: #332211;
+  --status-warning-text: #FCD34D;
+  --status-warning-border: #613F1B;
+  --status-danger-bg: #361717;
+  --status-danger-text: #FCA5A5;
+  --status-danger-border: #692828;
+  --status-info-bg: #122A36;
+  --status-info-text: #93C5FD;
+  --status-info-border: #214D63;
+
+  --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --shadow-elevated: 0 12px 32px rgba(0, 0, 0, 0.45);
+
   --brand-primary: #0F2A1F;
-  --brand-accent: #C96F52;
+  --brand-accent: #B85A3C;
   --brand-surface: #0B1913;
   --brand-ink: #F5EFE6;
-  --brand-border: #1B4534;
-  --brand-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --brand-border: #1E3D2F;
+  --brand-shadow: var(--shadow-elevated);
 
   color-scheme: dark;
 }

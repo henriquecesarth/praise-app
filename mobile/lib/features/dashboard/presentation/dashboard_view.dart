@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
 import '../../../app/providers.dart';
 import '../../ministry_context/domain/ministry.dart';
 import '../../ministry_context/presentation/widgets/ministry_switcher_sheet.dart';
@@ -65,7 +67,8 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     final user = ref.watch(authNotifierProvider).user;
     final userName = user?.name.isNotEmpty == true ? user!.name : 'Músico';
 
-    final isMatchingMinistry = widget.selectedMinistry != null &&
+    final isMatchingMinistry =
+        widget.selectedMinistry != null &&
         dashboardState.ministryId == widget.selectedMinistry!.id;
 
     final isAdmin =
@@ -90,6 +93,15 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
           children: [
             // 1. Header & Greeting
             _buildHeader(context, userName, isDark),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                onPressed: () => context.push('/vocal'),
+                icon: const Icon(Icons.mic),
+                label: const Text('Aquecimento vocal'),
+              ),
+            ),
             const SizedBox(height: 16),
 
             // 2. Active Ministry Card
@@ -167,12 +179,16 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
               color: theme.colorScheme.primary,
             ),
             const SizedBox(width: 6),
-            Text(
-              'PAINEL DO INTEGRANTE',
-              style: theme.textTheme.labelSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.8,
-                color: theme.colorScheme.primary,
+            Expanded(
+              child: Text(
+                'PAINEL DO INTEGRANTE',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.8,
+                  color: theme.colorScheme.primary,
+                ),
               ),
             ),
           ],
@@ -202,113 +218,174 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
   ) {
     final theme = Theme.of(context);
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    final roleBadge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color:
-            theme.colorScheme.primary.withValues(alpha: isDark ? 0.12 : 0.06),
+        color: ministry.isAdmin
+            ? theme.colorScheme.primary.withValues(alpha: 0.2)
+            : theme.colorScheme.secondary.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        ministry.roleLabel.toUpperCase(),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          color: ministry.isAdmin
+              ? theme.colorScheme.primary
+              : theme.colorScheme.secondary,
+        ),
+      ),
+    );
+
+    final actionButtons = <Widget>[
+      IconButton(
+        key: const ValueKey('dashboard_liturgies_button'),
+        tooltip: 'Liturgias',
+        visualDensity: VisualDensity.compact,
+        icon: const Icon(Icons.menu_book_outlined, size: 20),
+        onPressed: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => LiturgiesScreen(
+                ministryId: ministry.id,
+                ministryName: ministry.name,
+              ),
+            ),
+          );
+        },
+      ),
+      IconButton(
+        key: const ValueKey('dashboard_members_button'),
+        tooltip: 'Integrantes',
+        visualDensity: VisualDensity.compact,
+        icon: const Icon(Icons.people_outline, size: 20),
+        onPressed: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => MembersDirectoryScreen(
+                ministryId: ministry.id,
+                ministryName: ministry.name,
+              ),
+            ),
+          );
+        },
+      ),
+      if (widget.hasMultipleMinistries)
+        TextButton.icon(
+          onPressed: () => MinistrySwitcherSheet.show(context),
+          icon: const Icon(Icons.swap_horiz, size: 18),
+          label: const Text('Trocar'),
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          ),
+        ),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(
+          alpha: isDark ? 0.12 : 0.06,
+        ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: theme.colorScheme.primary.withValues(alpha: 0.2),
         ),
       ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: theme.colorScheme.primary
-                .withValues(alpha: isDark ? 0.3 : 0.15),
-            child: Icon(
-              Icons.church,
-              size: 20,
-              color: theme.colorScheme.primary,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isCompactWidth = constraints.maxWidth < 400;
+
+          if (isCompactWidth) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  ministry.name,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                    CircleAvatar(
+                      radius: 20,
+                      backgroundColor: theme.colorScheme.primary.withValues(
+                        alpha: isDark ? 0.3 : 0.15,
                       ),
-                      decoration: BoxDecoration(
-                        color: ministry.isAdmin
-                            ? theme.colorScheme.primary.withValues(alpha: 0.2)
-                            : theme.colorScheme.secondary
-                                .withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(4),
+                      child: Icon(
+                        Icons.church,
+                        size: 20,
+                        color: theme.colorScheme.primary,
                       ),
-                      child: Text(
-                        ministry.roleLabel.toUpperCase(),
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: ministry.isAdmin
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.secondary,
-                        ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            ministry.name,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          roleBadge,
+                        ],
                       ),
                     ),
                   ],
                 ),
+                const SizedBox(height: 8),
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: actionButtons,
+                ),
               ],
-            ),
-          ),
-          IconButton(
-            key: const ValueKey('dashboard_liturgies_button'),
-            tooltip: 'Liturgias',
-            icon: const Icon(Icons.menu_book_outlined, size: 20),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => LiturgiesScreen(
-                    ministryId: ministry.id,
-                    ministryName: ministry.name,
-                  ),
+            );
+          }
+
+          return Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: theme.colorScheme.primary.withValues(
+                  alpha: isDark ? 0.3 : 0.15,
                 ),
-              );
-            },
-          ),
-          IconButton(
-            key: const ValueKey('dashboard_members_button'),
-            tooltip: 'Integrantes',
-            icon: const Icon(Icons.people_outline, size: 20),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => MembersDirectoryScreen(
-                    ministryId: ministry.id,
-                    ministryName: ministry.name,
-                  ),
+                child: Icon(
+                  Icons.church,
+                  size: 20,
+                  color: theme.colorScheme.primary,
                 ),
-              );
-            },
-          ),
-          if (widget.hasMultipleMinistries)
-            TextButton.icon(
-              onPressed: () => MinistrySwitcherSheet.show(context),
-              icon: const Icon(Icons.swap_horiz, size: 18),
-              label: const Text('Trocar'),
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               ),
-            ),
-        ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      ministry.name,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    roleBadge,
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              ...actionButtons,
+            ],
+          );
+        },
       ),
     );
   }
@@ -489,8 +566,10 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                 label: const Text('Novo Aviso'),
                 style: FilledButton.styleFrom(
                   visualDensity: VisualDensity.compact,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                 ),
               ),
             ],
@@ -544,9 +623,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: theme.dividerColor.withValues(alpha: 0.15),
-        ),
+        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.15)),
       ),
       child: Column(
         children: [
@@ -618,9 +695,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
               onPressed: onRetry,
               icon: const Icon(Icons.refresh, size: 16),
               label: const Text('Tentar novamente'),
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.red.shade800,
-              ),
+              style: TextButton.styleFrom(foregroundColor: Colors.red.shade800),
             ),
           ),
         ],

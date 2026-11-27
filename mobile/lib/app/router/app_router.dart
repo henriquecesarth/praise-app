@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
 import '../../features/auth/presentation/controllers/auth_controller.dart';
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/ministry_context/presentation/controllers/ministry_context_controller.dart';
@@ -8,10 +9,16 @@ import '../../features/ministry_context/presentation/ministry_empty_screen.dart'
 import '../../features/ministry_context/presentation/ministry_selector_screen.dart';
 import '../providers.dart';
 import '../shell/app_shell.dart';
+import '../../features/vocal/presentation/vocal_player_screen.dart';
+
+bool shouldPreservePendingShareOnAuthentication(
+  AuthState? previous, {
+  required bool hasAuthenticatedSession,
+}) => !hasAuthenticatedSession && previous?.user == null;
 
 GoRouter createRouter(Ref ref) {
-  final refreshNotifier = _RouterRefreshNotifier(ref);
   final rootNavKey = ref.watch(rootNavigatorKeyProvider);
+  final refreshNotifier = _RouterRefreshNotifier(ref, rootNavKey);
 
   return GoRouter(
     navigatorKey: rootNavKey,
@@ -21,6 +28,8 @@ GoRouter createRouter(Ref ref) {
       final auth = ref.read(authNotifierProvider);
       final ministry = ref.read(ministryContextNotifierProvider);
       final loc = state.matchedLocation;
+      // This route contains only bundled public exercises and works offline.
+      if (loc == '/vocal') return null;
       final isLoggingIn = loc == '/login';
       final isNoMinistry = loc == '/no-ministry';
       final isSelectMinistry = loc == '/select-ministry';
@@ -68,15 +77,18 @@ GoRouter createRouter(Ref ref) {
     },
     routes: [
       GoRoute(
+        path: '/vocal',
+        name: 'vocal-player',
+        builder: (_, __) => const VocalPlayerScreen(),
+      ),
+      GoRoute(
         path: '/',
         name: 'home',
         builder: (BuildContext context, GoRouterState state) {
           final auth = ref.watch(authNotifierProvider);
           if (auth.isInitializing) {
             return const Scaffold(
-              body: Center(
-                child: CircularProgressIndicator(),
-              ),
+              body: Center(child: CircularProgressIndicator()),
             );
           }
           if (auth.hasBootstrapError) {
@@ -107,8 +119,9 @@ GoRouter createRouter(Ref ref) {
                             'Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.',
                         textAlign: TextAlign.center,
                         style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.7),
+                          color: theme.colorScheme.onSurface.withValues(
+                            alpha: 0.7,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 24),
@@ -120,6 +133,11 @@ GoRouter createRouter(Ref ref) {
                         },
                         icon: const Icon(Icons.refresh),
                         label: const Text('Tentar novamente'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => GoRouter.of(context).push('/vocal'),
+                        icon: const Icon(Icons.mic),
+                        label: const Text('Exercícios vocais offline'),
                       ),
                       const SizedBox(height: 12),
                       OutlinedButton(
@@ -165,33 +183,67 @@ GoRouter createRouter(Ref ref) {
 }
 
 class _RouterRefreshNotifier extends ChangeNotifier {
-  _RouterRefreshNotifier(Ref ref) {
+  bool _hasAuthenticatedSession = false;
+  final GlobalKey<NavigatorState> _rootNavKey;
+
+  _RouterRefreshNotifier(Ref ref, this._rootNavKey) {
     // Early initialize push listeners so pre-auth notification taps and foreground handlers are active
     Future.microtask(() {
       try {
         ref.read(pushNotificationNotifierProvider.notifier).initializeEarly();
       } catch (_) {}
+      try {
+        ref.read(shareIntentRouterProvider).initialize();
+      } catch (_) {}
     });
 
     ref.listen<AuthState>(authNotifierProvider, (previous, next) {
       if (next.isAuthenticated && previous?.user?.id != next.user?.id) {
-        resetAuthenticatedFeatures(ref);
-        ref.read(ministryContextNotifierProvider.notifier).bootstrap();
+        final isInitialAuthentication =
+            shouldPreservePendingShareOnAuthentication(
+              previous,
+              hasAuthenticatedSession: _hasAuthenticatedSession,
+            );
+        resetAuthenticatedFeatures(
+          ref,
+          preservePendingShareIntent: isInitialAuthentication,
+          preserveSavedMinistrySelection: isInitialAuthentication,
+        );
+        _hasAuthenticatedSession = true;
+        ref
+            .read(ministryContextNotifierProvider.notifier)
+            .bootstrap(userId: next.user?.id);
       } else if (next.isUnauthenticated) {
-        resetAuthenticatedFeatures(ref);
+        final isInitialUnauthenticated =
+            previous == null || previous.isInitializing;
+        resetAuthenticatedFeatures(
+          ref,
+          preservePendingShareIntent: isInitialUnauthenticated,
+        );
+        _hasAuthenticatedSession = false;
         ref.read(notificationRouterProvider).clearPendingPayload();
       }
       notifyListeners();
     });
 
-    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (previous, next) {
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider, (
+      previous,
+      next,
+    ) {
       if (next.isReady) {
         // Trigger push notification sync upon authenticated bootstrap
         try {
-          ref.read(pushNotificationNotifierProvider.notifier).initializeAndSync();
+          ref
+              .read(pushNotificationNotifierProvider.notifier)
+              .initializeAndSync();
+        } catch (_) {}
+        try {
           // Dispatch any pending notification intent
           ref.read(notificationRouterProvider).dispatchPendingIfReady();
         } catch (_) {}
+      }
+      if (next.isReady || next.isEmpty) {
+        _dispatchPendingShareAfterNavigationReady(ref, _rootNavKey);
       }
       notifyListeners();
     });
@@ -201,15 +253,36 @@ class _RouterRefreshNotifier extends ChangeNotifier {
     final ministry = ref.read(ministryContextNotifierProvider);
     if (auth.isAuthenticated && ministry.isInitializing) {
       Future.microtask(() {
-        ref.read(ministryContextNotifierProvider.notifier).bootstrap();
+        ref
+            .read(ministryContextNotifierProvider.notifier)
+            .bootstrap(userId: auth.user?.id);
       });
-    } else if (auth.isAuthenticated && ministry.isReady) {
+    } else if (auth.isAuthenticated && (ministry.isReady || ministry.isEmpty)) {
       Future.microtask(() {
-        try {
-          ref.read(pushNotificationNotifierProvider.notifier).initializeAndSync();
-          ref.read(notificationRouterProvider).dispatchPendingIfReady();
-        } catch (_) {}
+        if (ministry.isReady) {
+          try {
+            ref
+                .read(pushNotificationNotifierProvider.notifier)
+                .initializeAndSync();
+          } catch (_) {}
+          try {
+            ref.read(notificationRouterProvider).dispatchPendingIfReady();
+          } catch (_) {}
+        }
+        _dispatchPendingShareAfterNavigationReady(ref, _rootNavKey);
       });
     }
   }
+}
+
+void _dispatchPendingShareAfterNavigationReady(
+  Ref ref,
+  GlobalKey<NavigatorState> navigatorKey,
+) {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (navigatorKey.currentState == null) return;
+    try {
+      ref.read(shareIntentRouterProvider).dispatchPendingIfReady();
+    } catch (_) {}
+  });
 }

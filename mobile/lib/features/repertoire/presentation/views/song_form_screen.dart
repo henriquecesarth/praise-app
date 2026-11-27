@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
@@ -6,12 +7,15 @@ import '../../../ministry_context/presentation/controllers/ministry_context_cont
 import '../../domain/artist.dart';
 import '../../domain/song_detail.dart';
 import '../../domain/song_form_data.dart';
+import 'version_editor_sheet.dart';
 
 /// Screen for creating and editing repertoire songs in LouvAIO Mobile.
 ///
-/// Supports phone and tablet responsive layouts, key selector chips,
-/// artist selection and quick-creation, classification tagging,
-/// unsaved changes discard guard, and multi-tenant isolation.
+/// Features a compact, uncluttered layout:
+/// - Title & Artist
+/// - Compact Version List with concise cards and dedicated version editor sheet
+/// - General Song Information (Lyrics & General Notes)
+/// - Unsaved changes discard guard & multi-tenant isolation.
 class SongFormScreen extends ConsumerStatefulWidget {
   final String ministryId;
   final SongDetail? initialSong;
@@ -32,24 +36,37 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
   final _formKey = GlobalKey<FormState>();
 
   late final TextEditingController _titleController;
-  late final TextEditingController _bpmController;
-  late final TextEditingController _durationController;
   late final TextEditingController _lyricsController;
-  late final TextEditingController _youtubeUrlController;
-  late final TextEditingController _audioUrlController;
-  late final TextEditingController _chordSheetUrlController;
   late final TextEditingController _notesController;
 
-  String? _selectedKey;
+  late List<SongVersion> _versions;
+  late List<SongVersion> _initialVersions;
+  late List<String> _versionBpmDrafts;
+  late List<bool> _versionBpmEdited;
+  int _versionIdCounter = 1;
+
   String? _selectedArtistId;
-  String? _selectedClassificationId;
+  bool _artistExplicitlyModified = false;
   String? _boundUserId;
   bool _isSaved = false;
   bool _isForcedDismiss = false;
 
+  bool get _hasPreservedFreeTextArtist {
+    final init = widget.initialSong;
+    if (init == null || _artistExplicitlyModified || _selectedArtistId != null) {
+      return false;
+    }
+    final rawInitId = init.artistId?.trim();
+    final hasNoInitId = rawInitId == null || rawInitId.isEmpty;
+    final rawInitName = init.artistName?.trim();
+    return hasNoInitId && rawInitName != null && rawInitName.isNotEmpty;
+  }
+
   static const List<String> _musicalKeys = [
     'C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F',
     'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B',
+    'Cm', 'C#m', 'Dm', 'D#m', 'Ebm', 'Em', 'Fm',
+    'F#m', 'Gm', 'G#m', 'Am', 'Bbm', 'Bm',
   ];
 
   @override
@@ -58,28 +75,41 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
     final init = widget.initialSong;
 
     _titleController = TextEditingController(text: init?.title ?? '');
-    _bpmController = TextEditingController(
-      text: init?.bpm != null ? init!.bpm.toString() : '',
-    );
-    _durationController = TextEditingController(text: init?.duration ?? '');
     _lyricsController = TextEditingController(text: init?.lyrics ?? '');
-    _youtubeUrlController = TextEditingController(text: init?.youtubeUrl ?? '');
-    _audioUrlController = TextEditingController(text: init?.audioUrl ?? '');
-    _chordSheetUrlController =
-        TextEditingController(text: init?.chordSheetUrl ?? '');
     _notesController = TextEditingController(text: init?.notes ?? '');
+    final rawInitArtistId = init?.artistId?.trim();
+    _selectedArtistId =
+        (rawInitArtistId != null && rawInitArtistId.isNotEmpty)
+            ? rawInitArtistId
+            : null;
+    _artistExplicitlyModified = false;
 
-    _selectedKey = init?.originalKey;
-    _selectedArtistId = init?.artistId;
-    _selectedClassificationId = init?.classificationId;
+    if (init != null && init.effectiveVersions.isNotEmpty) {
+      _versions = List<SongVersion>.from(init.effectiveVersions);
+    } else {
+      _versions = const [
+        SongVersion(
+          id: 'v_1',
+          name: 'Original',
+          classificationIds: [],
+          notes: null,
+          key: null,
+          bpm: null,
+          duration: null,
+          links: [],
+        ),
+      ].toList();
+    }
+    _initialVersions = List<SongVersion>.from(_versions);
+    _versionBpmDrafts = _versions
+        .map((v) => v.bpm != null ? v.bpm.toString() : '')
+        .toList();
+    _versionBpmEdited =
+        List<bool>.filled(_versions.length, false, growable: true);
+    _versionIdCounter = _versions.length + 1;
 
     _titleController.addListener(_onFieldChanged);
-    _bpmController.addListener(_onFieldChanged);
-    _durationController.addListener(_onFieldChanged);
     _lyricsController.addListener(_onFieldChanged);
-    _youtubeUrlController.addListener(_onFieldChanged);
-    _audioUrlController.addListener(_onFieldChanged);
-    _chordSheetUrlController.addListener(_onFieldChanged);
     _notesController.addListener(_onFieldChanged);
 
     final currentUserId = ref.read(authNotifierProvider).user?.id ?? '';
@@ -94,6 +124,174 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
     });
   }
 
+  String _nextUniqueVersionId() {
+    final existingIds = _versions
+        .map((v) => v.id)
+        .whereType<String>()
+        .toSet();
+    final prefix = widget.initialSong?.id.trim().isNotEmpty == true
+        ? '${widget.initialSong!.id.trim()}_v'
+        : 'v';
+    String candidate;
+    do {
+      _versionIdCounter++;
+      candidate = '${prefix}_${DateTime.now().microsecondsSinceEpoch}_$_versionIdCounter';
+    } while (existingIds.contains(candidate));
+    return candidate;
+  }
+
+  Future<void> _openVersionEditor({int? index}) async {
+    final bool isNew = index == null;
+    if (isNew && _versions.length >= 20) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('A música pode ter no máximo 20 versões.'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return;
+    }
+
+    final SongVersion initialVersion = isNew
+        ? SongVersion(
+            id: _nextUniqueVersionId(),
+            name: 'Versão ${_versions.length + 1}',
+            classificationIds: const [],
+            notes: null,
+            key: null,
+            bpm: null,
+            duration: null,
+            links: const [],
+          )
+        : _versions[index];
+
+    final String initialBpmDraft = (index != null && index < _versionBpmDrafts.length)
+        ? _versionBpmDrafts[index]
+        : (initialVersion.bpm != null ? initialVersion.bpm.toString() : '');
+
+    final result = await showModalBottomSheet<SongVersionEditorResult>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => VersionEditorSheet(
+        initialVersion: initialVersion,
+        initialBpmDraft: initialBpmDraft,
+        isNew: isNew,
+        musicalKeys: _musicalKeys,
+        classifications: ref.read(songFormNotifierProvider).classifications,
+      ),
+    );
+
+    if (result != null && mounted) {
+      setState(() {
+        if (isNew) {
+          _versions.add(result.version);
+          _versionBpmDrafts.add(result.bpmDraft);
+          _versionBpmEdited.add(result.bpmEdited);
+        } else {
+          _versions[index] = result.version;
+          if (index < _versionBpmDrafts.length) {
+            _versionBpmDrafts[index] = result.bpmDraft;
+          }
+          if (index < _versionBpmEdited.length) {
+            _versionBpmEdited[index] = result.bpmEdited;
+          }
+        }
+      });
+    }
+  }
+
+  void _duplicateVersion(int index) {
+    if (index < 0 || index >= _versions.length) return;
+    if (_versions.length >= 20) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('A música pode ter no máximo 20 versões.'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return;
+    }
+
+    final source = _versions[index];
+    final sourceDraft = index < _versionBpmDrafts.length
+        ? _versionBpmDrafts[index]
+        : (source.bpm != null ? source.bpm.toString() : '');
+    final sourceEdited =
+        index < _versionBpmEdited.length ? _versionBpmEdited[index] : false;
+    final newId = _nextUniqueVersionId();
+    final clonedLinks = source.links
+        .map(
+          (l) => l.copyWith(
+            id: l.id != null ? '${l.id}_copy_$_versionIdCounter' : null,
+          ),
+        )
+        .toList();
+
+    final clonedVersion = SongVersion(
+      id: newId,
+      name: '${source.name} (Cópia)',
+      classificationIds: List<String>.from(source.classificationIds),
+      notes: source.notes,
+      key: source.key,
+      bpm: source.bpm,
+      duration: source.duration,
+      links: clonedLinks,
+    );
+
+    setState(() {
+      _versions.add(clonedVersion);
+      _versionBpmDrafts.add(sourceDraft);
+      _versionBpmEdited.add(sourceEdited);
+    });
+  }
+
+  Future<void> _confirmDeleteVersion(int index) async {
+    if (_versions.length <= 1 || index < 0 || index >= _versions.length) return;
+    final target = _versions[index];
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Excluir versão'),
+        content: Text(
+          'Deseja realmente excluir a versão "${target.name}"?',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('cancel_delete_version_button'),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm_delete_version_button'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      setState(() {
+        _versions.removeAt(index);
+        if (index < _versionBpmDrafts.length) {
+          _versionBpmDrafts.removeAt(index);
+        }
+        if (index < _versionBpmEdited.length) {
+          _versionBpmEdited.removeAt(index);
+        }
+      });
+    }
+  }
+
   void _forceDismiss() {
     if (_isForcedDismiss) return;
     _isForcedDismiss = true;
@@ -106,16 +304,13 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
 
   void _clearDraftControllers() {
     _titleController.clear();
-    _bpmController.clear();
-    _durationController.clear();
     _lyricsController.clear();
-    _youtubeUrlController.clear();
-    _audioUrlController.clear();
-    _chordSheetUrlController.clear();
     _notesController.clear();
-    _selectedKey = null;
     _selectedArtistId = null;
-    _selectedClassificationId = null;
+    _artistExplicitlyModified = false;
+    _versions = [];
+    _versionBpmDrafts = [];
+    _versionBpmEdited = [];
   }
 
   void _onFieldChanged() {
@@ -125,53 +320,50 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
   @override
   void dispose() {
     _titleController.removeListener(_onFieldChanged);
-    _bpmController.removeListener(_onFieldChanged);
-    _durationController.removeListener(_onFieldChanged);
     _lyricsController.removeListener(_onFieldChanged);
-    _youtubeUrlController.removeListener(_onFieldChanged);
-    _audioUrlController.removeListener(_onFieldChanged);
-    _chordSheetUrlController.removeListener(_onFieldChanged);
     _notesController.removeListener(_onFieldChanged);
 
     _titleController.dispose();
-    _bpmController.dispose();
-    _durationController.dispose();
     _lyricsController.dispose();
-    _youtubeUrlController.dispose();
-    _audioUrlController.dispose();
-    _chordSheetUrlController.dispose();
     _notesController.dispose();
     super.dispose();
   }
 
   bool get _isDirty {
     final init = widget.initialSong;
+    final hasBpmDraftEdits = _versionBpmEdited.any((e) => e);
     if (init == null) {
+      final v0 = _versions.isNotEmpty ? _versions.first : null;
       return _titleController.text.trim().isNotEmpty ||
           _lyricsController.text.trim().isNotEmpty ||
-          _bpmController.text.trim().isNotEmpty ||
-          _durationController.text.trim().isNotEmpty ||
-          _youtubeUrlController.text.trim().isNotEmpty ||
-          _audioUrlController.text.trim().isNotEmpty ||
-          _chordSheetUrlController.text.trim().isNotEmpty ||
           _notesController.text.trim().isNotEmpty ||
-          _selectedKey != null ||
           _selectedArtistId != null ||
-          _selectedClassificationId != null;
+          hasBpmDraftEdits ||
+          _versions.length > 1 ||
+          (v0 != null &&
+              (v0.name != 'Original' ||
+                  v0.key != null ||
+                  v0.bpm != null ||
+                  v0.duration != null ||
+                  v0.notes != null ||
+                  v0.classificationIds.isNotEmpty ||
+                  v0.links.isNotEmpty));
     }
+
+    final rawInitArtistId = init.artistId?.trim();
+    final normalizedInitArtistId =
+        (rawInitArtistId != null && rawInitArtistId.isNotEmpty)
+            ? rawInitArtistId
+            : null;
+    final artistChanged = _selectedArtistId != normalizedInitArtistId ||
+        _artistExplicitlyModified;
 
     return _titleController.text.trim() != init.title.trim() ||
         _lyricsController.text.trim() != (init.lyrics ?? '').trim() ||
-        _bpmController.text.trim() != (init.bpm?.toString() ?? '') ||
-        _durationController.text.trim() != (init.duration ?? '').trim() ||
-        _youtubeUrlController.text.trim() != (init.youtubeUrl ?? '').trim() ||
-        _audioUrlController.text.trim() != (init.audioUrl ?? '').trim() ||
-        _chordSheetUrlController.text.trim() !=
-            (init.chordSheetUrl ?? '').trim() ||
         _notesController.text.trim() != (init.notes ?? '').trim() ||
-        _selectedKey != init.originalKey ||
-        _selectedArtistId != init.artistId ||
-        _selectedClassificationId != init.classificationId;
+        artistChanged ||
+        hasBpmDraftEdits ||
+        !listEquals(_versions, _initialVersions);
   }
 
   Future<bool> _showDiscardDialog(BuildContext context) async {
@@ -204,34 +396,35 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_versions.isEmpty) return;
+
+    final primary = _versions.first;
+    final lyricsText = _lyricsController.text.trim();
+    final notesText = _notesController.text.trim();
+
+    final Object? artistIdPayload = (widget.isEditing &&
+            !_artistExplicitlyModified &&
+            _selectedArtistId == null)
+        ? songFieldOmitted
+        : _selectedArtistId;
+
+    final Object? classificationIdPayload =
+        (widget.isEditing && !primary.hasClassificationIds)
+            ? songFieldOmitted
+            : (primary.classificationIds.isNotEmpty
+                ? primary.classificationIds.first
+                : null);
 
     final formData = SongFormData(
       title: _titleController.text.trim(),
-      artistId: _selectedArtistId,
-      classificationId: _selectedClassificationId,
-      originalKey: _selectedKey,
-      bpm: _bpmController.text.trim().isNotEmpty
-          ? int.tryParse(_bpmController.text.trim())
-          : null,
-      duration: _durationController.text.trim().isNotEmpty
-          ? _durationController.text.trim()
-          : null,
-      lyrics: _lyricsController.text.trim().isNotEmpty
-          ? _lyricsController.text.trim()
-          : null,
-      youtubeUrl: _youtubeUrlController.text.trim().isNotEmpty
-          ? _youtubeUrlController.text.trim()
-          : null,
-      audioUrl: _audioUrlController.text.trim().isNotEmpty
-          ? _audioUrlController.text.trim()
-          : null,
-      chordSheetUrl: _chordSheetUrlController.text.trim().isNotEmpty
-          ? _chordSheetUrlController.text.trim()
-          : null,
-      externalLinks: {
-        if (_notesController.text.trim().isNotEmpty)
-          'notes': _notesController.text.trim(),
-      },
+      artistId: artistIdPayload,
+      classificationId: classificationIdPayload,
+      originalKey: primary.key,
+      bpm: primary.bpm,
+      duration: primary.duration,
+      lyrics: lyricsText.isNotEmpty ? lyricsText : null,
+      notes: notesText.isNotEmpty ? notesText : null,
+      versions: List<SongVersion>.from(_versions),
     );
 
     final notifier = ref.read(songFormNotifierProvider.notifier);
@@ -377,6 +570,7 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
                                 if (res.isSuccess && res.data != null) {
                                   setState(() {
                                     _selectedArtistId = res.data!.id;
+                                    _artistExplicitlyModified = true;
                                   });
                                   if (sheetCtx.mounted) {
                                     Navigator.of(sheetCtx).pop();
@@ -411,10 +605,12 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
                     ListTile(
                       leading: const Icon(Icons.clear, color: Colors.grey),
                       title: const Text('Sem artista / Desvincular'),
-                      selected: _selectedArtistId == null,
+                      selected: _selectedArtistId == null &&
+                          !_hasPreservedFreeTextArtist,
                       onTap: () {
                         setState(() {
                           _selectedArtistId = null;
+                          _artistExplicitlyModified = true;
                         });
                         Navigator.of(sheetCtx).pop();
                       },
@@ -445,6 +641,7 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
                                   onTap: () {
                                     setState(() {
                                       _selectedArtistId = artist.id;
+                                      _artistExplicitlyModified = true;
                                     });
                                     Navigator.of(sheetCtx).pop();
                                   },
@@ -462,43 +659,66 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
     );
   }
 
-  String? _validateUrl(String? value) {
-    if (value == null || value.trim().isEmpty) return null;
-    final uri = Uri.tryParse(value.trim());
-    if (uri == null || (!uri.isScheme('http') && !uri.isScheme('https'))) {
-      return 'Informe uma URL válida iniciando com http:// ou https://';
-    }
-    return null;
+  Widget _buildInfoBadge({
+    required IconData icon,
+    required String label,
+    required ThemeData theme,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: theme.dividerColor.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: theme.colorScheme.primary),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // Multi-tenant protection: auto-pop immediately if active ministry switches away
-    ref.listen<MinistryContextState>(ministryContextNotifierProvider,
-        (previous, next) {
-      final newMinistryId = next.selectedMinistry?.id;
-      if (newMinistryId != null &&
-          newMinistryId.isNotEmpty &&
-          newMinistryId != widget.ministryId) {
-        _forceDismiss();
-      }
-    });
-
-    // Session switch protection: if active user changes away or logs out, close immediately
-    ref.listen<AuthState>(authNotifierProvider, (previous, next) {
-      final currentUid = next.user?.id;
-      final isUnauthenticated =
-          !next.isAuthenticated || currentUid == null || currentUid.isEmpty;
-      final userChanged = _boundUserId != null && currentUid != _boundUserId;
-      if ((_boundUserId != null && isUnauthenticated) || userChanged) {
-        _forceDismiss();
-      }
-    });
-
     final formState = ref.watch(songFormNotifierProvider);
     final theme = Theme.of(context);
 
-    // Resolve selected artist name
+    // Multi-tenant fencing
+    ref.listen<MinistryContextState>(ministryContextNotifierProvider,
+        (prev, next) {
+      if (_isSaved || _isForcedDismiss) return;
+      if (prev?.selectedMinistry?.id != null &&
+          next.selectedMinistry?.id != null &&
+          prev!.selectedMinistry!.id != next.selectedMinistry!.id) {
+        _forceDismiss();
+      }
+    });
+
+    // Session fencing
+    ref.listen<AuthState>(authNotifierProvider, (prev, next) {
+      if (_isSaved || _isForcedDismiss) return;
+      final nextUserId = next.user?.id;
+      if (!next.isAuthenticated ||
+          (_boundUserId != null &&
+              nextUserId != null &&
+              nextUserId != _boundUserId)) {
+        _forceDismiss();
+      }
+    });
+
     String artistLabel = 'Nenhum artista selecionado';
     if (_selectedArtistId != null) {
       final found = formState.artists
@@ -507,21 +727,18 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
       if (found != null) {
         artistLabel = found.name;
       } else if (widget.initialSong?.artistName != null &&
+          widget.initialSong!.artistName!.trim().isNotEmpty &&
           widget.initialSong?.artistId == _selectedArtistId) {
         artistLabel = widget.initialSong!.artistName!;
       }
+    } else if (_hasPreservedFreeTextArtist) {
+      artistLabel = widget.initialSong!.artistName!.trim();
     }
 
     return PopScope(
-      canPop: _isForcedDismiss || _isSaved || !_isDirty || formState.isSubmitting,
-      onPopInvokedWithResult: (didPop, result) async {
+      canPop: !_isDirty || _isSaved || _isForcedDismiss,
+      onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        if (_isForcedDismiss) {
-          if (Navigator.of(context).canPop()) {
-            Navigator.of(context).pop();
-          }
-          return;
-        }
         final shouldLeave = await _showDiscardDialog(context);
         if (shouldLeave && context.mounted) {
           Navigator.of(context).pop();
@@ -611,7 +828,8 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
                                 subtitle: Text(
                                   artistLabel,
                                   style: TextStyle(
-                                    fontWeight: _selectedArtistId != null
+                                    fontWeight: (_selectedArtistId != null ||
+                                            _hasPreservedFreeTextArtist)
                                         ? FontWeight.bold
                                         : FontWeight.normal,
                                     fontSize: 15,
@@ -622,241 +840,214 @@ class _SongFormScreenState extends ConsumerState<SongFormScreen> {
                                     _openArtistPicker(formState.artists),
                               ),
                             ),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 24),
 
-                            // Musical Key (Tom Original)
-                            Text(
-                              'Tom Original',
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                ChoiceChip(
-                                  label: const Text('Sem tom'),
-                                  selected: _selectedKey == null,
-                                  onSelected: (selected) {
-                                    if (selected) {
-                                      setState(() => _selectedKey = null);
-                                    }
-                                  },
-                                ),
-                                ..._musicalKeys.map((key) {
-                                  final isSelected = _selectedKey == key;
-                                  return ChoiceChip(
-                                    key: ValueKey('key_chip_$key'),
-                                    label: Text(key),
-                                    selected: isSelected,
-                                    onSelected: (selected) {
-                                      setState(() {
-                                        _selectedKey = selected ? key : null;
-                                      });
-                                    },
-                                  );
-                                }),
-                              ],
-                            ),
-                            const SizedBox(height: 20),
-
-                            // BPM & Duration Row
+                            // Versions Management Section
                             Row(
                               children: [
                                 Expanded(
-                                  child: TextFormField(
-                                    key: const ValueKey('song_bpm_input'),
-                                    controller: _bpmController,
-                                    keyboardType: TextInputType.number,
-                                    decoration: const InputDecoration(
-                                      labelText: 'BPM',
-                                      hintText: 'ex: 72',
-                                      border: OutlineInputBorder(),
-                                      prefixIcon: Icon(Icons.speed),
+                                  child: Text(
+                                    'Versões da Música (${_versions.length})',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.bold,
                                     ),
-                                    validator: (val) {
-                                      if (val == null || val.trim().isEmpty) {
-                                        return null;
-                                      }
-                                      final parsed = int.tryParse(val.trim());
-                                      if (parsed == null ||
-                                          parsed <= 0 ||
-                                          parsed > 999) {
-                                        return '1 a 999';
-                                      }
-                                      return null;
-                                    },
                                   ),
                                 ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: TextFormField(
-                                    key: const ValueKey('song_duration_input'),
-                                    controller: _durationController,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Duração',
-                                      hintText: 'ex: 04:30',
-                                      border: OutlineInputBorder(),
-                                      prefixIcon: Icon(Icons.timer_outlined),
-                                    ),
-                                  ),
+                                TextButton.icon(
+                                  key: const ValueKey('add_version_button'),
+                                  onPressed: () => _openVersionEditor(),
+                                  icon: const Icon(Icons.add, size: 18),
+                                  label: const Text('Nova Versão'),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 20),
-
-                            // Classification Selector
-                            Text(
-                              'Classificação',
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
                             const SizedBox(height: 8),
-                            if (formState.classifications.isEmpty)
-                              Text(
-                                'Nenhuma classificação cadastrada no ministério.',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: Colors.grey,
-                                ),
-                              )
-                            else
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  ChoiceChip(
-                                    label: const Text('Nenhuma'),
-                                    selected: _selectedClassificationId == null,
-                                    onSelected: (selected) {
-                                      if (selected) {
-                                        setState(() =>
-                                            _selectedClassificationId = null);
-                                      }
-                                    },
-                                  ),
-                                  ...formState.classifications.map((c) {
-                                    final isSelected =
-                                        _selectedClassificationId == c.id;
-                                    Color? chipColor;
-                                    if (c.color != null &&
-                                        c.color!.startsWith('#') &&
-                                        c.color!.length == 7) {
-                                      try {
-                                        chipColor = Color(int.parse(
-                                            c.color!.substring(1),
-                                            radix: 16) +
-                                            0xFF000000);
-                                      } catch (_) {}
-                                    }
 
-                                    return FilterChip(
-                                      key: ValueKey('class_chip_${c.id}'),
-                                      label: Text(c.name),
-                                      selected: isSelected,
-                                      avatar: chipColor != null
-                                          ? CircleAvatar(
-                                              backgroundColor: chipColor,
-                                              radius: 6,
-                                            )
-                                          : null,
-                                      onSelected: (selected) {
-                                        setState(() {
-                                          _selectedClassificationId =
-                                              selected ? c.id : null;
-                                        });
-                                      },
-                                    );
-                                  }),
-                                ],
-                              ),
+                            // Compact Version Cards List
+                            ...List.generate(_versions.length, (idx) {
+                              final ver = _versions[idx];
+                              final isPrimary = idx == 0;
+                              final keyText = (ver.key != null && ver.key!.isNotEmpty)
+                                  ? ver.key!
+                                  : 'Sem tom';
+                              final bpmText = ver.bpm != null
+                                  ? (ver.bpm is num ? '${ver.bpm} BPM' : '${ver.bpm}')
+                                  : 'Sem BPM';
+                              final durText = (ver.duration != null && ver.duration!.isNotEmpty)
+                                  ? ver.duration!
+                                  : 'Sem duração';
+
+                              return Card(
+                                key: ValueKey('version_card_$idx'),
+                                margin: const EdgeInsets.only(bottom: 10),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  side: BorderSide(
+                                    color: theme.dividerColor.withValues(alpha: 0.3),
+                                  ),
+                                ),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: () => _openVersionEditor(index: idx),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Wrap(
+                                                spacing: 8,
+                                                runSpacing: 4,
+                                                crossAxisAlignment: WrapCrossAlignment.center,
+                                                children: [
+                                                  Text(
+                                                    ver.name.isEmpty
+                                                        ? (isPrimary ? 'Original' : 'Versão ${idx + 1}')
+                                                        : ver.name,
+                                                    style: const TextStyle(
+                                                      fontSize: 15,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                  if (isPrimary)
+                                                    Container(
+                                                      padding: const EdgeInsets.symmetric(
+                                                        horizontal: 6,
+                                                        vertical: 2,
+                                                      ),
+                                                      decoration: BoxDecoration(
+                                                        color: theme.colorScheme.primaryContainer,
+                                                        borderRadius: BorderRadius.circular(6),
+                                                      ),
+                                                      child: Text(
+                                                        'Padrão',
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                          fontWeight: FontWeight.w600,
+                                                          color: theme.colorScheme.onPrimaryContainer,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
+                                            ),
+                                            IconButton(
+                                              key: ValueKey('edit_version_button_$idx'),
+                                              tooltip: 'Editar versão',
+                                              visualDensity: VisualDensity.compact,
+                                              icon: const Icon(Icons.edit_outlined, size: 20),
+                                              onPressed: () => _openVersionEditor(index: idx),
+                                            ),
+                                            IconButton(
+                                              key: ValueKey('duplicate_version_button_$idx'),
+                                              tooltip: 'Duplicar versão',
+                                              visualDensity: VisualDensity.compact,
+                                              icon: const Icon(Icons.copy_outlined, size: 20),
+                                              onPressed: () => _duplicateVersion(idx),
+                                            ),
+                                            if (_versions.length > 1)
+                                              IconButton(
+                                                key: ValueKey('delete_version_button_$idx'),
+                                                tooltip: 'Excluir versão',
+                                                visualDensity: VisualDensity.compact,
+                                                icon: Icon(
+                                                  Icons.delete_outline,
+                                                  size: 20,
+                                                  color: theme.colorScheme.error,
+                                                ),
+                                                onPressed: () => _confirmDeleteVersion(idx),
+                                              ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 6,
+                                          children: [
+                                            _buildInfoBadge(
+                                              icon: Icons.music_note,
+                                              label: keyText,
+                                              theme: theme,
+                                            ),
+                                            _buildInfoBadge(
+                                              icon: Icons.speed,
+                                              label: bpmText,
+                                              theme: theme,
+                                            ),
+                                            _buildInfoBadge(
+                                              icon: Icons.timer_outlined,
+                                              label: durText,
+                                              theme: theme,
+                                            ),
+                                          ],
+                                        ),
+                                        if (ver.notes != null && ver.notes!.isNotEmpty) ...[
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            ver.notes!,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontStyle: FontStyle.italic,
+                                              color: Colors.grey.shade600,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
                             const SizedBox(height: 24),
 
-                            // Lyrics Editor
+                            // General Information Section Header
                             Text(
-                              'Letra da Música',
+                              'Informações Gerais',
                               style: theme.textTheme.titleSmall?.copyWith(
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 12),
+
+                            // Lyrics Editor
                             TextFormField(
                               key: const ValueKey('song_lyrics_input'),
                               controller: _lyricsController,
-                              minLines: 8,
-                              maxLines: null,
+                              minLines: 5,
+                              maxLines: 12,
                               keyboardType: TextInputType.multiline,
                               style: const TextStyle(
                                 fontFamily: 'monospace',
                                 height: 1.4,
                               ),
                               decoration: const InputDecoration(
+                                labelText: 'Letra da Música',
                                 hintText: 'Cole ou digite a letra aqui...',
                                 border: OutlineInputBorder(),
                                 alignLabelWithHint: true,
                               ),
                             ),
-                            const SizedBox(height: 24),
+                            const SizedBox(height: 16),
 
-                            // External Links
-                            Text(
-                              'Links e Recursos Externos',
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            TextFormField(
-                              key: const ValueKey('song_youtube_input'),
-                              controller: _youtubeUrlController,
-                              keyboardType: TextInputType.url,
-                              decoration: const InputDecoration(
-                                labelText: 'Link do YouTube',
-                                hintText: 'https://youtube.com/watch?v=...',
-                                prefixIcon: Icon(Icons.play_circle_outline),
-                                border: OutlineInputBorder(),
-                              ),
-                              validator: _validateUrl,
-                            ),
-                            const SizedBox(height: 12),
-                            TextFormField(
-                              key: const ValueKey('song_audio_input'),
-                              controller: _audioUrlController,
-                              keyboardType: TextInputType.url,
-                              decoration: const InputDecoration(
-                                labelText: 'Link do Áudio / Spotify / Drive',
-                                hintText: 'https://...',
-                                prefixIcon: Icon(Icons.audiotrack_outlined),
-                                border: OutlineInputBorder(),
-                              ),
-                              validator: _validateUrl,
-                            ),
-                            const SizedBox(height: 12),
-                            TextFormField(
-                              key: const ValueKey('song_chord_sheet_input'),
-                              controller: _chordSheetUrlController,
-                              keyboardType: TextInputType.url,
-                              decoration: const InputDecoration(
-                                labelText: 'Link da Cifra Externa',
-                                hintText: 'https://...',
-                                prefixIcon: Icon(Icons.description_outlined),
-                                border: OutlineInputBorder(),
-                              ),
-                              validator: _validateUrl,
-                            ),
-                            const SizedBox(height: 24),
-
-                            // Notes
+                            // General Notes
                             TextFormField(
                               key: const ValueKey('song_notes_input'),
                               controller: _notesController,
                               minLines: 2,
                               maxLines: 4,
                               decoration: const InputDecoration(
-                                labelText: 'Observações / Instruções',
-                                hintText: 'ex: Arranjo acústico, transição suave para estrofe 2',
+                                labelText: 'Observações Gerais',
+                                hintText:
+                                    'ex: Arranjo acústico, transição suave para estrofe 2',
                                 border: OutlineInputBorder(),
                                 prefixIcon: Icon(Icons.notes_outlined),
                               ),

@@ -1,0 +1,17 @@
+{
+  "url": "https://www.cifraclub.com.br/acorde-vivo/noite-clara/",
+  "musical_html": "<h1 class=\"t1\">Noite Clara</h1><h2 class=\"t3\">Acorde Vivo</h2><div id=\"cifra_tom\">Tom: Bb</div><div id=\"cifra_tom_original\">Tom original: Bb</div><div class=\"cifra_cnt\"><pre>[Verso 1]\nBb     Eb/G\nLuz no mar\ne|--0h2-12/14--|\nB|--3----x-----|\nG|--2----3-----|\nD|--0----2-----|\nA|-------x-----|\nE|--3----------|</pre></div>",
+  "expected_draft": {
+    "title": "Noite Clara",
+    "artist_name": "Acorde Vivo",
+    "original_key": "Bb",
+    "displayed_key": "Bb",
+    "capo": null,
+    "content": "[Verso 1]\n[Bb]Luz no [Eb/G]mar\ne|--0h2-12/14--|\nB|--3----x-----|\nG|--2----3-----|\nD|--0----2-----|\nA|-------x-----|\nE|--3----------|",
+    "warnings": [],
+    "source_type": "url",
+    "original_text": "[Verso 1]\nBb     Eb/G\nLuz no mar\ne|--0h2-12/14--|\nB|--3----x-----|\nG|--2----3-----|\nD|--0----2-----|\nA|-------x-----|\nE|--3----------|",
+    "requires_manual_paste": false,
+    "source_url": "https://www.cifraclub.com.br/acorde-vivo/noite-clara/"
+  }
+}

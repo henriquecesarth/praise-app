@@ -464,7 +464,10 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
   };
 
   const libraryRequestGeneration = useRef(0);
-  // Load chords list
+  const offlineCacheKey = (uid = currentUserId, mid = ministryId) =>
+    `louvaio_offline_smart_chords:${uid || 'session'}:${mid}`;
+
+  // Load chords list with scoped offline reading cache fallback
   const loadChordsList = async (searchQuery?: string, signal?: AbortSignal) => {
     if (!ministryId) return;
     const requestGeneration = ++libraryRequestGeneration.current;
@@ -474,9 +477,42 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
       if (requestGeneration === libraryRequestGeneration.current && !signal?.aborted && contextRef.current.ministryId === ministryId && contextRef.current.currentUserId === currentUserId) {
         loadedContext.current = `${currentUserId}|${ministryId}`;
         setSmartChords(data);
+        if (!searchQuery && Array.isArray(data)) {
+          try {
+            localStorage.setItem(offlineCacheKey(currentUserId, ministryId), JSON.stringify(data));
+          } catch {
+            // Ignore storage quota errors
+          }
+        }
       }
     } catch (err: any) {
-      if (requestGeneration === libraryRequestGeneration.current && err?.name !== 'AbortError') setRelationsError(err?.message || 'Erro ao carregar lista de cifras.');
+      if (requestGeneration === libraryRequestGeneration.current && err?.name !== 'AbortError') {
+        const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        if (isOffline) {
+          try {
+            const rawCache = localStorage.getItem(offlineCacheKey(currentUserId, ministryId));
+            if (rawCache) {
+              const parsed = JSON.parse(rawCache);
+              if (Array.isArray(parsed)) {
+                const normalizedQuery = (searchQuery || '').trim().toLowerCase();
+                const filtered = normalizedQuery
+                  ? parsed.filter((c: SmartChord) =>
+                      (c.title || '').toLowerCase().includes(normalizedQuery) ||
+                      (c.artistName || c.artist?.name || '').toLowerCase().includes(normalizedQuery)
+                    )
+                  : parsed;
+                loadedContext.current = `${currentUserId}|${ministryId}`;
+                setSmartChords(filtered);
+                setRelationsError(null);
+                return;
+              }
+            }
+          } catch {
+            // Fall through to standard error state
+          }
+        }
+        setRelationsError(err?.message || 'Erro ao carregar lista de cifras.');
+      }
     } finally {
       if (requestGeneration === libraryRequestGeneration.current && !signal?.aborted) setIsLoading(false);
     }
@@ -538,6 +574,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
     editorGeneration.current += 1;
     setLinkLoading(true);
     setBaseline(JSON.stringify([chord.title, chord.artistId || '', chord.artistName || chord.artist?.name || '', chord.originalKey, chord.content, chord.songId || '', chord.title, true]));
+    setWorkspaceMode('read');
     setEditingCell(null);
     setSelectedChord(chord);
     setTitle(chord.title);
@@ -1295,6 +1332,7 @@ export const SmartChordsWorkspace: React.FC<SmartChordsWorkspaceProps> = ({
               setSemitones={setSemitones} setPrintFontSize={setPrintFontSize}
               handleChordLineSpacingChange={handleChordLineSpacingChange} handleFontFamilyChange={handleFontFamilyChange}
               renderInlineEditor={renderInlineEditor}
+              isActive={workspaceMode === 'read' && !isPrintModalOpen && !isPdfSettingsOpen && !isImportModalOpen}
             />
           </div>
         )}

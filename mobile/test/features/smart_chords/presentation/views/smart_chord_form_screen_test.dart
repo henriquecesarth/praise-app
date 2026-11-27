@@ -1,3 +1,4 @@
+import 'package:louvaio_mobile/features/smart_chords/presentation/widgets/musical_progression_line.dart';
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
@@ -143,6 +144,9 @@ class FakeSmartChordRepo implements SmartChordRepository {
       content: payload['content'] as String,
       songId: payload['song_id'] as String?,
       artistId: payload['artist_id'] as String?,
+      sourceUrl: payload['source_url'] as String?,
+      displayedKey: payload['displayed_key'] as String?,
+      capo: payload['capo'] as int?,
       createdAt: '',
       updatedAt: '',
     );
@@ -168,6 +172,32 @@ class FakeSmartChordRepo implements SmartChordRepository {
       content: '',
       warnings: [],
       sourceType: 'text',
+    );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importUrlDraft(String url) async {
+    return const SmartChordImportDraft(
+      title: 'Cifra URL',
+      content: '',
+      warnings: [],
+      sourceType: 'url',
+    );
+  }
+
+  @override
+  Future<SmartChordImportDraft> importCapturedUrlDraft(
+    String url,
+    String musicalHtml,
+  ) async => throw UnimplementedError('Captured URL import is unsupported by this fake.');
+
+  @override
+  Future<SmartChordImportDraft> importImageDraft(List<int> bytes, String filename) async {
+    return const SmartChordImportDraft(
+      title: 'Cifra Imagem',
+      content: '',
+      warnings: [],
+      sourceType: 'image',
     );
   }
 }
@@ -405,5 +435,80 @@ void main() {
 
     // Assert: no snackbar was shown
     expect(find.byType(SnackBar), findsNothing);
+  });
+  testWidgets('editor preview retains inline section and progression in one widget', (tester) async {
+    await tester.pumpWidget(buildApp());
+    await tester.tap(find.text('Abrir Form'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('smart_chord_content_field')), 'Solo: [ Am | D ]');
+    await tester.tap(find.byTooltip('Visualizar Prévia'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MusicalProgressionLine), findsOneWidget);
+    final text = tester.widget<Text>(find.descendant(of: find.byType(MusicalProgressionLine), matching: find.byType(Text)));
+    expect(text.textSpan!.toPlainText(), 'Solo:  Am | D ');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('editing imported Smart Chord displays metadata banner and preserves sourceUrl, displayedKey, and capo on save', (tester) async {
+    const importedChord = SmartChord(
+      id: 'sc-imported-1',
+      userId: 'user-a',
+      title: 'Bondade de Deus',
+      originalKey: 'G',
+      content: '[G]Te amo Deus',
+      sourceUrl: 'https://www.cifraclub.com.br/isaias-saad/bondade-de-deus/',
+      displayedKey: 'A',
+      capo: 2,
+      createdAt: '',
+      updatedAt: '',
+    );
+
+    await tester.pumpWidget(buildApp(initialChord: importedChord));
+    await tester.tap(find.text('Abrir Form'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('smart_chord_metadata_banner')), findsOneWidget);
+    expect(find.text('Capo: 2ª casa'), findsOneWidget);
+    expect(find.text('Tom exibido: A'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const ValueKey('smart_chord_title_field')), 'Bondade de Deus (Ao Vivo)');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('smart_chord_save_button')));
+    await tester.pumpAndSettle();
+
+    expect(repo.lastUpdatedPayload, isNotNull);
+    expect(repo.lastUpdatedPayload!['title'], equals('Bondade de Deus (Ao Vivo)'));
+    expect(
+      repo.lastUpdatedPayload!['source_url'],
+      equals('https://www.cifraclub.com.br/isaias-saad/bondade-de-deus/'),
+    );
+    expect(repo.lastUpdatedPayload!['displayed_key'], equals('A'));
+    expect(repo.lastUpdatedPayload!['capo'], equals(2));
+  });
+
+  testWidgets('dirty form intercepts back navigation with discard confirmation dialog', (tester) async {
+    await tester.pumpWidget(buildApp());
+    await tester.tap(find.text('Abrir Form'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('smart_chord_title_field')), 'Rascunho Não Salvo');
+    await tester.pumpAndSettle();
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Descartar alterações?'), findsOneWidget);
+    await tester.tap(find.text('Continuar editando'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('smart_chord_save_button')), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Descartar'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('smart_chord_save_button')), findsNothing);
   });
 }

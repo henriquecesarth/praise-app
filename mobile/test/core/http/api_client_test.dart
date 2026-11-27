@@ -26,6 +26,21 @@ void main() {
   });
 
   group('ApiClient.mapDioException', () {
+    test('HTML HTTP errors keep status instead of becoming network errors', () {
+      for (final status in [401, 403, 404, 500]) {
+        final request = RequestOptions(path: '/smart-chords/import/url');
+        final failure = client.mapDioException(DioException(
+          requestOptions: request,
+          response: Response(
+              requestOptions: request,
+              statusCode: status,
+              data: '<html>Access denied</html>'),
+        ));
+        expect(failure.statusCode, status);
+        expect(failure.code, 'HTTP_ERROR');
+        expect(failure.message, contains('HTTP $status'));
+      }
+    });
     test('maps structured backend error response into AppFailure', () {
       final requestOptions = RequestOptions(path: '/api/v1/test');
       final dioException = DioException(

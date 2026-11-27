@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'providers.dart';
 import 'theme/app_theme.dart';
@@ -18,6 +19,15 @@ class LouvAioApp extends ConsumerWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
       routerConfig: router,
+      builder: (context, child) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: isDark
+              ? AppTheme.darkSystemOverlayStyle
+              : AppTheme.lightSystemOverlayStyle,
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
     );
   }
 }

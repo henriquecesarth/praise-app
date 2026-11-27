@@ -31,7 +31,7 @@ You are especially appropriate for:
 
 Before designing any feature or domain model:
 
-1. Read `AGENTS.md` and `MEMORY.md`.
+1. Read `AGENTS.md` once; consult `MEMORY.md` only if needed, using scoped `rg -n -m 8 --max-columns 200 --max-columns-preview` and small excerpts. Never load the whole file by default.
 2. Consult `docs/system-status.md` and relevant area documentation in `docs/`.
 3. Inspect current production implementation, repositories, routes, and tests.
 4. Verify callers, existing contracts, and database collection boundaries.
