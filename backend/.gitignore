@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 .spike-*.json
+.vercel
+.env*

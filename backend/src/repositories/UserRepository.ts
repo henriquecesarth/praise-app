@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 
 export interface UserPreferences {
   chord_font_family?: string;
+  chord_line_spacing_px?: number;
   [key: string]: any;
 }
 
@@ -183,30 +184,68 @@ export class UserRepository {
    * Atualiza preferências do usuário autenticado no Firestore com preservação estrita de campos existentes
    */
   async updatePreferences(userId: string, patch: Partial<UserPreferences>): Promise<UserPreferences> {
+    if (!userId) {
+      throw new AppError(401, 'Sessão inválida ou expirada. Faça login novamente.');
+    }
+    assertPreviewUidAllowed(userId);
     const userDocRef = this.usersCollection.doc(userId);
-    const doc = await userDocRef.get();
-    if (!doc.exists) {
-      throw new AppError(404, 'Perfil de usuário não encontrado.');
+    const fields = Object.fromEntries(
+      Object.entries(patch).map(([key, value]) => [`preferences.${key}`, value])
+    );
+    try {
+      // Dotted field updates keep unrelated preferences and avoid lost updates when
+      // font and spacing are changed concurrently by separate clients.
+      await userDocRef.update(fields);
+    } catch (error) {
+      const code = (error as { code?: string | number })?.code;
+      if (code !== 5 && code !== '5' && code !== 'not-found') {
+        throw error;
+      }
+
+      let verifiedRecord;
+      try {
+        verifiedRecord = await authAdmin.getUser(userId);
+      } catch (authError) {
+        const authCode = (authError as { code?: string })?.code;
+        if (authCode === 'auth/user-not-found') {
+          throw new AppError(404, 'Perfil de usuário não encontrado.');
+        }
+        throw authError;
+      }
+      if (verifiedRecord.uid !== userId) {
+        throw new AppError(403, 'Identidade do usuário inválida.');
+      }
+      if (verifiedRecord.disabled) {
+        throw new AppError(403, 'Conta de usuário desabilitada.');
+      }
+      assertPreviewUidAllowed(verifiedRecord.uid);
+
+      const email = verifiedRecord.email || '';
+      const profile: UserRecordData = {
+        id: verifiedRecord.uid,
+        email,
+        name: verifiedRecord.displayName || (email ? email.split('@')[0] : 'Usuário'),
+        createdAt: new Date().toISOString(),
+        preferences: patch,
+      };
+      try {
+        // create is atomic: one concurrent first writer wins; losers patch only
+        // their requested fields and never replace the winning profile.
+        await userDocRef.create(profile);
+      } catch (createError) {
+        const createCode = (createError as { code?: string | number })?.code;
+        if (createCode !== 6 && createCode !== '6' && createCode !== 'already-exists') {
+          throw createError;
+        }
+        await userDocRef.update(fields);
+      }
     }
 
+    const doc = await userDocRef.get();
     const currentData = doc.data() as Partial<UserRecordData> | undefined;
-    const currentPreferences = (currentData?.preferences && typeof currentData.preferences === 'object')
+    return (currentData?.preferences && typeof currentData.preferences === 'object')
       ? currentData.preferences
       : {};
-
-    const updatedPreferences: UserPreferences = {
-      ...currentPreferences,
-      ...patch,
-    };
-
-    await userDocRef.set(
-      {
-        preferences: updatedPreferences,
-      },
-      { merge: true }
-    );
-
-    return updatedPreferences;
   }
 
   /**

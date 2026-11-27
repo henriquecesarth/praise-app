@@ -52,6 +52,17 @@ function resolveEffectiveFont(preferred?: string): string {
   return 'monospace';
 }
 
+function resolveEffectiveLineSpacing(): number {
+  try {
+    const userId = localStorage.getItem('louvaio_last_auth_user_id');
+    const stored = userId ? localStorage.getItem(`louvaio_chord_line_spacing_user_${userId}`) : null;
+    const value = stored === null ? 0 : Number(stored);
+    return Number.isInteger(value) && value >= 0 && value <= 24 && value % 2 === 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
 interface SongDetailProps {
   song: Song;
   ministryId?: string;
@@ -76,10 +87,44 @@ export const SongDetail: React.FC<SongDetailProps> = ({
   const [effectiveFontFamily, setEffectiveFontFamily] = useState<string>(() =>
     resolveEffectiveFont(chordFontFamily)
   );
+  const [lineSpacingPx, setLineSpacingPx] = useState(resolveEffectiveLineSpacing);
+  const spacingUserSelectedRef = useRef(false);
 
   useEffect(() => {
     setEffectiveFontFamily(resolveEffectiveFont(chordFontFamily));
   }, [chordFontFamily]);
+
+  useEffect(() => {
+    let active = true;
+    (typeof api.getMe === 'function' ? api.getMe() : Promise.reject(new Error('profile unavailable'))).then(user => {
+      if (!active || !user.id || spacingUserSelectedRef.current) return;
+      const spacing = user.preferences?.chordLineSpacingPx;
+      if (!Number.isInteger(spacing) || spacing! < 0 || spacing! > 24 || spacing! % 2 !== 0) return;
+      setLineSpacingPx(spacing!);
+      try {
+        localStorage.setItem('louvaio_last_auth_user_id', user.id);
+        localStorage.setItem(`louvaio_chord_line_spacing_user_${user.id}`, String(spacing));
+      } catch { /* ignore storage errors */ }
+    }).catch(() => { /* use cached fallback when unauthenticated */ });
+    const handleSpacingChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ spacingPx?: number; userId?: string | null }>).detail;
+      const currentUser = localStorage.getItem('louvaio_last_auth_user_id');
+      if (detail?.userId && currentUser && detail.userId !== currentUser) return;
+      const spacing = detail?.spacingPx;
+      if (Number.isInteger(spacing) && spacing! >= 0 && spacing! <= 24 && spacing! % 2 === 0) {
+        spacingUserSelectedRef.current = true;
+        setLineSpacingPx(spacing!);
+      }
+    };
+    const handleStorageChange = () => setLineSpacingPx(resolveEffectiveLineSpacing());
+    window.addEventListener('louvaio_chord_line_spacing_changed', handleSpacingChange);
+    window.addEventListener('storage', handleStorageChange);
+    return () => {
+      active = false;
+      window.removeEventListener('louvaio_chord_line_spacing_changed', handleSpacingChange);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
 
   useEffect(() => {
     const handleFontChange = (e: any) => {
@@ -1032,7 +1077,7 @@ export const SongDetail: React.FC<SongDetailProps> = ({
                 </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: `${lineSpacingPx}px` }}>
                 {rawLines.map((lineText, lineIdx) => {
                   if (isTablatureLine(lineText)) {
                     return (

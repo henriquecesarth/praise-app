@@ -1159,6 +1159,19 @@ describe('API Client & Structured Error Handling', () => {
       const user = await api.getMe();
       expect(user.id).toBe('user-123');
       expect(user.preferences?.chordFontFamily).toBe('Arial');
+      expect(user.preferences?.chordLineSpacingPx).toBe(0);
+    });
+
+    it('maps the synced line spacing preference and defaults old accounts to 0px', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({
+          id: 'user-spacing', email: 'spacing@example.com', name: 'Reader',
+          preferences: { chord_font_family: 'Arial', chord_line_spacing_px: 24 },
+        })),
+      } as any);
+      await expect(api.getMe()).resolves.toMatchObject({ preferences: { chordFontFamily: 'Arial', chordLineSpacingPx: 24 } });
     });
 
     it('deve utilizar fallback monospace quando preferences.chord_font_family for nulo ou ausente em getMe', async () => {
@@ -1197,6 +1210,17 @@ describe('API Client & Structured Error Handling', () => {
       expect(options.method).toBe('PATCH');
       expect(JSON.parse(options.body)).toEqual({ chord_font_family: 'Georgia' });
       expect(result.preferences.chordFontFamily).toBe('Georgia');
+    });
+
+    it('PATCHes line spacing without sending or overwriting the font preference', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true, status: 200,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ preferences: { chord_font_family: 'Georgia', chord_line_spacing_px: 12 } })),
+      } as any);
+      global.fetch = fetchSpy;
+      const result = await api.updateUserPreferences({ chordLineSpacingPx: 12 });
+      expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toEqual({ chord_line_spacing_px: 12 });
+      expect(result.preferences).toMatchObject({ chordFontFamily: 'Georgia', chordLineSpacingPx: 12 });
     });
   });
 });

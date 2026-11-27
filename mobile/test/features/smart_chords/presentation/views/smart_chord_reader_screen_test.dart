@@ -102,6 +102,7 @@ class _FakePreferencesStorage implements PreferencesStorage {
 
 class FakeAuthNotifier extends AuthNotifier {
   int updateFontCallCount = 0;
+  int? lastUpdatedSpacing;
   String? lastUpdatedFont;
   Exception? updateFontErrorToThrow;
   Completer<void>? updateFontCompleter;
@@ -133,6 +134,15 @@ class FakeAuthNotifier extends AuthNotifier {
       state = state.copyWith(
         user: currentUser.copyWith(chordFontFamily: fontFamily),
       );
+    }
+  }
+
+  @override
+  Future<void> updateChordLineSpacingPreference(int spacingPx) async {
+    lastUpdatedSpacing = spacingPx;
+    final user = state.user;
+    if (user != null) {
+      state = state.copyWith(user: user.copyWith(chordLineSpacingPx: spacingPx));
     }
   }
 
@@ -306,6 +316,27 @@ void main() {
       ),
     );
   }
+
+  testWidgets('reader exposes bounded persistent line spacing settings', (tester) async {
+    await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Abrir Reader'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.format_line_spacing));
+    await tester.pumpAndSettle();
+    expect(find.text('Espaçamento entre linhas: 0px'), findsOneWidget);
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    expect(slider.min, 0);
+    expect(slider.max, 24);
+    expect(slider.divisions, 12);
+    await tester.tap(find.byTooltip('Aumentar espaçamento'));
+    await tester.pumpAndSettle();
+    expect(find.text('Espaçamento entre linhas: 2px'), findsOneWidget);
+    expect(authNotifier.lastUpdatedSpacing, 2);
+    await tester.tap(find.text('Padrão'));
+    await tester.pumpAndSettle();
+    expect(authNotifier.lastUpdatedSpacing, 0);
+  });
 
   testWidgets('displays chord, renders lyrics and responds to transposition steppers', (tester) async {
     await tester.pumpWidget(buildApp(chordId: 'sc-1', initialChord: sampleChord));

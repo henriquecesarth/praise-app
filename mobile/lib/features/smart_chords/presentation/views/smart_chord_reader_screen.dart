@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/providers.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../../../auth/domain/auth_user.dart';
 import '../../../repertoire/presentation/views/song_detail_view.dart';
 import '../../domain/smart_chord.dart';
 import '../../domain/smart_chord_parser.dart';
@@ -110,6 +111,70 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
   bool _isDismissed = false;
   bool _isSavingFont = false;
   int _fontSaveRequestId = 0;
+  int? _lineSpacingOverride;
+  int _spacingSaveRequestId = 0;
+
+  Future<void> _setLineSpacing(int value) async {
+    final spacing = value.clamp(0, 24).round();
+    final requestId = ++_spacingSaveRequestId;
+    setState(() => _lineSpacingOverride = spacing);
+    if (_boundUserId == null || _boundUserId!.isEmpty) return;
+    try {
+      await ref.read(authNotifierProvider.notifier).updateChordLineSpacingPreference(spacing);
+      if (!mounted || _isDismissed || requestId != _spacingSaveRequestId ||
+          ref.read(authNotifierProvider).user?.id != _boundUserId) {
+        return;
+      }
+      setState(() => _lineSpacingOverride = null);
+    } catch (_) {
+      if (mounted && requestId == _spacingSaveRequestId) {
+        setState(() => _lineSpacingOverride = null);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível salvar o espaçamento.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showLineSpacingSettings(int current) async {
+    var spacing = current;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, update) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('Espaçamento entre linhas: ${spacing}px',
+                  style: Theme.of(context).textTheme.titleMedium),
+              Slider(min: 0, max: 24, divisions: 12, value: spacing.toDouble(),
+                label: '${spacing}px',
+                onChanged: (v) {
+                  update(() => spacing = v.round());
+                  setState(() => _lineSpacingOverride = spacing);
+                },
+                onChangeEnd: (v) => _setLineSpacing(v.round())),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                IconButton(tooltip: 'Diminuir espaçamento',
+                  onPressed: spacing == 0 ? null : () {
+                    update(() => spacing -= 2); _setLineSpacing(spacing);
+                  }, icon: const Icon(Icons.remove)),
+                Text('${spacing}px'),
+                IconButton(tooltip: 'Aumentar espaçamento',
+                  onPressed: spacing == 24 ? null : () {
+                    update(() => spacing += 2); _setLineSpacing(spacing);
+                  }, icon: const Icon(Icons.add)),
+                TextButton(onPressed: () {
+                  update(() => spacing = AuthUser.defaultChordLineSpacingPx);
+                  _setLineSpacing(AuthUser.defaultChordLineSpacingPx);
+                }, child: const Text('Padrão')),
+              ]),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
 
   String _getFontSubtext(String font) {
     final config = ChordFontFamilyResolver.resolve(font);
@@ -285,6 +350,8 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     final linkState = ref.watch(smartChordRepertoireLinkNotifierProvider);
     final activeMinistry = ref.watch(ministryContextNotifierProvider).selectedMinistry;
     final chordFont = ref.watch(chordFontPreferenceProvider);
+    final int lineSpacing = _lineSpacingOverride ??
+        ref.watch(chordLineSpacingPreferenceProvider) ?? AuthUser.defaultChordLineSpacingPx;
     final fontConfig = ChordFontFamilyResolver.resolve(chordFont);
     final chord = detailState.chord ?? widget.initialChord;
 
@@ -577,6 +644,12 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                       icon: const Icon(Icons.text_increase, size: 18),
                       onPressed: _increaseFontSize,
                     ),
+                    IconButton(
+                      tooltip: 'Espaçamento entre linhas',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.format_line_spacing, size: 18),
+                      onPressed: () => _showLineSpacingSettings(lineSpacing),
+                    ),
                   ];
                   if (constraints.maxWidth >= 640 * MediaQuery.textScalerOf(context).scale(1)) {
                     return Row(children: [...keyControls, ...originalControls, const Spacer(), ...fontControls]);
@@ -602,7 +675,9 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
                     children: [
                       for (int i = 0; i < lines.length; i++) ...[
                         _buildRenderedLine(lines[i], semitones, theme, fontConfig,
+                          spacingPx: lineSpacing.toDouble(),
                           alignedLyrics: i > 0 && SmartChordParser.progressionTokens(lines[i - 1]) != null),
+                        SizedBox(height: lineSpacing.toDouble()),
                       ],
                       const SizedBox(height: 48),
                     ],
@@ -623,6 +698,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     ThemeData theme,
     ChordFontConfig fontConfig, {
     bool alignedLyrics = false,
+    double spacingPx = AuthUser.defaultChordLineSpacingPxDouble,
   }) {
     if (SmartChordParser.progressionTokens(lineText) != null) {
       return MusicalProgressionLine(line: lineText, semitones: semitones, fontSize: _fontSize,
@@ -641,6 +717,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
         theme,
         fontConfig.fontFamily,
         fontConfig.fallback,
+        spacingPx,
       );
     } else {
       return _buildProportionalLine(
@@ -649,6 +726,7 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
         theme,
         fontConfig.fontFamily,
         fontConfig.fallback,
+        spacingPx,
       );
     }
   }
@@ -659,8 +737,9 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     ThemeData theme,
     String fontFamily,
     List<String> fontFamilyFallback,
+    double spacingPx,
   ) => ChordLyricLine(line: lineText, semitones: semitones, fontSize: _fontSize,
-      fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: true);
+      fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: true, spacingPx: spacingPx);
 
   Widget _buildProportionalLine(
     String lineText,
@@ -668,8 +747,9 @@ class _SmartChordReaderScreenState extends ConsumerState<SmartChordReaderScreen>
     ThemeData theme,
     String fontFamily,
     List<String> fontFamilyFallback,
+    double spacingPx,
   ) => ChordLyricLine(line: lineText, semitones: semitones, fontSize: _fontSize,
-      fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: false);
+      fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback, monospace: false, spacingPx: spacingPx);
 
   Widget _buildRepertoireLinkBanner(
     BuildContext context,

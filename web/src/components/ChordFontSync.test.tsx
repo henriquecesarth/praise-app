@@ -1,7 +1,7 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import App from '../App';
 import { api } from '../api';
 import { SmartChordsWorkspace } from './SmartChordsWorkspace';
@@ -105,11 +105,11 @@ describe('Targeted Chord Font Synchronization Regressions (WEB-01 & WEB-02)', ()
       preferences: { chordFontFamily: 'Verdana' },
     });
 
-    render(
-      <MemoryRouter initialEntries={['/cifras']}>
-        <App />
-      </MemoryRouter>
-    );
+    const NativeRequest = globalThis.Request;
+    vi.stubGlobal('Request', class extends NativeRequest {
+      constructor(input: RequestInfo | URL, init?: RequestInit) { super(input, { ...init, signal: undefined }); }
+    });
+    render(<RouterProvider router={createMemoryRouter([{ path: '*', element: <App /> }], { initialEntries: ['/cifras'] })} />);
 
     const createBtn = await screen.findByRole('button', { name: /Criar Cifra/i });
     fireEvent.click(createBtn);
@@ -364,7 +364,7 @@ describe('Targeted Chord Font Synchronization Regressions (WEB-01 & WEB-02)', ()
     });
 
     // Open print modal
-    fireEvent.click(screen.getByText(/Exportar PDF/i));
+    fireEvent.click(screen.getByRole('button', { name: /Exportar PDF/i }));
 
     const modalSelect = screen.getByTestId('modal-font-family-select') as HTMLSelectElement;
     expect(modalSelect.value).toBe('Arial');
@@ -372,11 +372,12 @@ describe('Targeted Chord Font Synchronization Regressions (WEB-01 & WEB-02)', ()
     // Change in modal to Verdana
     fireEvent.change(modalSelect, { target: { value: 'Verdana' } });
 
-    // Toolbar select and modal select are synchronized
+    // In M20-C13, PDF settings are isolated from reading view toolbar
     const toolbarSelect = screen.getByTestId('font-family-select') as HTMLSelectElement;
-    expect(toolbarSelect.value).toBe('Verdana');
+    expect(toolbarSelect.value).toBe('Arial');
     expect(modalSelect.value).toBe('Verdana');
 
+    fireEvent.click(screen.getByRole('button', { name: 'Gerar e visualizar PDF' }));
     // PDF printable sheet reflects Verdana
     const modalSheet = document.getElementById('printable-sheet-pdf');
     expect(modalSheet).toHaveStyle({ fontFamily: 'Verdana, Geneva, sans-serif' });

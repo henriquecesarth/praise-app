@@ -672,14 +672,18 @@ export const api = {
       name: result.name,
       preferences: {
         chordFontFamily: result.preferences?.chord_font_family || 'monospace',
+        chordLineSpacingPx: result.preferences?.chord_line_spacing_px ?? 0,
       },
     };
   },
 
-  updateUserPreferences: async (preferences: { chordFontFamily?: string }): Promise<{ preferences: UserPreferences }> => {
+  updateUserPreferences: async (preferences: { chordFontFamily?: string; chordLineSpacingPx?: number }): Promise<{ preferences: UserPreferences }> => {
     const payload: Record<string, any> = {};
     if (preferences.chordFontFamily !== undefined) {
       payload.chord_font_family = preferences.chordFontFamily;
+    }
+    if (preferences.chordLineSpacingPx !== undefined) {
+      payload.chord_line_spacing_px = preferences.chordLineSpacingPx;
     }
     const response = await fetch(`${API_URL}/auth/me/preferences`, {
       method: 'PATCH',
@@ -690,6 +694,7 @@ export const api = {
     return {
       preferences: {
         chordFontFamily: result.preferences?.chord_font_family || 'monospace',
+        chordLineSpacingPx: result.preferences?.chord_line_spacing_px ?? 0,
       },
     };
   },
