@@ -1,0 +1,93 @@
+﻿phase1 quiet
+RUN block=1 variant=C install=Success
+PRE 0 | 1 |   temperature: 278 | 21.90 23.08 22.64 1/3363 20977 |   mWakefulness=Awake | Thermal Status: 0
+RESULT OK (1 test)
+POST 0 | 1 |   temperature: 278 | 21.88 22.93 22.61 2/3324 21583 |   mWakefulness=Awake | Thermal Status: 0
+s4long seek=0 released=32 started=39 open=423 write=460 advance=487
+s4long seek=1 released=36 started=44 open=651 write=693 advance=714
+s4long seek=2 released=37 started=45 open=168 write=207 advance=224
+s4long seek=3 released=49 started=53 open=504 write=536 advance=549
+s4long seek=4 released=185 started=197 open=821 write=855 advance=869
+s4long seek=5 released=32 started=44 open=413 write=453 advance=468
+s4long seekToAdvanceMs median=549 min=224 max=869 all=[487, 714, 224, 549, 869, 468] underrunsTotal=0
+s42lavc48 seek=0 released=45 started=56 open=457 write=511 advance=528
+s42lavc48 seek=1 released=131 started=143 open=722 write=757 advance=793
+s42lavc48 seek=2 released=119 started=126 open=262 write=286 advance=295
+s42lavc48 seek=3 released=39 started=53 open=522 write=565 advance=580
+s42lavc48 seek=4 released=110 started=115 open=760 write=791 advance=819
+s42lavc48 seek=5 released=60 started=68 open=462 write=514 advance=531
+s42lavc48 seekToAdvanceMs median=580 min=295 max=819 all=[528, 793, 295, 580, 819, 531] underrunsTotal=0
+RUN block=1 variant=A install=Success
+PRE 0 | 1 |   temperature: 278 | 21.35 22.65 22.53 1/3325 21711 |   mWakefulness=Awake | Thermal Status: 0
+RESULT OK (1 test)
+POST 0 | 1 |   temperature: 275 | 22.38 22.73 22.56 3/3319 22256 |   mWakefulness=Awake | Thermal Status: 0
+s4long seek=0 released=185 started=190 open=581 write=613 advance=636
+s4long seek=1 released=50 started=54 open=658 write=693 advance=729
+s4long seek=2 released=40 started=44 open=210 write=231 advance=259
+s4long seek=3 released=75 started=79 open=544 write=587 advance=618
+s4long seek=4 released=33 started=37 open=587 write=627 advance=640
+s4long seek=5 released=71 started=75 open=430 write=460 advance=490
+s4long seekToAdvanceMs median=636 min=259 max=729 all=[636, 729, 259, 618, 640, 490] underrunsTotal=0
+s42lavc48 seek=0 released=92 started=95 open=484 write=529 advance=554
+s42lavc48 seek=1 released=91 started=98 open=696 write=733 advance=758
+s42lavc48 seek=2 released=108 started=116 open=283 write=328 advance=355
+s42lavc48 seek=3 released=63 started=67 open=581 write=620 advance=642
+s42lavc48 seek=4 released=88 started=126 open=740 write=767 advance=793
+s42lavc48 seek=5 released=124 started=144 open=545 write=584 advance=610
+s42lavc48 seekToAdvanceMs median=642 min=355 max=793 all=[554, 758, 355, 642, 793, 610] underrunsTotal=0
+RUN block=1 variant=B install=Success
+PRE 0 | 1 |   temperature: 278 | 21.27 22.40 22.46 1/3323 22366 |   mWakefulness=Awake | Thermal Status: 0
+RESULT OK (1 test)
+POST 0 | 1 |   temperature: 278 | 21.24 22.24 22.40 1/3320 22918 |   mWakefulness=Awake | Thermal Status: 0
+s4long seek=0 released=109 started=119 open=502 write=548 advance=562
+s4long seek=1 released=182 started=186 open=736 write=765 advance=779
+s4long seek=2 released=32 started=42 open=182 write=227 advance=264
+s4long seek=3 released=83 started=91 open=557 write=597 advance=616
+s4long seek=4 released=31 started=39 open=591 write=628 advance=642
+s4long seek=5 released=93 started=103 open=467 write=506 advance=541
+s4long seekToAdvanceMs median=616 min=264 max=779 all=[562, 779, 264, 616, 642, 541] underrunsTotal=0
+s42lavc48 seek=0 released=103 started=107 open=513 write=551 advance=585
+s42lavc48 seek=1 released=105 started=113 open=786 write=827 advance=855
+s42lavc48 seek=2 released=23 started=33 open=197 write=224 advance=256
+s42lavc48 seek=3 released=38 started=45 open=489 write=544 advance=563
+s42lavc48 seek=4 released=126 started=134 open=775 write=825 advance=853
+s42lavc48 seek=5 released=80 started=91 open=457 write=496 advance=519
+s42lavc48 seekToAdvanceMs median=585 min=256 max=855 all=[585, 855, 256, 563, 853, 519] underrunsTotal=0
+RUN block=2 variant=B install=Success
+PRE 0 | 1 |   temperature: 278 | 20.81 22.00 22.31 1/3326 23035 |   mWakefulness=Awake | Thermal Status: 0
+RESULT OK (1 test)
+POST 0 | 1 |   temperature: 278 | 22.65 22.31 22.40 1/3323 23604 |   mWakefulness=Awake | Thermal Status: 0
+s4long seek=0 released=91 started=98 open=438 write=473 advance=487
+s4long seek=1 released=86 started=90 open=675 write=706 advance=727
+s4long seek=2 released=53 started=58 open=218 write=235 advance=249
+s4long seek=3 released=173 started=178 open=602 write=642 advance=664
+s4long seek=4 released=178 started=185 open=810 write=842 advance=860
+s4long seek=5 released=176 started=190 open=512 write=548 advance=573
+s4long seekToAdvanceMs median=664 min=249 max=860 all=[487, 727, 249, 664, 860, 573] underrunsTotal=0
+s42lavc48 seek=0 released=40 started=44 open=434 write=461 advance=485
+s42lavc48 seek=1 released=104 started=109 open=755 write=787 advance=812
+s42lavc48 seek=2 released=32 started=38 open=230 write=266 advance=284
+s42lavc48 seek=3 released=34 started=40 open=555 write=579 advance=590
+s42lavc48 seek=4 released=113 started=118 open=814 write=866 advance=892
+s42lavc48 seek=5 released=150 started=159 open=562 write=611 advance=632
+s42lavc48 seekToAdvanceMs median=632 min=284 max=892 all=[485, 812, 284, 590, 892, 632] underrunsTotal=0
+RUN block=2 variant=C install=Success
+PRE 0 | 1 |   temperature: 278 | 21.38 22.02 22.30 1/3328 23710 |   mWakefulness=Awake | Thermal Status: 0
+RESULT OK (1 test)
+POST 0 | 1 |   temperature: 278 | 21.80 22.01 22.28 2/3411 24356 |   mWakefulness=Awake | Thermal Status: 0
+s4long seek=0 released=55 started=64 open=459 write=504 advance=526
+s4long seek=1 released=48 started=52 open=593 write=623 advance=643
+s4long seek=2 released=141 started=152 open=309 write=333 advance=350
+s4long seek=3 released=169 started=174 open=651 write=676 advance=700
+s4long seek=4 released=33 started=48 open=623 write=650 advance=675
+s4long seek=5 released=69 started=81 open=452 write=496 advance=511
+s4long seekToAdvanceMs median=643 min=350 max=700 all=[526, 643, 350, 700, 675, 511] underrunsTotal=0
+s42lavc48 seek=0 released=76 started=85 open=482 write=530 advance=556
+s42lavc48 seek=1 released=62 started=66 open=699 write=725 advance=751
+s42lavc48 seek=2 released=121 started=128 open=296 write=334 advance=359
+s42lavc48 seek=3 released=99 started=108 open=584 write=625 advance=642
+s42lavc48 seek=4 released=138 started=157 open=799 write=839 advance=869
+s42lavc48 seek=5 released=72 started=78 open=411 write=475 advance=500
+s42lavc48 seekToAdvanceMs median=642 min=359 max=869 all=[556, 751, 359, 642, 869, 500] underrunsTotal=0
+RUN block=2 variant=A install=Success
+PRE 0 | 1 |   temperature: 280 | 21.02 21.78 22.19 1/3411 24462 |   mWakefulness=Awake | Thermal Status: 0

@@ -1,0 +1,93 @@
+diff --git a/mobile/android/app/src/androidTest/kotlin/com/louvaio/louvaio_mobile/ministryaudio/Mp3IncrementalDeviceTest.kt b/mobile/android/app/src/androidTest/kotlin/com/louvaio/louvaio_mobile/ministryaudio/Mp3IncrementalDeviceTest.kt
+index 46ec8b4..775e119 100644
+--- a/mobile/android/app/src/androidTest/kotlin/com/louvaio/louvaio_mobile/ministryaudio/Mp3IncrementalDeviceTest.kt
++++ b/mobile/android/app/src/androidTest/kotlin/com/louvaio/louvaio_mobile/ministryaudio/Mp3IncrementalDeviceTest.kt
+@@ -141,6 +141,7 @@ class Mp3IncrementalDeviceTest {
+             val n = track.write(data, offsetInShorts, sizeInShorts, AudioTrack.WRITE_BLOCKING)
+             if (n > 0) {
+                 firstWriteAt.compareAndSet(0, SystemClock.elapsedRealtime())
++                SeekProbe.write()
+                 written.addAndGet(n.toLong())
+             }
+             return n
+@@ -250,6 +251,58 @@ class Mp3IncrementalDeviceTest {
+ 
+     // ------------------------------------------------------------------- bridge
+ 
++    /** TEMPORARY bench probe: phases of one seek, in ms since the command. */
++    private object SeekProbe {
++        @Volatile var t0 = Long.MAX_VALUE
++        val oldExit = AtomicLong()
++        val starts = AtomicInteger()
++        val sixthStart = AtomicLong()
++        val opens = AtomicInteger()
++        val sixthOpen = AtomicLong()
++        val firstWrite = AtomicLong()
++
++        private fun now() = SystemClock.elapsedRealtime() - t0
++
++        fun reset(at: Long) {
++            t0 = Long.MAX_VALUE
++            oldExit.set(0); starts.set(0); sixthStart.set(0); opens.set(0); sixthOpen.set(0); firstWrite.set(0)
++            t0 = at
++        }
++
++        fun write() {
++            if (sixthOpen.get() > 0) firstWrite.compareAndSet(0, now())
++        }
++
++        fun line() = "released=${oldExit.get()} started=${sixthStart.get()} open=${sixthOpen.get()} write=${firstWrite.get()}"
++    }
++
++    private class Timed(private val inner: AndroidMp3PcmDecoder = AndroidMp3PcmDecoder()) : Mp3WindowDecoder {
++        override fun decodeFrom(
++            file: File,
++            byteOffset: Long,
++            input: Mp3InputCheck,
++            onInfo: (Mp3StreamInfo) -> Unit,
++            sink: PcmSink,
++            cancelled: () -> Boolean,
++        ) {
++            val begun = SystemClock.elapsedRealtime()
++            val fresh = begun >= SeekProbe.t0
++            if (fresh && SeekProbe.starts.incrementAndGet() == 6) SeekProbe.sixthStart.set(begun - SeekProbe.t0)
++            try {
++                inner.decodeFrom(file, byteOffset, input, { info ->
++                    if (fresh && SeekProbe.opens.incrementAndGet() == 6) {
++                        SeekProbe.sixthOpen.set(SystemClock.elapsedRealtime() - SeekProbe.t0)
++                    }
++                    onInfo(info)
++                }, sink, cancelled)
++            } finally {
++                val t0 = SeekProbe.t0
++                val end = SystemClock.elapsedRealtime()
++                if (begun < t0 && end >= t0) SeekProbe.oldExit.accumulateAndGet(end - t0) { a, b -> maxOf(a, b) }
++            }
++        }
++    }
++
+     /** Platform decoder with injectable trouble on one stem, chosen by raw output byte offset of the window. */
+     private class Faulty(private val inner: AndroidMp3PcmDecoder = AndroidMp3PcmDecoder()) : Mp3WindowDecoder {
+         @Volatile var stem: String? = null
+@@ -488,7 +541,7 @@ class Mp3IncrementalDeviceTest {
+     fun seekLatencyAndPauseResumeOnARealTrack() {
+         for (r in longSets()) {
+             measured.clear()
+-            newBridge(realTracks)
++            newBridge(realTracks, Timed())
+             prepare(r)
+             cmd("setMasterVolume", mapOf("value" to 0.0))
+             cmd("play")
+@@ -498,10 +551,12 @@ class Mp3IncrementalDeviceTest {
+             for (target in targets) {
+                 val before = measured[0].written.get()
+                 val t0 = SystemClock.elapsedRealtime()
++                SeekProbe.reset(t0)
+                 cmd("seek", mapOf("frame" to target))
+                 // Moving again = new frames written after the flush and the playback head advancing past the flush point.
+                 assertTrue(await(10_000) { measured[0].written.get() > before && state() == "playing" && position() > target })
+                 latencies.add(SystemClock.elapsedRealtime() - t0)
++                Log.i("SEEKB", "${r.name} seek=${latencies.size - 1} ${SeekProbe.line()} advance=${latencies.last()}")
+                 Thread.sleep(1_500)
+             }
+             cmd("pause")

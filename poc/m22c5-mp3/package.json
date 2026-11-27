@@ -1,0 +1,1 @@
+{"name":"m22c5-mp3-poc","private":true,"type":"module","version":"0.0.0","dependencies":{"@breezystack/lamejs":"^1.2.7","@mediabunny/mp3-encoder":"^1.66.2","mediabunny":"^1.66.2","playwright-core":"^1.65.1"}}

@@ -26,6 +26,16 @@ import 'package:louvaio_mobile/app/providers.dart';
 import 'package:louvaio_mobile/features/ministry_audio/data/ministry_audio_download_manager.dart';
 import 'package:louvaio_mobile/features/ministry_audio/presentation/controllers/ministry_audio_playback_controller.dart';
 
+import 'support/m22_r2_transport_probe.dart';
+
+// M22-D-E2: `--dart-define=E1_R2=true` runs the SAME 16 steps against the private
+// development R2 bucket (`backend/scripts/m22-e2-r2-server.ts`). The tablet then
+// downloads straight from R2, so the backend `objectGets` counter is meaningless
+// and the instrumented client transport (test-only probe) is the evidence instead.
+const _r2 = bool.fromEnvironment('E1_R2');
+const _stemSha = String.fromEnvironment('E1_STEM_SHA');
+const _stemBytes = 44 + 32000 * 4;
+
 const _backendPort = int.fromEnvironment('E1_BACKEND_PORT', defaultValue: 3107);
 const _authPort = int.fromEnvironment('E1_AUTH_PORT', defaultValue: 9098);
 const _firestorePort = int.fromEnvironment('E1_FIRESTORE_PORT', defaultValue: 8186);
@@ -81,7 +91,9 @@ void main() {
         automaticHostMapping: false);
     await firebaseAuth.signOut();
 
+    final probe = R2TransportProbe();
     final container = ProviderContainer(overrides: [
+      if (_r2) probe.override,
       appEnvironmentProvider.overrideWithValue(const AppEnvironment(
         env: AppEnv.development,
         apiBaseUrl: 'http://127.0.0.1:$_backendPort/api/v1',
@@ -199,15 +211,29 @@ void main() {
 
     // ------------------------------------------------------------------ 5-8
     late Map<String, dynamic> before;
+    var coldFrom = 0;
     await step('mixer opens: download of six WAVs, cache, native engine READY', () async {
       before = await _stats();
+      coldFrom = probe.started;
       await tester.tap(find.byKey(const ValueKey('audio_recording_$_recordingA')));
       await until('mixer ready',
           () => ps().phase == MinistryAudioPlaybackPhase.ready,
           timeout: const Duration(seconds: 90));
       final after = await _stats();
-      expect((after['objectGets'] as int) - (before['objectGets'] as int), 6,
-          reason: 'exactly six signed stem downloads');
+      if (_r2) {
+        // Direct-from-R2 evidence comes from the client transport, never from the backend.
+        final problems = probe.verifyColdDownload(
+          from: coldFrom,
+          expectedBytes: _stemBytes,
+          expectedSha: R2TransportProbe.parseExpectedSha(_stemSha),
+        );
+        // ignore: avoid_print
+        print('E2R2_COLD ${probe.summary()} problems=$problems');
+        expect(problems, isEmpty, reason: 'six direct HTTPS downloads from R2');
+      } else {
+        expect((after['objectGets'] as int) - (before['objectGets'] as int), 6,
+            reason: 'exactly six signed stem downloads');
+      }
       expect(leases(), 1, reason: 'the open session holds the cache lease');
       expect(ps().recordingId, _recordingA);
       expect(ps().sessionId, isNotNull);
@@ -280,6 +306,7 @@ void main() {
 
     await step('reopen uses the cache after ONLINE revalidation (no new stem download)', () async {
       final s0 = await _stats();
+      final directBefore = probe.started;
       await tester.tap(find.byKey(const ValueKey('audio_recording_$_recordingA')));
       await until('ready again',
           () => ps().phase == MinistryAudioPlaybackPhase.ready,
@@ -287,8 +314,15 @@ void main() {
       final s1 = await _stats();
       expect((s1['playbackGets'] as int) - (s0['playbackGets'] as int), 1,
           reason: 'online revalidation of the playback grant');
-      expect((s1['objectGets'] as int) - (s0['objectGets'] as int), 0,
-          reason: 'six verified stems served from the private cache');
+      if (_r2) {
+        expect(probe.started - directBefore, 0,
+            reason: 'no direct R2 download on reopen: six verified stems come from the private cache');
+        // ignore: avoid_print
+        print('E2R2_REOPEN ${probe.summary()}');
+      } else {
+        expect((s1['objectGets'] as int) - (s0['objectGets'] as int), 0,
+            reason: 'six verified stems served from the private cache');
+      }
     });
 
     // ------------------------------------------------------------------ 11
@@ -434,6 +468,10 @@ void main() {
 
     // ignore: avoid_print
     print('E1_DONE failures=$failures steps=$n');
+    if (_r2) {
+      // ignore: avoid_print
+      print('E2R2_FINAL ${probe.summary()}');
+    }
     expect(failures, 0, reason: '$failures E1 step(s) failed; see E1_STEP lines');
   });
 }

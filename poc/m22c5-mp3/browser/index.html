@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>M22-C.5 MP3 PoC</title>
+<script type="importmap">
+{ "imports": { "mediabunny": "/node_modules/mediabunny/dist/bundles/mediabunny.min.mjs" } }
+</script>
+</head>
+<body>
+<script type="module">
+import { Output, BufferTarget, Mp3OutputFormat, AudioSampleSource, AudioSample, canEncodeAudio } from 'mediabunny';
+import { registerMp3Encoder } from '/node_modules/@mediabunny/mp3-encoder/dist/bundles/mediabunny-mp3-encoder.min.mjs';
+import { STEM_IDS, makeStem, alignmentReport } from '/src/synth.mjs';
+
+const SECONDS = Number(new URLSearchParams(location.search).get('s') ?? 30);
+const KBPS = 256;
+
+async function encodeMediabunny(stem, xingHeader) {
+  const output = new Output({ format: new Mp3OutputFormat({ xingHeader }), target: new BufferTarget() });
+  const source = new AudioSampleSource({ codec: 'mp3', bitrate: KBPS * 1000 });
+  output.addAudioTrack(source);
+  await output.start();
+  const CH = 44100; // 1 s chunks, planar f32 → interleaved? use f32-planar layout
+  for (let i = 0; i < stem.frames; i += CH) {
+    const n = Math.min(CH, stem.frames - i);
+    const data = new Float32Array(n * 2);
+    data.set(stem.left.subarray(i, i + n), 0);
+    data.set(stem.right.subarray(i, i + n), n);
+    await source.add(new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: stem.sampleRate, timestamp: i / stem.sampleRate }));
+  }
+  await output.finalize();
+  return new Uint8Array(output.target.buffer);
+}
+
+async function decode(bytes) {
+  const ctx = new AudioContext({ sampleRate: 44100 });
+  const buf = await ctx.decodeAudioData(bytes.slice().buffer);
+  const left = buf.getChannelData(0).slice();
+  await ctx.close();
+  return { left, channels: buf.numberOfChannels, sampleRate: buf.sampleRate };
+}
+
+window.runPoc = async () => {
+  const native = await canEncodeAudio('mp3');
+  if (!native) registerMp3Encoder();
+  const rows = [];
+  for (const [idx, id] of STEM_IDS.entries()) {
+    const stem = makeStem(idx, SECONDS);
+    const row = { id, nativeMp3Encoder: native };
+    for (const [label, xing] of [['mediabunnyXing', true], ['mediabunnyNoXing', false]]) {
+      const t0 = performance.now();
+      const bytes = await encodeMediabunny(stem, xing);
+      const encodeMs = Math.round(performance.now() - t0);
+      const dec = await decode(bytes);
+      row[label] = { bytes: bytes.byteLength, encodeMs, channels: dec.channels, sampleRate: dec.sampleRate, align: alignmentReport(stem, dec.left) };
+    }
+    const lame = new Uint8Array(await (await fetch(`/out/${id}.lamejs.mp3`)).arrayBuffer());
+    const dl = await decode(lame);
+    row.lamejsFile = { bytes: lame.byteLength, align: alignmentReport(stem, dl.left) };
+    const ff = new Uint8Array(await (await fetch(`/out/${id}.ffmpeg.mp3`)).arrayBuffer());
+    const df = await decode(ff);
+    row.ffmpegLameFile = { bytes: ff.byteLength, align: alignmentReport(stem, df.left) };
+    rows.push(row);
+    console.log(id, 'mb-xing lag', row.mediabunnyXing.align.initialLagFrames, 'delta', row.mediabunnyXing.align.frameDelta,
+      '| mb-noxing lag', row.mediabunnyNoXing.align.initialLagFrames, 'delta', row.mediabunnyNoXing.align.frameDelta,
+      '| lamejs lag', row.lamejsFile.align.initialLagFrames, '| ffmpeg-lame lag', row.ffmpegLameFile.align.initialLagFrames);
+  }
+  const pick = (k) => rows.map((r) => ({ id: r.id, bytes: r[k].bytes, lag: r[k].align.initialLagFrames, drift: r[k].align.driftFrames, spread: r[k].align.lagSpreadFrames, frameDelta: r[k].align.frameDelta, encodeMs: r[k].encodeMs }));
+  const sha = async (b) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map((x) => x.toString(16).padStart(2, '0')).join('');
+  const s0 = makeStem(0, SECONDS);
+  const h1 = await sha(await encodeMediabunny(s0, true));
+  const h2 = await sha(await encodeMediabunny(s0, true));
+  const deterministic = { sameInputSameBytes: h1 === h2, sha256: h1 };
+  const artifact = await encodeMediabunny(s0, true);
+  let b64 = '';
+  for (let i = 0; i < artifact.length; i += 0x8000) b64 += String.fromCharCode(...artifact.subarray(i, i + 0x8000));
+  window.__artifactB64 = btoa(b64);
+  console.log('deterministic', JSON.stringify(deterministic));
+  return { seconds: SECONDS, kbps: KBPS, deterministic, rows, summary: { mediabunnyXing: pick('mediabunnyXing'), mediabunnyNoXing: pick('mediabunnyNoXing'), lamejsFile: pick('lamejsFile'), ffmpegLameFile: pick('ffmpegLameFile') } };
+};
+</script>
+</body>
+</html>
